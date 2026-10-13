@@ -37,7 +37,6 @@ spec:
       {{- end }}
       # long-poll is 20 s; give the consumer time to finish its current batch
       terminationGracePeriodSeconds: 30
-      {{- include "boutique.podGuardrails" (dict "root" $ "app" .Values.inventoryService.name) | nindent 6 }}
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
@@ -57,14 +56,6 @@ spec:
           privileged: false
           readOnlyRootFilesystem: true
         image: {{ .Values.images.repository }}/{{ .Values.inventoryService.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
-        {{- if .Values.guardrails.enabled }}
-        # Keep serving a few seconds after removal from the Service endpoints,
-        # so in-flight calls finish during a rollout (no errors on deploy).
-        lifecycle:
-          preStop:
-            sleep:
-              seconds: {{ .Values.guardrails.preStopSeconds }}
-        {{- end }}
         ports:
         - name: http
           containerPort: 8080

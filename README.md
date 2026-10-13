@@ -362,10 +362,6 @@ Full notes: [docs/week3/SECURITY.md](docs/week3/SECURITY.md).
 - **Secret scanning** — gitleaks checks every pull request for committed credentials (AWS keys,
   Slack webhooks, tokens); it runs without any AWS access.
 - **Hardened containers** — non-root users and read-only root filesystems.
-- **Namespace guardrails** — Pod Security Standards (`baseline` enforced, `restricted` warned),
-  a ResourceQuota and LimitRange per namespace, a PriorityClass that lets prod preempt dev,
-  PodDisruptionBudgets, pods spread across zones and nodes, and a short `preStop` pause so a
-  rollout drops no requests.
 
 ## Observability
 

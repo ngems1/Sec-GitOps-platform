@@ -272,18 +272,3 @@ autoscaling:
   scaleDownStabilizationSeconds: 120
   # Deployment name -> replica range. The Deployments must not set "replicas" themselves.
   targets: {}
-
-# Namespace guardrails (templates/guardrails.yaml, templates/_helpers.tpl): PriorityClass,
-# ResourceQuota, LimitRange, PodDisruptionBudgets, zone/node spread and a preStop pause.
-# Off locally; on for EKS (values-aws.yaml), with per-environment sizes (values-<env>.yaml).
-guardrails:
-  enabled: false
-  preStopSeconds: 5
-  priority:
-    value: 1000
-    preemptionPolicy: Never
-  quota: {}
-  containerDefaults:
-    requests: { cpu: 50m, memory: 64Mi }
-    limits:   { cpu: 500m, memory: 256Mi }
-  containerMax: { cpu: "2", memory: 1Gi }

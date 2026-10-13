@@ -32,8 +32,7 @@ spec:
       {{- else }}
       serviceAccountName: default
       {{- end }}
-      terminationGracePeriodSeconds: 15
-      {{- include "boutique.podGuardrails" (dict "root" $ "app" .Values.recommendationService.name) | nindent 6 }}
+      terminationGracePeriodSeconds: 5
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
@@ -53,14 +52,6 @@ spec:
           privileged: false
           readOnlyRootFilesystem: true
         image: {{ .Values.images.repository }}/{{ .Values.recommendationService.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
-        {{- if .Values.guardrails.enabled }}
-        # Keep serving a few seconds after removal from the Service endpoints,
-        # so in-flight calls finish during a rollout (no errors on deploy).
-        lifecycle:
-          preStop:
-            sleep:
-              seconds: {{ .Values.guardrails.preStopSeconds }}
-        {{- end }}
         ports:
         - containerPort: 8080
         readinessProbe:

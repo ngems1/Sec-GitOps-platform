@@ -34,7 +34,6 @@ spec:
       {{- else }}
       serviceAccountName: default
       {{- end }}
-      {{- include "boutique.podGuardrails" (dict "root" $ "app" .Values.frontend.name) | nindent 6 }}
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000

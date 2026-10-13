@@ -148,13 +148,6 @@ jobs:
             # Autoscaling is on for EKS: the HPAs must be in the rendered chart.
             grep -q '^kind: HorizontalPodAutoscaler' "rendered-${env}.yaml" \
               || { echo "::error::${env}: no HorizontalPodAutoscaler rendered"; exit 1; }
-            # Guardrails are on for EKS: quota, limits, priority and disruption budgets.
-            for kind in ResourceQuota LimitRange PriorityClass PodDisruptionBudget; do
-              grep -q "^kind: ${kind}$" "rendered-${env}.yaml" \
-                || { echo "::error::${env}: no ${kind} rendered"; exit 1; }
-            done
-            grep -q "priorityClassName: boutique-${env}" "rendered-${env}.yaml" \
-              || { echo "::error::${env}: pods do not use the boutique-${env} PriorityClass"; exit 1; }
           done
 
   build:
