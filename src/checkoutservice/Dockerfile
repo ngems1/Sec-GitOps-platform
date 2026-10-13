@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Week 3: Go 1.24 (the AWS SDK for Go v2 needs a recent Go)
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache ca-certificates git curl
 RUN apk add build-base
 WORKDIR /src

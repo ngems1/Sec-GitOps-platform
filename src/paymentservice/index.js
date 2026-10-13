@@ -17,18 +17,7 @@
 'use strict';
 
 
-if(process.env.DISABLE_PROFILER) {
-  console.log("Profiler disabled.")
-}
-else {
-  console.log("Profiler enabled.")
-  require('@google-cloud/profiler').start({
-    serviceContext: {
-      service: 'paymentservice',
-      version: '1.0.0'
-    }
-  });
-}
+// Google Cloud Profiler removed: it only works on GCP (same as adservice).
 
 
 if(process.env.ENABLE_TRACING == "1") {

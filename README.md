@@ -171,7 +171,7 @@ Details and the test: [docs/week3/ISOLATION.md](docs/week3/ISOLATION.md).
 | Observability | Prometheus, Grafana, CloudWatch Container Insights, CloudWatch alarms |
 | Notifications | Slack incoming webhooks (deploys, alerts, orders), Amazon SES |
 | Security scanning | CodeQL SAST (all 5 languages + workflows), Checkov (Terraform), ECR scan on push (blocking on CRITICAL) |
-| Testing | Python unittest, Helm lint/render, Locust, chaos and isolation scripts |
+| Testing | Go test (with the race detector), .NET xUnit, Python unittest, Helm lint/render, Locust, chaos and isolation scripts |
 
 ---
 
@@ -241,7 +241,7 @@ flowchart LR
 
 | Workflow | When | What it does |
 |---|---|---|
-| `ci.yml` | Every pull request | Unit tests (inventory, emailservice, Lambda), Helm lint and render (must contain the HPAs), Docker build of changed services → the `ci-ok` check |
+| `ci.yml` | Every pull request | Unit tests in all 5 languages (Go, C#, Python services and the Lambda), gitleaks secret scan, Helm lint and render (must contain the HPAs), Docker build of changed services → the `ci-ok` check |
 | `codeql.yml` | Every pull request, push to `main`, weekly | SAST: CodeQL analyses the Go, C#, Java, JavaScript and Python code and the workflows; results in the Security tab |
 | `infra.yml` | PR (plan, read-only role), merge to `main` (apply), manual (`plan` / `apply` / `destroy`) | Terraform + Checkov |
 | `deploy.yml` | Push to `main` touching app code, or manual | Builds and scans, deploys dev, then prod after approval, then monitoring and the isolation test |
@@ -356,6 +356,8 @@ Full notes: [docs/week3/SECURITY.md](docs/week3/SECURITY.md).
   immutable image tags, ECR scan gate on CRITICAL findings, Checkov on every
   Terraform change. ECR's scanner replaced a third-party scanner action after the Trivy GitHub
   Actions compromise (March 2026), so no extra code runs with AWS credentials.
+- **Secret scanning** — gitleaks checks every pull request for committed credentials (AWS keys,
+  Slack webhooks, tokens); it runs without any AWS access.
 - **Hardened containers** — non-root users and read-only root filesystems.
 
 ## Observability
