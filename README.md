@@ -1,9 +1,11 @@
-# Retail Microservices Platform on AWS EKS
+# Sec-GitOps Platform
 
-[![Deploy](https://github.com/ngems1/microservice/actions/workflows/deploy.yml/badge.svg)](https://github.com/ngems1/microservice/actions/workflows/deploy.yml)
-[![CI](https://github.com/ngems1/microservice/actions/workflows/ci.yml/badge.svg)](https://github.com/ngems1/microservice/actions/workflows/ci.yml)
-[![Infra](https://github.com/ngems1/microservice/actions/workflows/infra.yml/badge.svg)](https://github.com/ngems1/microservice/actions/workflows/infra.yml)
-[![CodeQL](https://github.com/ngems1/microservice/actions/workflows/codeql.yml/badge.svg)](https://github.com/ngems1/microservice/actions/workflows/codeql.yml)
+**A secure delivery platform for a 12-service retail application on AWS EKS.**
+
+[![Deploy](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/deploy.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/deploy.yml)
+[![CI](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/ci.yml)
+[![Infra](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/infra.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/infra.yml)
+[![CodeQL](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/codeql.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/codeql.yml)
 
 An online shop made of **12 microservices** running on **Amazon EKS**, with separate **dev** and
 **prod** environments, an **event-driven order flow** (EventBridge, SQS, Lambda), real order emails
