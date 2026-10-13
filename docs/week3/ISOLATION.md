@@ -29,7 +29,11 @@ The probe pod has its egress fully open, like any dev pod, so a BLOCKED result c
 1. ~~**Prod Redis is reachable from dev**~~ **Fixed:** ElastiCache now requires TLS and an auth
    token per environment. The network still lets a dev pod open a connection (same VPC), but
    without prod's token Redis answers `NOAUTH`; the isolation test checks exactly that.
-2. **No resource quotas.** A dev load test could starve prod. Fix: a ResourceQuota and LimitRange per namespace, and a higher PriorityClass for prod.
-3. **No pod security standard.** Fix: label both namespaces `pod-security.kubernetes.io/enforce: restricted`.
+2. ~~**No resource quotas.**~~ **Implemented, pending first deploy:** a ResourceQuota and LimitRange per namespace, a
+   PriorityClass per environment (prod outranks dev and may preempt it; dev never preempts), a
+   PodDisruptionBudget and topology spread per service, and a preStop hook for graceful shutdown.
+3. **Pod Security labels implemented, pending first deploy: `baseline` enforced.** Privileged pods, host namespaces and hostPath are
+   refused; `restricted` is audited and warned. Next: enforce `restricted` once the db-migrate
+   Job and the isolation probe run as non-root.
 4. **Admin-only cluster access.** Fix: EKS access entries scoped per namespace (edit in dev, view in prod).
 5. **The frontend accepts traffic from the whole VPC.** This is needed for the ALB's IP targets, and acceptable because the frontend is public anyway.
