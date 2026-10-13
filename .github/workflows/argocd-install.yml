@@ -1,0 +1,72 @@
+name: argocd-install
+
+# Installs or updates Argo CD in the cluster (namespace "argocd") and hands dev over to it:
+# Actions > argocd-install > Run workflow, from main. Run it again after the first dev
+# deploy from main has written gitops/dev/values.yaml: that run creates the Application
+# "boutique-dev", and from then on deploy-env.yml deploys dev through Git.
+# Before the first run: docs/week3/ARGOCD.md (deploy key, GitHub App, terraform apply).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write # GitHub OIDC -> AWS
+  contents: read
+
+concurrency:
+  group: argocd-install
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ARGOCD_CHART_VERSION: 10.9.2 # Argo CD v3.5.3
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The deploy role only trusts main and the dev/prod environments.
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # argocd-wait.sh compares commits of main
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.3.0
+
+      - name: Connect kubectl to the cluster
+        run: |
+          aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/week3/terraform.tfstate" state.json --only-show-errors
+          secret_arn=$(jq -r '.outputs.argocd_repo_key_secret_arn.value // empty' state.json)
+          [ -n "$secret_arn" ] || { echo "::error::No argocd_repo_key_secret_arn in the Terraform outputs. Run the infra workflow (apply) first."; exit 1; }
+          echo "REPO_KEY_SECRET_ARN=${secret_arn}" >> "$GITHUB_ENV"
+          aws eks update-kubeconfig --name "$(jq -r '.outputs.cluster_name.value' state.json)" --region "$AWS_REGION"
+          rm -f state.json
+
+      - name: Install Argo CD and the dev Application
+        env:
+          REPO_URL: git@github.com:${{ github.repository }}.git
+        run: bash deploy/argocd.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Argo CD"
+            echo
+            echo '```'
+            kubectl -n argocd get pods 2>/dev/null || echo "not installed"
+            echo
+            kubectl -n argocd get applications 2>/dev/null || true
+            echo '```'
+            echo
+            echo "UI (no public address): \`kubectl -n argocd port-forward svc/argo-cd-argocd-server 8080:443\`, see docs/week3/ARGOCD.md."
+          } >> "$GITHUB_STEP_SUMMARY"
