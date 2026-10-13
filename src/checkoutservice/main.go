@@ -255,7 +255,7 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 			log.Warnf("[PlaceOrder] rejected for user_id=%q: the cart is empty", req.UserId)
 			return nil, status.Errorf(codes.InvalidArgument, "cannot place the order: the cart is empty")
 		}
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	total := pb.Money{CurrencyCode: req.UserCurrency,
