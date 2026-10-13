@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Week 3: runtime base image updated (the 2023 image had CRITICAL CVEs, blocked by the ECR scan gate)
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 
 FROM base as builder
 

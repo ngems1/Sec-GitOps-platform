@@ -15,7 +15,7 @@
  * limitations under the License.
  *
  */
-require('@google-cloud/trace-agent').start();
+// Google Cloud Trace agent removed: GCP only. Tracing uses OpenTelemetry.
 
 const path = require('path');
 const grpc = require('grpc');

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Week 3: was python:3.10.8-slim (Debian 11), whose package servers are gone
-FROM python:3.10-slim AS base
+FROM python:3.11-slim AS base
 
 FROM base as builder
 
@@ -34,7 +34,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /recommendationservice
 
 # Grab packages from builder
-COPY --from=builder /usr/local/lib/python3.10/ /usr/local/lib/python3.10/
+COPY --from=builder /usr/local/lib/python3.11/ /usr/local/lib/python3.11/
 
 # Add the application
 COPY . .

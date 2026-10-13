@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # https://mcr.microsoft.com/v2/dotnet/sdk/tags/list
-FROM mcr.microsoft.com/dotnet/sdk:7.0.400@sha256:926b9337622ccc594ed051d3559f1c4544686c9fd5f4656f09d1fe37d9a5ace2 as builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 WORKDIR /app
 COPY cartservice.csproj .
 RUN dotnet restore cartservice.csproj -r linux-musl-x64
@@ -22,7 +22,7 @@ RUN dotnet publish cartservice.csproj -p:PublishSingleFile=true -r linux-musl-x6
 
 # https://mcr.microsoft.com/v2/dotnet/runtime-deps/tags/list
 # Week 3: runtime base image updated (the 2023 image had CRITICAL CVEs, blocked by the ECR scan gate)
-FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-alpine
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine
 
 WORKDIR /app
 COPY --from=builder /cartservice .
