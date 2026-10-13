@@ -1,0 +1,5 @@
+# Helm values of boutique-dev, deployed by Argo CD (deploy/argocd/boutique-dev.yaml).
+# Written by the deploy workflow after each dev deploy from main: the names Terraform
+# created for dev and the image tag. Don't edit by hand; to roll back, revert the
+# commit that changed this file.
+{}

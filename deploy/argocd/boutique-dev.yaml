@@ -1,0 +1,32 @@
+# dev, deployed by Argo CD from main: the same chart and values files as the Helm
+# deploy, plus gitops/dev/values.yaml (Terraform names + image tag, written by the
+# deploy workflow). deploy/argocd.sh fills in the repository URL.
+#
+# No resources finalizer: deleting this Application leaves the shop running.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-dev
+  namespace: argocd
+spec:
+  project: boutique
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: main
+    path: helm-chart
+    helm:
+      releaseName: boutique
+      valueFiles:
+        - values-aws.yaml
+        - values-dev.yaml
+        - ../gitops/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The namespace, its labels and the Secrets in it belong to the deploy workflow.
+      - CreateNamespace=false

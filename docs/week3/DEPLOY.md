@@ -16,6 +16,7 @@ push to main ──► build ×12 ──► scan gate ──► deploy dev ─�
 | `helm-chart/templates/ingress.yaml` | The Ingress the controller turns into one ALB per environment |
 | `.github/workflows/isolation-test.yml`, `deploy/tests/isolation-test.sh` | After prod: proves dev can't reach prod (network + IAM), see ISOLATION.md |
 | `deploy/k8s/db-migrate.yaml` | Job that applies `db/migrations/*.sql` to RDS from inside the cluster |
+| `gitops/dev/values.yaml`, `.github/workflows/argocd-install.yml` | dev through Argo CD: see [ARGOCD.md](ARGOCD.md) |
 
 ## When it runs
 
@@ -33,6 +34,7 @@ Prod always waits for a reviewer on the `prod` environment. If your repo can't h
 3. **Load Balancer Controller.** One copy in `kube-system`, shared by both environments. Its AWS rights come from Pod Identity (Terraform).
 4. **Database migrations.** RDS is private, so a Kubernetes Job runs them inside the VPC. The password goes from Secrets Manager to a Secret that is deleted right after. The connection uses TLS with certificate checks. The SQL is safe to run again.
 5. **Helm.** `helm upgrade --install --rollback-on-failure`: if the new pods don't become ready within 10 minutes, Helm restores the previous version by itself.
+   **dev with Argo CD** (once `argocd-install` has created the Application `boutique-dev`): instead of Helm, the workflow commits the image tag to `gitops/dev/values.yaml` on `main` and waits until Argo CD has synced it (Synced and Healthy). A failed smoke test reverts that commit. Details: [ARGOCD.md](ARGOCD.md).
 6. **Smoke test.** It checks that the ALB answers `/`, `/_healthz`, a product page and `/cart`, and that `inventoryservice /stock` returns stock from DynamoDB, which proves Pod Identity works. If the test fails, the workflow rolls back to the previous Helm revision.
 
 ## Variables used

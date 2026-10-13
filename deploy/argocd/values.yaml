@@ -1,0 +1,21 @@
+# argo-cd Helm chart values (installed by deploy/argocd.sh). A small install for one cluster.
+
+configs:
+  cm:
+    # Argo CD marks what it manages with an annotation, so it only ever prunes objects it
+    # created from Git. The Secrets, Job and ConfigMap the deploy workflow creates in
+    # boutique-dev (redis-auth, emailservice-slack, db-migrate...) are never touched.
+    application.resourceTrackingMethod: annotation
+    exec.enabled: false # no shell into pods from the UI
+
+dex:
+  enabled: false # no SSO: the local admin user, reached through kubectl port-forward only
+
+notifications:
+  enabled: false
+
+server:
+  service:
+    type: ClusterIP # never a LoadBalancer: the UI has no public address
+  ingress:
+    enabled: false
