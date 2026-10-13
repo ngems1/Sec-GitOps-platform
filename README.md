@@ -350,8 +350,9 @@ Full notes: [docs/week3/SECURITY.md](docs/week3/SECURITY.md).
 - **Private by default** — only the ALBs are public. Nodes, RDS, Redis and the Lambda live in
   private subnets. Grafana only answers allow-listed IPs (`0.0.0.0/0` is refused by the pipeline).
 - **Network policies** — deny-all by default, one allow rule per service call.
-- **Encryption** — a KMS key per environment for RDS and its secret; DynamoDB and SQS encrypted at
-  rest; TLS to the database with certificate checks; HTTPS on every public address.
+- **Encryption** — a KMS key per environment for RDS, its secret and Redis; DynamoDB and SQS
+  encrypted at rest; TLS to the database (with certificate checks) and to Redis (with an auth token
+  per environment); HTTPS on every public address.
 - **Secrets stay out of code** — RDS passwords managed by RDS in Secrets Manager; Slack webhooks only
   in GitHub secrets (and Secrets Manager for the alerts Lambda); never in Terraform or the repo.
 - **Supply chain** — CodeQL static analysis (SAST) of the application code on every pull request,
@@ -385,7 +386,7 @@ Details: [docs/week3/MONITORING.md](docs/week3/MONITORING.md), [docs/week3/SLACK
 | Rollback (acceptance step 12) | deploy with an older `image_tag` | Footer and Helm history back on the old version, nothing rebuilt |
 | Pod failure | chaos `pod-failure`, checkoutservice | New pod Ready in 5 s, 0 failed shop requests |
 | Consumer failure | chaos `consumer-failure`, 8 min | Backlog alarm 🔴 then 🟢 in Slack, queued orders processed after the restart, DLQs at 0 |
-| Isolation | isolation-test | dev → prod services BLOCKED; dev role → prod DynamoDB AccessDenied |
+| Isolation | isolation-test | dev → prod services BLOCKED; dev role → prod DynamoDB AccessDenied; dev → prod Redis refused (NOAUTH) |
 | Order email | Checkout with a verified address | SES email "Your order … is confirmed" + Slack message |
 
 ---

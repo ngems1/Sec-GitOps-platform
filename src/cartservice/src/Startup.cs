@@ -33,9 +33,18 @@ namespace cartservice
 
             if (!string.IsNullOrEmpty(redisAddress))
             {
+                // ElastiCache: TLS (REDIS_TLS=true) and an auth token (REDIS_PASSWORD).
+                // Both are unset for the local, in-cluster Redis.
+                var redisOptions = StackExchange.Redis.ConfigurationOptions.Parse(redisAddress);
+                redisOptions.Ssl = string.Equals(Configuration["REDIS_TLS"], "true", StringComparison.OrdinalIgnoreCase);
+                string redisPassword = Configuration["REDIS_PASSWORD"];
+                if (!string.IsNullOrEmpty(redisPassword))
+                {
+                    redisOptions.Password = redisPassword;
+                }
                 services.AddStackExchangeRedisCache(options =>
                 {
-                    options.Configuration = redisAddress;
+                    options.ConfigurationOptions = redisOptions;
                 });
                 services.AddSingleton<ICartStore, RedisCartStore>();
             }

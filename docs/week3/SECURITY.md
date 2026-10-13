@@ -48,7 +48,7 @@ merge to `main`.
 |---|---|
 | Public surface | Only the three ALBs (dev, prod, Grafana) |
 | Private subnets | EKS nodes, RDS, ElastiCache, Lambda: no public IP, outbound through one NAT gateway |
-| RDS / Redis security groups | Port 3306 / 6379 from inside the VPC only |
+| RDS / Redis security groups | Port 3306 / 6379 from inside the VPC only; Redis also requires TLS and the environment's auth token |
 | NetworkPolicies | Deny-all in each namespace + one allow rule per service call; prod accepts callers only from `boutique-prod`. Enforced by the VPC CNI |
 | Grafana | ALB restricted to `MONITORING_ALLOWED_CIDR`; the pipeline refuses `0.0.0.0/0` |
 | HTTPS | ACM certificate for `<domain>` and `*.<domain>`, policy `ELBSecurityPolicy-TLS13-1-2-2021-06`, port 80 only redirects |
@@ -91,7 +91,7 @@ read-only disk (`preinstall_disabled` keeps it from trying to write plugins).
 
 | Gap | Risk | Fix |
 |---|---|---|
-| Prod Redis reachable from dev pods, no auth, no TLS | A dev pod could read prod carts | ElastiCache auth token + TLS per environment, token in Secrets Manager |
+| ~~Prod Redis reachable from dev pods, no auth, no TLS~~ | Fixed | ElastiCache with TLS required and an auth token per environment (token in the encrypted Terraform state, delivered as a Kubernetes Secret); isolation test checks dev gets `NOAUTH` |
 | No ResourceQuota / LimitRange | A dev load test could starve prod | Quota per namespace, higher PriorityClass for prod |
 | No Pod Security Standard label | A privileged pod could be deployed | `pod-security.kubernetes.io/enforce: restricted` on both namespaces |
 | EKS API endpoint public | Exposed to the internet (still IAM-authenticated) | Restrict `cluster_endpoint_public_access_cidrs` or go private + runner in the VPC |

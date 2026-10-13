@@ -2,13 +2,15 @@
 //
 // Only the two commands the cache needs: GET and SET ... EX. It speaks the Redis
 // protocol (RESP) over one TCP connection, reconnecting after any error, so no
-// extra library is needed. Every call has a short deadline: a slow or missing
+// extra library is needed. With useTLS the connection is TLS (ElastiCache encryption
+// in transit), and with a password it sends AUTH right after connecting. Every call has a short deadline: a slow or missing
 // Redis makes the catalog fall back to MySQL instead of slowing the shop down.
 package main
 
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +29,10 @@ type cacheStore interface {
 type redisCache struct {
 	addr    string
 	timeout time.Duration
+
+	useTLS    bool        // REDIS_TLS=true: ElastiCache with encryption in transit
+	password  string      // REDIS_PASSWORD: ElastiCache auth token, sent with AUTH
+	tlsConfig *tls.Config // nil = system CAs, server name from addr (tests set their own CA)
 
 	mu   sync.Mutex
 	conn net.Conn
@@ -62,19 +68,27 @@ func (r *redisCache) do(ctx context.Context, args ...string) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.conn == nil {
-		d := net.Dialer{Timeout: r.timeout}
-		conn, err := d.DialContext(ctx, "tcp", r.addr)
-		if err != nil {
-			return nil, fmt.Errorf("redis connect %s: %w", r.addr, err)
-		}
-		r.conn, r.rd = conn, bufio.NewReader(conn)
-	}
-
 	deadline := time.Now().Add(r.timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
+
+	if r.conn == nil {
+		conn, err := r.dial(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("redis connect %s: %w", r.addr, err)
+		}
+		r.conn, r.rd = conn, bufio.NewReader(conn)
+		if r.password != "" {
+			_ = r.conn.SetDeadline(deadline)
+			if _, err := r.roundTrip([]string{"AUTH", r.password}); err != nil {
+				r.conn.Close()
+				r.conn, r.rd = nil, nil
+				return nil, fmt.Errorf("redis auth: %w", err) // never includes the token
+			}
+		}
+	}
+
 	_ = r.conn.SetDeadline(deadline)
 
 	reply, err := r.roundTrip(args)
@@ -88,6 +102,25 @@ func (r *redisCache) do(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, err
 	}
 	return reply, nil
+}
+
+// dial opens the TCP connection, wrapped in TLS when useTLS is set. The server
+// certificate is checked against the system CAs and the endpoint's host name.
+func (r *redisCache) dial(ctx context.Context) (net.Conn, error) {
+	d := net.Dialer{Timeout: r.timeout}
+	if !r.useTLS {
+		return d.DialContext(ctx, "tcp", r.addr)
+	}
+	cfg := r.tlsConfig
+	if cfg == nil {
+		host, _, err := net.SplitHostPort(r.addr)
+		if err != nil {
+			host = r.addr
+		}
+		cfg = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	}
+	td := tls.Dialer{NetDialer: &d, Config: cfg}
+	return td.DialContext(ctx, "tcp", r.addr)
 }
 
 func (r *redisCache) roundTrip(args []string) ([]byte, error) {

@@ -26,6 +26,12 @@ output "environments" {
   value       = { for name, env in module.env : name => env.settings }
 }
 
+output "redis_auth_tokens" {
+  description = "Redis auth token per environment, read by the deploy workflow (never printed)."
+  value       = { for name, env in module.env : name => env.redis_auth_token }
+  sensitive   = true
+}
+
 output "slack_webhook_secret_arn" {
   description = "Secrets Manager secret the infra workflow writes the Slack webhook URL into (read by the slack-alerts Lambda)."
   value       = aws_secretsmanager_secret.slack_webhook.arn

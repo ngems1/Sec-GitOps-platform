@@ -7,8 +7,8 @@
 #            it is public (behind the ALB) and must answer.
 #   IAM      the dev inventoryservice pod (Pod Identity) reads its own DynamoDB
 #            table (must work), then prod's table (must be AccessDenied).
-#   Known gap  prod Redis is reachable from dev (no auth, open to the VPC).
-#            Reported as a warning until Redis gets an auth token + TLS.
+#   Redis      prod Redis is still reachable over the network from dev (same VPC),
+#            but it requires TLS and prod's auth token: a dev pod is refused (NOAUTH).
 #
 # Needs: kubectl connected to the cluster, and these variables:
 #   DEV_NS PROD_NS DEV_TABLE PROD_TABLE PROD_REDIS (host:port)
@@ -95,15 +95,23 @@ for target in productcatalogservice:3550 cartservice:7070 checkoutservice:5050 c
   record "dev -> prod ${svc}:${port}" BLOCKED "$(connect "${svc}.${PROD_NS}.svc.cluster.local" "$port")"
 done
 
+# Redis: a TLS connection from the dev probe, then PING without prod's token.
+# REFUSED = Redis answered NOAUTH (or refused the connection): dev cannot use prod data.
 redis_host=${PROD_REDIS%%:*}; redis_port=${PROD_REDIS##*:}
-redis=$(connect "$redis_host" "$redis_port")
-if [ "$redis" = "OPEN" ]; then
-  rows+=("| dev -> prod Redis (known gap) | BLOCKED | OPEN | WARN |")
-  echo "WARN  dev can open a connection to prod Redis: add an auth token + TLS (see docs/week3/ISOLATION.md)"
-  echo "::warning::Known gap: prod Redis is reachable from dev (no auth token yet)."
-else
-  rows+=("| dev -> prod Redis | BLOCKED | ${redis} | PASS |")
-fi
+redis=$(kubectl -n "$DEV_NS" exec "$PROBE" -- python -c "
+import socket, ssl
+try:
+    raw = socket.create_connection(('$redis_host', $redis_port), timeout=3)
+except OSError:
+    print('REFUSED'); raise SystemExit
+try:
+    s = ssl.create_default_context().wrap_socket(raw, server_hostname='$redis_host')
+    s.sendall(b'*1\\r\\n\$4\\r\\nPING\\r\\n')
+    reply = s.recv(64)
+    print('REFUSED' if reply.startswith(b'-NOAUTH') else 'OPEN' if reply.startswith(b'+PONG') else 'UNEXPECTED')
+except Exception as e:
+    print('ERROR ' + type(e).__name__)" 2>/dev/null | tail -1)
+record "dev -> prod Redis without prod's token" REFUSED "${redis:-ERROR}"
 
 echo "== IAM: dev inventoryservice (Pod Identity) =="
 # Uses the dev pod's own credentials. Prints OK, AccessDenied, or what went wrong

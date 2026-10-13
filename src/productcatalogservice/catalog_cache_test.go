@@ -3,6 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"net"
 	"strconv"
 	"strings"
@@ -11,21 +18,32 @@ import (
 	"time"
 )
 
-// fakeRedis is a tiny in-memory Redis speaking RESP, for GET and SET ... EX.
+// fakeRedis is a tiny in-memory Redis speaking RESP, for GET and SET ... EX,
+// optionally behind TLS and requiring AUTH <password> like ElastiCache.
 type fakeRedis struct {
-	ln   net.Listener
-	mu   sync.Mutex
-	data map[string]string
-	ttls map[string]string
+	ln       net.Listener
+	password string // "" = no auth required
+	mu       sync.Mutex
+	data     map[string]string
+	ttls     map[string]string
 }
 
 func startFakeRedis(t *testing.T) *fakeRedis {
+	return startFakeRedisWith(t, "", nil)
+}
+
+// startFakeRedisWith starts a fake that requires AUTH when password is set and
+// speaks TLS when serverTLS is set.
+func startFakeRedisWith(t *testing.T, password string, serverTLS *tls.Config) *fakeRedis {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeRedis{ln: ln, data: map[string]string{}, ttls: map[string]string{}}
+	if serverTLS != nil {
+		ln = tls.NewListener(ln, serverTLS)
+	}
+	f := &fakeRedis{ln: ln, password: password, data: map[string]string{}, ttls: map[string]string{}}
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -42,6 +60,7 @@ func startFakeRedis(t *testing.T) *fakeRedis {
 func (f *fakeRedis) serve(conn net.Conn) {
 	defer conn.Close()
 	rd := bufio.NewReader(conn)
+	authed := f.password == ""
 	for {
 		line, err := rd.ReadString('\n')
 		if err != nil {
@@ -58,6 +77,19 @@ func (f *fakeRedis) serve(conn net.Conn) {
 				return
 			}
 			args[i] = strings.TrimSuffix(v, "\r\n")
+		}
+		if strings.ToUpper(args[0]) == "AUTH" {
+			if f.password != "" && len(args) == 2 && args[1] == f.password {
+				authed = true
+				conn.Write([]byte("+OK\r\n"))
+			} else {
+				conn.Write([]byte("-WRONGPASS invalid username-password pair or user is disabled.\r\n"))
+			}
+			continue
+		}
+		if !authed {
+			conn.Write([]byte("-NOAUTH Authentication required.\r\n"))
+			continue
 		}
 		f.mu.Lock()
 		switch strings.ToUpper(args[0]) {
@@ -131,5 +163,109 @@ func TestEncodeCommand(t *testing.T) {
 	got := string(encodeCommand([]string{"GET", "key"}))
 	if want := "*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// selfSignedTLS returns a server TLS config for 127.0.0.1 and a client config
+// that trusts it (the role ElastiCache's Amazon-issued certificate plays in AWS).
+func selfSignedTLS(t *testing.T) (server, client *tls.Config) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(cert)
+	server = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	client = &tls.Config{RootCAs: pool, ServerName: "127.0.0.1", MinVersion: tls.VersionTLS12}
+	return server, client
+}
+
+func TestRedisAuthSentOnConnect(t *testing.T) {
+	f := startFakeRedisWith(t, "s3cret", nil)
+	c := newRedisCache(f.ln.Addr().String())
+	c.password = "s3cret"
+	ctx := context.Background()
+	if err := c.Set(ctx, "k", []byte("v"), time.Minute); err != nil {
+		t.Fatalf("set with the right token: %v", err)
+	}
+	if got, found, err := c.Get(ctx, "k"); err != nil || !found || string(got) != "v" {
+		t.Fatalf("got %q found=%v err=%v", got, found, err)
+	}
+}
+
+func TestRedisWrongPasswordFails(t *testing.T) {
+	f := startFakeRedisWith(t, "s3cret", nil)
+	c := newRedisCache(f.ln.Addr().String())
+	c.password = "the-dev-token"
+	_, _, err := c.Get(context.Background(), "k")
+	if err == nil {
+		t.Fatal("want an auth error with a wrong token")
+	}
+	if strings.Contains(err.Error(), "the-dev-token") {
+		t.Fatalf("the error leaks the token: %v", err)
+	}
+	if c.conn != nil {
+		t.Fatal("a failed AUTH should drop the connection")
+	}
+}
+
+func TestRedisWithoutTokenIsRejected(t *testing.T) {
+	f := startFakeRedisWith(t, "s3cret", nil)
+	c := newRedisCache(f.ln.Addr().String()) // no password: like a pod without the Secret
+	if _, _, err := c.Get(context.Background(), "k"); err == nil || !strings.Contains(err.Error(), "NOAUTH") {
+		t.Fatalf("got err=%v, want NOAUTH", err)
+	}
+}
+
+func TestRedisTLSAndAuth(t *testing.T) {
+	serverTLS, clientTLS := selfSignedTLS(t)
+	f := startFakeRedisWith(t, "s3cret", serverTLS)
+	c := newRedisCache(f.ln.Addr().String())
+	c.useTLS, c.tlsConfig, c.password = true, clientTLS, "s3cret"
+	ctx := context.Background()
+	if err := c.Set(ctx, "k", []byte("over TLS"), time.Minute); err != nil {
+		t.Fatalf("set over TLS: %v", err)
+	}
+	if got, found, err := c.Get(ctx, "k"); err != nil || !found || string(got) != "over TLS" {
+		t.Fatalf("got %q found=%v err=%v", got, found, err)
+	}
+}
+
+func TestRedisTLSRejectsUntrustedCertificate(t *testing.T) {
+	serverTLS, _ := selfSignedTLS(t)
+	f := startFakeRedisWith(t, "", serverTLS)
+	c := newRedisCache(f.ln.Addr().String())
+	c.useTLS = true // system CAs only: the self-signed certificate must be refused
+	if _, _, err := c.Get(context.Background(), "k"); err == nil {
+		t.Fatal("want a certificate error")
+	}
+}
+
+func TestRedisPlainClientCannotTalkToTLSServer(t *testing.T) {
+	serverTLS, _ := selfSignedTLS(t)
+	f := startFakeRedisWith(t, "", serverTLS)
+	c := newRedisCache(f.ln.Addr().String()) // REDIS_TLS unset
+	if _, _, err := c.Get(context.Background(), "k"); err == nil {
+		t.Fatal("a plain connection to a TLS-only Redis should fail")
 	}
 }

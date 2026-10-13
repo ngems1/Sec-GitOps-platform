@@ -28,6 +28,10 @@ frontend:
   ingress:
     enabled: true          # ...an ALB from the Ingress instead (templates/ingress.yaml)
 
+redisAuth:
+  tls: true                # ElastiCache requires TLS (transit_encryption_mode = required)
+  secretName: redis-auth   # created per namespace by deploy-env.yml from the Terraform state
+
 cartDatabase:
   type: redis
   inClusterRedis:

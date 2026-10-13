@@ -65,6 +65,17 @@ spec:
         - name: REDIS_ADDR
         {{- end }}
           value: {{ .Values.cartDatabase.connectionString | quote }}
+        {{- if and (eq .Values.cartDatabase.type "redis") .Values.redisAuth.tls }}
+        - name: REDIS_TLS
+          value: "true"
+        {{- end }}
+        {{- if and (eq .Values.cartDatabase.type "redis") .Values.redisAuth.secretName }}
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.redisAuth.secretName | quote }}
+              key: token
+        {{- end }}
         resources:
           {{- toYaml .Values.cartService.resources | nindent 10 }}
         readinessProbe:
