@@ -61,6 +61,53 @@ jobs:
           pip install --quiet pymysql==1.1.1
           python -m unittest -v
 
+  # The Go and C# unit tests (they existed but never ran in CI).
+  go-tests:
+    name: go tests ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [checkoutservice, frontend, productcatalogservice, shippingservice]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26" # same toolchain as the Dockerfiles
+          cache-dependency-path: src/${{ matrix.service }}/go.sum
+      - name: go vet + go test
+        working-directory: src/${{ matrix.service }}
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+  dotnet-tests:
+    name: cartservice tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: dotnet test
+        run: dotnet test src/cartservice/tests --configuration Release
+
+  # Secret scanning. Fails the pull request if a commit in it adds a
+  # credential (AWS keys, Slack webhooks, tokens). No AWS access in this job.
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   helm:
     name: helm chart
     runs-on: ubuntu-latest
@@ -125,7 +172,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, tests, helm, build]
+    needs: [changes, tests, go-tests, dotnet-tests, secrets, helm, build]
     runs-on: ubuntu-latest
     steps:
       - name: All checks passed
