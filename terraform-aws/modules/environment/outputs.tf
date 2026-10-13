@@ -25,3 +25,8 @@ output "redis_auth_token" {
   value       = random_password.redis_auth.result
   sensitive   = true
 }
+
+output "kms_key_arn" {
+  description = "This environment's KMS key (database, its secret, Redis)."
+  value       = aws_kms_key.env.arn
+}

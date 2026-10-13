@@ -54,3 +54,8 @@ output "ses" {
     recipients   = sort(tolist(local.ses_recipients))
   } : null
 }
+
+output "argocd_repo_key_secret_arn" {
+  description = "Secrets Manager secret holding Argo CD's deploy key (read by the argocd-install workflow)."
+  value       = aws_secretsmanager_secret.argocd_repo_key.arn
+}
