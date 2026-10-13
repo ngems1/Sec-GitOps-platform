@@ -7,6 +7,11 @@ name: deploy-env
 #   3. helm upgrade --install, rolled back automatically if the pods don't become ready
 #   4. Smoke test through the ALB, rolled back to the previous release if it fails
 #
+# dev, once Argo CD runs it (the Application "boutique-dev", see argocd-install.yml):
+# step 3 is a commit of the image tag to gitops/dev/values.yaml on main, then a wait
+# until Argo CD has synced it; a failed smoke test reverts that commit. Before that,
+# dev uses the Helm steps and the tag is committed after a passing smoke test.
+#
 # The job runs in the GitHub environment of the same name, so prod waits for the
 # prod reviewers to approve, and AWS only lets the deploy role in from dev/prod/main.
 
@@ -123,6 +128,45 @@ jobs:
           aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
           kubectl get nodes -o wide
 
+      # dev: Argo CD deploys it once argocd-install.yml has created its Application;
+      # until then the Helm steps below do. prod is always deployed by Helm here.
+      - name: Who deploys (Argo CD or Helm)
+        id: mode
+        run: |
+          # An API error fails the step: it must never fall back to Helm by mistake.
+          argocd=false
+          if [ "$ENVIRONMENT" = dev ]; then
+            crd=$(kubectl get crd applications.argoproj.io --ignore-not-found -o name)
+            app=""
+            [ -z "$crd" ] || app=$(kubectl -n argocd get application boutique-dev --ignore-not-found -o name)
+            [ -z "$app" ] || argocd=true
+          fi
+          if [ "$argocd" = true ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "::error::dev is deployed by Argo CD from main. Run the deploy from main (this run: ${GITHUB_REF})."
+              exit 1
+            fi
+          fi
+          echo "argocd=${argocd}" >> "$GITHUB_OUTPUT"
+          echo "${ENVIRONMENT} is deployed by: $([ "$argocd" = true ] && echo 'Argo CD (boutique-dev)' || echo Helm)"
+
+      # Read-only evidence: how the frontend Deployment was last written. "helm Apply" means
+      # Helm used server-side apply, "helm Update" client-side apply.
+      - name: Helm apply method (report)
+        if: inputs.environment == 'dev'
+        run: |
+          {
+            echo "### How boutique-dev objects were applied (deploy/frontend)"
+            echo '```'
+            if kubectl -n "$NS" get deployment frontend >/dev/null 2>&1; then
+              kubectl -n "$NS" get deployment frontend -o json \
+                | jq -r '.metadata.managedFields[] | "\(.manager)  \(.operation)  \(.time)"'
+            else
+              echo "no frontend Deployment yet"
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Redis auth token for this environment (Terraform state -> Kubernetes Secret
       # "redis-auth", key "token"). Masked in the logs, never passed as a Helm value.
       - name: Redis auth Secret
@@ -228,6 +272,7 @@ jobs:
 
       - name: Remember the current release (for rollback)
         id: before
+        if: steps.mode.outputs.argocd != 'true'
         run: |
           rev=$(helm -n "$NS" history "$RELEASE" --max 1 -o json 2>/dev/null | jq -r '.[0].revision // 0' || echo 0)
           echo "revision=${rev:-0}" >> "$GITHUB_OUTPUT"
@@ -239,6 +284,7 @@ jobs:
       # first install stays in place, to be inspected (see "Diagnostics" below).
       - name: Deploy with Helm
         id: helm
+        if: steps.mode.outputs.argocd != 'true'
         env:
           PREVIOUS: ${{ steps.before.outputs.revision }}
         run: |
@@ -250,6 +296,41 @@ jobs:
             -f values-terraform.json \
             --set images.tag="$TAG" \
             "${safety[@]}" --timeout 10m
+          kubectl -n "$NS" get pods -o wide
+
+      # dev from main: the image tag goes to Git (gitops/dev/values.yaml), committed by a
+      # GitHub App, the only bypass actor on the main ruleset. Not set up yet = not recorded.
+      - name: GitHub App token (gitops commits)
+        id: app
+        if: inputs.environment == 'dev' && github.ref == 'refs/heads/main' && vars.GITOPS_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Check out main for the gitops commit
+        if: steps.app.outcome == 'success'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: gitops-repo
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      # Argo CD: the commit is the deploy. Argo CD syncs main and rolls the pods.
+      - name: Commit the image tag (Argo CD deploys it)
+        id: gitops
+        if: steps.mode.outputs.argocd == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+        run: bash deploy/gitops-commit.sh commit
+
+      - name: Wait for Argo CD (Synced and Healthy)
+        if: steps.mode.outputs.argocd == 'true'
+        run: |
+          bash deploy/argocd-wait.sh boutique-dev "${{ steps.gitops.outputs.revision }}"
           kubectl -n "$NS" get pods -o wide
 
       - name: Smoke test
@@ -309,6 +390,20 @@ jobs:
           echo "inventory /stock: ${stock}"
           jq -e 'length > 0' <<<"$stock" >/dev/null || { echo "::error::inventoryservice /stock returned no stock"; exit 1; }
 
+      # Helm deployed dev and it passed: record that version in Git, so Argo CD starts
+      # from what runs when argocd-install.yml creates the Application.
+      - name: Record the image tag in Git
+        if: steps.mode.outputs.argocd != 'true' && inputs.environment == 'dev' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::GITOPS_APP_ID is not set for dev: the image tag is not recorded in Git (docs/week3/ARGOCD.md)."
+            exit 0
+          fi
+          bash deploy/gitops-commit.sh commit
+
       # Why pods aren't ready: status, scheduling/probe events, and the logs of
       # containers that crashed. Printed in the log and on the run's Summary page.
       - name: Diagnostics
@@ -328,6 +423,18 @@ jobs:
           echo "::warning::Smoke test failed, rolling back ${RELEASE} to revision ${{ steps.before.outputs.revision }}."
           helm -n "$NS" rollback "$RELEASE" "${{ steps.before.outputs.revision }}" --wait --timeout 10m
 
+      # Argo CD: revert the tag commit; Argo CD syncs the previous version back.
+      - name: Roll back (Argo CD)
+        if: failure() && steps.gitops.outputs.commit != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          FAILED: ${{ steps.gitops.outputs.commit }}
+        run: |
+          echo "::warning::dev failed after ${FAILED:0:12}, reverting that commit."
+          revision=$(bash deploy/gitops-commit.sh revert "$FAILED")
+          bash deploy/argocd-wait.sh boutique-dev "$revision"
+
       - name: Summary
         if: always()
         run: |
@@ -338,6 +445,11 @@ jobs:
             echo "- Namespace: \`${NS:-?}\`"
             echo
             echo '```'
-            helm -n "${NS:-x}" history "$RELEASE" --max 5 2>/dev/null || echo "no release yet"
+            if [ "${{ steps.mode.outputs.argocd }}" = true ]; then
+              kubectl -n argocd get application boutique-dev \
+                -o custom-columns='APPLICATION:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision' 2>/dev/null || true
+            else
+              helm -n "${NS:-x}" history "$RELEASE" --max 5 2>/dev/null || echo "no release yet"
+            fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
