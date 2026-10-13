@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/http"
       version = "~> 3.4"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 
   # Bucket, key and region are passed by the GitHub workflow (-backend-config).

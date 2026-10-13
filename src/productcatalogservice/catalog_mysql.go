@@ -149,7 +149,10 @@ func newCatalogLoaderFromEnv(ctx context.Context, fallback func() []*pb.Product)
 		decode:   decodeProducts,
 	}
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
-		loader.cache = newRedisCache(addr)
+		cache := newRedisCache(addr)
+		cache.useTLS = strings.EqualFold(os.Getenv("REDIS_TLS"), "true")
+		cache.password = os.Getenv("REDIS_PASSWORD")
+		loader.cache = cache
 	}
 	return loader, nil
 }

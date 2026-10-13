@@ -20,13 +20,15 @@ Dev and prod share one VPC and one EKS cluster to save cost. They are kept apart
 | dev → prod productcatalog, cart, checkout, currency, payment, inventory | BLOCKED | Prod NetworkPolicies drop traffic from other namespaces |
 | dev inventoryservice → dev DynamoDB table | OK | Pod Identity gives the pod its own role |
 | dev inventoryservice → prod DynamoDB table | AccessDenied | A dev role can't touch prod data |
-| dev → prod Redis | reported | **Known gap**, shown as a warning |
+| dev → prod Redis without prod's token | REFUSED (NOAUTH) | Redis requires TLS and a per-environment auth token; a dev pod only has the dev token |
 
 The probe pod has its egress fully open, like any dev pod, so a BLOCKED result comes from the **prod** side, not from dev's own deny-all.
 
 ## Known gaps (remediation plan)
 
-1. **Prod Redis is reachable from dev** (open to the VPC, no auth, no TLS). Fix: an ElastiCache auth token + TLS per environment, with the token in Secrets Manager.
+1. ~~**Prod Redis is reachable from dev**~~ **Fixed:** ElastiCache now requires TLS and an auth
+   token per environment. The network still lets a dev pod open a connection (same VPC), but
+   without prod's token Redis answers `NOAUTH`; the isolation test checks exactly that.
 2. **No resource quotas.** A dev load test could starve prod. Fix: a ResourceQuota and LimitRange per namespace, and a higher PriorityClass for prod.
 3. **No pod security standard.** Fix: label both namespaces `pod-security.kubernetes.io/enforce: restricted`.
 4. **Admin-only cluster access.** Fix: EKS access entries scoped per namespace (edit in dev, view in prod).

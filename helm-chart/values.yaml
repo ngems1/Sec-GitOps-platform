@@ -240,6 +240,12 @@ shippingService:
       cpu: 200m
       memory: 128Mi
 
+# Redis encryption in transit + auth token (ElastiCache). Used by cartservice and the
+# productcatalogservice cache. Off for the in-cluster/local Redis.
+redisAuth:
+  tls: false
+  secretName: ""   # Kubernetes Secret with key "token" (created by the deploy workflow)
+
 cartDatabase:
   # Specifies the type of the cartservice's database, could be either redis or spanner.
   type: redis

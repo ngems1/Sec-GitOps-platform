@@ -123,6 +123,21 @@ jobs:
           aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
           kubectl get nodes -o wide
 
+      # Redis auth token for this environment (Terraform state -> Kubernetes Secret
+      # "redis-auth", key "token"). Masked in the logs, never passed as a Helm value.
+      - name: Redis auth Secret
+        run: |
+          token=$(jq -r --arg env "$ENVIRONMENT" '.outputs.redis_auth_tokens.value[$env] // empty' state.json)
+          if [ -z "$token" ]; then
+            echo "::error::No Redis auth token for '$ENVIRONMENT' in the Terraform outputs. Run the infra workflow (apply) first."
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "$NS" create secret generic redis-auth --from-literal=token="$token" \
+            --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+          echo "Secret redis-auth ready in $NS"
+
       # Shared by dev and prod; its IAM role (Pod Identity) comes from Terraform.
       # Installing it again with the same version changes nothing.
       - name: AWS Load Balancer Controller

@@ -97,6 +97,17 @@ spec:
           value: {{ .dbSecretArn | quote }}
         - name: REDIS_ADDR
           value: {{ .redisAddr | quote }}
+        {{- if $.Values.redisAuth.tls }}
+        - name: REDIS_TLS
+          value: "true"
+        {{- end }}
+        {{- if $.Values.redisAuth.secretName }}
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.redisAuth.secretName | quote }}
+              key: token
+        {{- end }}
         - name: CATALOG_CACHE_TTL
           value: {{ .cacheTtl | quote }}
         {{- end }}

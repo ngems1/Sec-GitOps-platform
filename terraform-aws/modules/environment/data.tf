@@ -66,7 +66,7 @@ resource "aws_db_instance" "mysql" {
 }
 
 # ---------------------------------------------------------------------------
-# ElastiCache Redis: carts (cartservice) and the catalog cache
+# ElastiCache Redis: carts (cartservice) and the catalog cache, TLS + auth token
 # ---------------------------------------------------------------------------
 resource "aws_elasticache_subnet_group" "redis" {
   name       = "${var.name_prefix}-redis"
@@ -87,17 +87,38 @@ resource "aws_security_group" "redis" {
   }
 }
 
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id               = "${var.name_prefix}-redis"
-  engine                   = "redis"
-  engine_version           = "7.1"
-  node_type                = "cache.t4g.micro"
-  num_cache_nodes          = 1
-  parameter_group_name     = "default.redis7"
-  port                     = 6379
-  subnet_group_name        = aws_elasticache_subnet_group.redis.name
-  security_group_ids       = [aws_security_group.redis.id]
-  snapshot_retention_limit = 1
+# One auth token per environment: a dev pod holds the dev token only, so it can no
+# longer use prod Redis even though the network lets it connect (closes the
+# "prod Redis reachable from dev" gap). Letters and digits only, as ElastiCache
+# requires; it lives in the (encrypted) Terraform state and reaches the pods as a
+# Kubernetes Secret created by the deploy workflow.
+resource "random_password" "redis_auth" {
+  length  = 32
+  special = false
+}
+
+# A replication group (one node) instead of aws_elasticache_cluster: only replication
+# groups support encryption in transit and an auth token for Redis.
+resource "aws_elasticache_replication_group" "redis" {
+  replication_group_id       = "${var.name_prefix}-redis"
+  description                = "Carts and catalog cache for ${var.env} (TLS + auth token)"
+  engine                     = "redis"
+  engine_version             = "7.1"
+  node_type                  = "cache.t4g.micro"
+  num_cache_clusters         = 1
+  automatic_failover_enabled = false
+  parameter_group_name       = "default.redis7"
+  port                       = 6379
+  subnet_group_name          = aws_elasticache_subnet_group.redis.name
+  security_group_ids         = [aws_security_group.redis.id]
+  snapshot_retention_limit   = 1
+  apply_immediately          = true
+
+  transit_encryption_enabled = true
+  transit_encryption_mode    = "required"
+  auth_token                 = random_password.redis_auth.result
+  at_rest_encryption_enabled = true
+  kms_key_id                 = aws_kms_key.env.arn
 }
 
 # ---------------------------------------------------------------------------
