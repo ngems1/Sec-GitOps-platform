@@ -6,3 +6,17 @@ inventoryService:
   # idempotent (DynamoDB transaction keyed by order ID).
   replicas: 2
   stockOverrides: ""   # normal stock for every product
+
+# Prod: every service at its autoscaling maximum plus one extra pod each during a
+# rollout. Higher priority: on a full cluster prod pods are scheduled first and may
+# preempt dev pods.
+guardrails:
+  priority:
+    value: 100000
+    preemptionPolicy: PreemptLowerPriority
+  quota:
+    requests.cpu: "5"
+    requests.memory: 5Gi
+    limits.cpu: "16"
+    limits.memory: 8Gi
+    pods: "50"
