@@ -33,10 +33,13 @@ if ! aws secretsmanager get-secret-value --secret-id "$REPO_KEY_SECRET_ARN" \
   echo "::error::Could not read the deploy key. Store it first (docs/week3/ARGOCD.md, step 2)."
   exit 1
 fi
-grep -q "PRIVATE KEY" "$key" || {
-  echo "::error::The deploy key secret does not hold a private key (docs/week3/ARGOCD.md, step 2)."
+# The key must load as an OpenSSH private key (no passphrase). A key wrapped in JSON
+# or with CRLF line endings fails here, not later in Argo CD's repo-server.
+# ssh-keygen's own output is discarded, so nothing about the key reaches the log.
+if ! ssh-keygen -y -P "" -f "$key" >/dev/null 2>&1; then
+  echo "::error::Stored Argo CD deploy key is not a valid OpenSSH private key (check line endings / JSON wrapping / Plaintext tab)"
   exit 1
-}
+fi
 kubectl -n "$NS" create secret generic repo-boutique \
   --from-literal=type=git --from-literal=url="$REPO_URL" --from-file=sshPrivateKey="$key" \
   --dry-run=client -o yaml \
