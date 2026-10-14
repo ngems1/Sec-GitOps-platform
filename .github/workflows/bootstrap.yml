@@ -44,7 +44,7 @@ jobs:
       run:
         working-directory: terraform-bootstrap
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check the bootstrap role is configured
         env:
@@ -68,12 +68,12 @@ jobs:
           base64 -d <<<"${payload}" | jq '{sub, aud, repository, environment, ref}'
 
       - name: Configure AWS credentials (bootstrap role)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_BOOTSTRAP_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.12.2"
           terraform_wrapper: false

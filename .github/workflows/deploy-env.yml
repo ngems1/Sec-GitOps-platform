@@ -53,15 +53,15 @@ jobs:
       group: deploy-${{ inputs.environment }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Configure AWS credentials (deploy role)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: ${{ env.HELM_VERSION }}
 
@@ -308,7 +308,7 @@ jobs:
       - name: GitHub App token (gitops commits)
         id: app
         if: inputs.environment == 'dev' && github.ref == 'refs/heads/main' && vars.GITOPS_APP_ID != ''
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.GITOPS_APP_ID }}
           private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
@@ -316,7 +316,7 @@ jobs:
 
       - name: Check out main for the gitops commit
         if: steps.app.outcome == 'success'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           path: gitops-repo
