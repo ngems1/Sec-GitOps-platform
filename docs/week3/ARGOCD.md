@@ -88,6 +88,11 @@ Change the password in the UI (User info), then delete `argocd-initial-admin-sec
 - **Back to Helm (emergency):** `kubectl -n argocd delete application boutique-dev`.
   The Application has no resources finalizer, so the shop keeps running, and the next
   deploy uses the Helm steps again.
+  **Field-ownership conflict:** after `boutique-dev` has synced at least once, Argo CD
+  owns the Deployments' managed fields. Helm uses server-side apply for this release, so
+  the next `helm upgrade` for dev may fail with a field-ownership conflict on fields
+  Argo CD last wrote. Retrying as-is fails the same way; the fix is adding
+  `--force-conflicts` to that Helm invocation.
 
 ## Good to know
 
