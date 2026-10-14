@@ -74,7 +74,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26" # same toolchain as the Dockerfiles
+          cache: true # module + build cache, keyed on go.sum
           cache-dependency-path: src/${{ matrix.service }}/go.sum
+      # proxy.golang.org sometimes drops the stream (INTERNAL_ERROR): try 3 times,
+      # 10 s then 20 s apart. On a cache hit this finds everything already there.
+      - name: go mod download
+        working-directory: src/${{ matrix.service }}
+        run: |
+          for attempt in 1 2 3; do
+            go mod download && exit 0
+            [ "$attempt" = 3 ] && break
+            echo "::warning::go mod download failed (attempt ${attempt}/3), retrying in $((attempt * 10)) s"
+            sleep $((attempt * 10))
+          done
+          echo "::error::go mod download failed 3 times"
+          exit 1
       - name: go vet + go test
         working-directory: src/${{ matrix.service }}
         run: |
