@@ -13,3 +13,10 @@ guardrails:
   priority:
     value: 100000
     preemptionPolicy: PreemptLowerPriority
+  # Every service at its autoscaling maximum plus one extra pod each during a rollout.
+  quota:
+    requests.cpu: "5"
+    requests.memory: 5Gi
+    limits.cpu: "16"
+    limits.memory: 8Gi
+    pods: "50"
