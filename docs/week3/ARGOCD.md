@@ -17,7 +17,7 @@ merge to main ──► deploy: build, scan, DB migrations
 | `.github/workflows/argocd-install.yml` | Manual. Installs or updates Argo CD, the repository credential, the project and the dev Application |
 | `deploy/argocd.sh` | The install steps (called by the workflow) |
 | `deploy/argocd/values.yaml` | Argo CD settings: no Dex, no notifications, UI without a public address |
-| `deploy/argocd/project.yaml` | Project `boutique`: only this repository, only `boutique-dev`, no cluster-wide objects |
+| `deploy/argocd/project.yaml` | Project `boutique`: only this repository, only `boutique-dev`, no cluster-wide objects (the namespace's PriorityClass is applied by `deploy-env.yml`, like the namespace itself) |
 | `deploy/argocd/boutique-dev.yaml` | Application `boutique-dev`: `helm-chart/` with `values-aws.yaml`, `values-dev.yaml`, `gitops/dev/values.yaml`; automated sync with prune and self-heal |
 | `gitops/dev/values.yaml` | The names Terraform created for dev and the image tag. Written by the deploy workflow only |
 | `deploy/gitops-commit.sh`, `deploy/argocd-wait.sh` | Commit or revert the tag; wait for the sync (called by `deploy-env.yml`) |

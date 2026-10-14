@@ -140,7 +140,8 @@ jobs:
           for env in dev prod; do
             gitops=()
             [ "$env" = dev ] && gitops=(-f gitops/dev/values.yaml)
-            helm template boutique ./helm-chart --namespace "boutique-${env}" \
+            # The release, rendered with placeholder AWS names (also used for the PriorityClass below).
+            chart=(boutique ./helm-chart --namespace "boutique-${env}"
               -f helm-chart/values-aws.yaml -f "helm-chart/values-${env}.yaml" "${gitops[@]}" \
               --set images.repository=123456789012.dkr.ecr.us-east-1.amazonaws.com/boutique \
               --set images.tag=ci \
@@ -158,13 +159,30 @@ jobs:
               --set productCatalogService.catalog.dbName=boutique \
               --set productCatalogService.catalog.dbSecretArn=arn:aws:secretsmanager:us-east-1:123456789012:secret:db \
               --set productCatalogService.catalog.redisAddr=redis.example:6379 \
-              --set emailService.notifications.tableName=week3-boutique-${env}-notifications \
-              > "rendered-${env}.yaml"
+              --set emailService.notifications.tableName=week3-boutique-${env}-notifications)
+            helm template "${chart[@]}" > "rendered-${env}.yaml"
             echo "${env}: $(grep -c '^kind:' "rendered-${env}.yaml") objects"
             grep '^kind:' "rendered-${env}.yaml" | sort | uniq -c
             # Autoscaling is on for EKS: the HPAs must be in the rendered chart.
             grep -q '^kind: HorizontalPodAutoscaler' "rendered-${env}.yaml" \
               || { echo "::error::${env}: no HorizontalPodAutoscaler rendered"; exit 1; }
+            # Guardrails are on for EKS: quota, limits and disruption budgets.
+            for kind in ResourceQuota LimitRange PodDisruptionBudget; do
+              grep -q "^kind: ${kind}$" "rendered-${env}.yaml" \
+                || { echo "::error::${env}: no ${kind} rendered"; exit 1; }
+            done
+            # The PriorityClass is cluster-scoped: the Argo CD project refuses it, so the
+            # release must not contain it. deploy-env.yml renders and applies it alone.
+            if grep -q '^kind: PriorityClass$' "rendered-${env}.yaml"; then
+              echo "::error::${env}: the release renders a PriorityClass (deploy-env.yml owns it)"; exit 1
+            fi
+            grep -q "priorityClassName: boutique-${env}" "rendered-${env}.yaml" \
+              || { echo "::error::${env}: pods do not use the boutique-${env} PriorityClass"; exit 1; }
+            # As the PriorityClass step in deploy-env.yml does it.
+            helm template "${chart[@]}" --set guardrails.priority.render=true \
+              --show-only templates/priorityclass.yaml > "priorityclass-${env}.yaml"
+            grep -q "^  name: boutique-${env}$" "priorityclass-${env}.yaml" \
+              || { echo "::error::${env}: no boutique-${env} PriorityClass for deploy-env.yml"; exit 1; }
           done
 
   build:

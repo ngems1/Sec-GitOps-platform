@@ -205,10 +205,33 @@ jobs:
       # The label makes the Load Balancer Controller add a readiness gate to new pods:
       # a pod only counts as ready once the ALB sees it healthy, so a rollout never
       # removes old pods before the new ones receive traffic.
+      # Pod Security Standards: "baseline" is enforced (no privileged pods, host
+      # namespaces or hostPath); "restricted" is audited and shown as a warning, so
+      # anything that would fail the strict level is visible before it is enforced.
       - name: Namespace
         run: |
           kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace "$NS" elbv2.k8s.aws/pod-readiness-gate-inject=enabled --overwrite
+          kubectl label namespace "$NS" --overwrite \
+            pod-security.kubernetes.io/enforce=baseline \
+            pod-security.kubernetes.io/enforce-version=latest \
+            pod-security.kubernetes.io/warn=restricted \
+            pod-security.kubernetes.io/audit=restricted
+
+      # The namespace's PriorityClass (cluster-scoped, so the Argo CD project may not
+      # create it, and the release never renders it). Applied before anything starts
+      # pods: a pod naming a missing PriorityClass is refused.
+      - name: PriorityClass
+        run: |
+          helm template "$RELEASE" ./helm-chart --namespace "$NS" \
+            -f helm-chart/values-aws.yaml \
+            -f "helm-chart/values-${ENVIRONMENT}.yaml" \
+            -f values-terraform.json \
+            --set guardrails.priority.render=true \
+            --show-only templates/priorityclass.yaml > priorityclass.yaml
+          grep -q '^kind: PriorityClass$' priorityclass.yaml \
+            || { echo "::error::no PriorityClass rendered for ${NS}"; exit 1; }
+          kubectl apply -f priorityclass.yaml
 
       - name: Database migrations
         run: |
