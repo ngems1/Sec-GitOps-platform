@@ -2,4 +2,52 @@
 # Written by the deploy workflow after each dev deploy from main: the names Terraform
 # created for dev and the image tag. Don't edit by hand; to roll back, revert the
 # commit that changed this file.
-{}
+{
+  "images": {
+    "repository": "866934333672.dkr.ecr.us-east-1.amazonaws.com/boutique",
+    "tag": "796d95042eca"
+  },
+  "frontend": {
+    "ingress": {
+      "allowFromCidr": "10.0.0.0/16",
+      "certificateArn": "arn:aws:acm:us-east-1:866934333672:certificate/89966328-2045-4243-b031-d9484fffad41"
+    }
+  },
+  "cartDatabase": {
+    "connectionString": "master.week3-boutique-dev-redis.m25p71.use1.cache.amazonaws.com:6379"
+  },
+  "checkoutService": {
+    "orders": {
+      "awsRegion": "us-east-1",
+      "eventBusName": "week3-boutique-dev-events",
+      "dbHost": "week3-boutique-dev-mysql.cefo7yhuwfxg.us-east-1.rds.amazonaws.com",
+      "dbPort": 3306,
+      "dbName": "boutique",
+      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-0e5b686b-b3a3-493b-ba48-0d4ad8782987-6tXSFI"
+    }
+  },
+  "inventoryService": {
+    "awsRegion": "us-east-1",
+    "tableName": "week3-boutique-dev-inventory",
+    "queueUrl": "https://sqs.us-east-1.amazonaws.com/866934333672/week3-boutique-dev-inventory-q",
+    "eventBusName": "week3-boutique-dev-events"
+  },
+  "productCatalogService": {
+    "catalog": {
+      "awsRegion": "us-east-1",
+      "dbHost": "week3-boutique-dev-mysql.cefo7yhuwfxg.us-east-1.rds.amazonaws.com",
+      "dbPort": "3306",
+      "dbName": "boutique",
+      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-0e5b686b-b3a3-493b-ba48-0d4ad8782987-6tXSFI",
+      "redisAddr": "master.week3-boutique-dev-redis.m25p71.use1.cache.amazonaws.com:6379"
+    }
+  },
+  "emailService": {
+    "notifications": {
+      "awsRegion": "us-east-1",
+      "queueUrl": "https://sqs.us-east-1.amazonaws.com/866934333672/week3-boutique-dev-notification-q",
+      "tableName": "week3-boutique-dev-notifications",
+      "sesFromAddress": "orders@sebngembou-cloud.click"
+    }
+  }
+}
