@@ -151,18 +151,23 @@ jobs:
           echo "${ENVIRONMENT} is deployed by: $([ "$argocd" = true ] && echo 'Argo CD (boutique-dev)' || echo Helm)"
 
       # Read-only evidence: how the frontend Deployment was last written. "helm Apply" means
-      # Helm used server-side apply, "helm Update" client-side apply.
+      # Helm used server-side apply, "helm Update" client-side apply. kubectl leaves
+      # managedFields out of its output unless --show-managed-fields is given.
       - name: Helm apply method (report)
         if: inputs.environment == 'dev'
         run: |
           {
             echo "### How boutique-dev objects were applied (deploy/frontend)"
             echo '```'
-            if kubectl -n "$NS" get deployment frontend >/dev/null 2>&1; then
-              kubectl -n "$NS" get deployment frontend -o json \
-                | jq -r '.metadata.managedFields[] | "\(.manager)  \(.operation)  \(.time)"'
-            else
+            if ! kubectl -n "$NS" get deployment frontend >/dev/null 2>&1; then
               echo "no frontend Deployment yet"
+            elif ! json=$(kubectl -n "$NS" get deployment frontend -o json --show-managed-fields); then
+              echo "could not read deploy/frontend from the cluster"
+            else
+              echo "manager  operation  time   (Apply = server-side, Update = client-side)"
+              jq -r '(.metadata.managedFields // []) as $m
+                | if ($m | length) == 0 then "no managedFields returned for deploy/frontend"
+                  else $m[] | "\(.manager)  \(.operation)  \(.time)" end' <<<"$json"
             fi
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
