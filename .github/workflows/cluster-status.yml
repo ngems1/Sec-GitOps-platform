@@ -23,7 +23,7 @@ env:
 jobs:
   status:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20 # OpenAPI health: up to 80 requests of at most 10 s
     steps:
       - uses: actions/checkout@v5
 
@@ -120,6 +120,56 @@ jobs:
                 echo
               done
             fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Read-only (describe, get --raw, get). Argo CD ("failed to load open api schema") and
+      # Helm's validation in deploy-env's LBC step both got "the server is currently unable
+      # to handle the request" from the OpenAPI endpoints while every APIService is
+      # Available. Suspect: the EKS-managed v1.metrics.eks.amazonaws.com breaks the
+      # aggregated OpenAPI, maybe on only some API server instances, hence repeated tries.
+      # https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543
+      - name: OpenAPI health
+        if: inputs.namespace == 'kube-system'
+        run: |
+          {
+            echo "### OpenAPI health"
+            echo '```'
+            # Cluster name from the kubeconfig context (its ARN ends in cluster/<name>).
+            arn=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
+            echo "\$ aws eks describe-cluster --query 'cluster.{version:version,platformVersion:platformVersion}'"
+            aws eks describe-cluster --name "${arn##*/}" --region "$AWS_REGION" \
+              --query 'cluster.{version:version,platformVersion:platformVersion}' --output json 2>&1 || true
+            echo
+
+            paths=(/openapi/v2 /openapi/v3 /openapi/v3/apis/metrics.eks.amazonaws.com/v1 /openapi/v3/apis/apps/v1)
+            declare -A ok fail first
+            for p in "${paths[@]}"; do ok[$p]=0; fail[$p]=0; first[$p]=""; done
+            # 20 rounds, 2 s apart; each round tries every path, so they see the same moments.
+            for i in $(seq 1 20); do
+              for p in "${paths[@]}"; do
+                if err=$(kubectl get --raw "$p" --request-timeout=10s 2>&1 >/dev/null); then
+                  ok[$p]=$(( ok[$p] + 1 ))
+                else
+                  fail[$p]=$(( fail[$p] + 1 ))
+                  [ -n "${first[$p]}" ] || first[$p]="attempt ${i}: $(head -c 400 <<<"$err" | tr '\n' ' ')"
+                fi
+              done
+              [ "$i" = 20 ] || sleep 2
+            done
+            echo "kubectl get --raw <path> --request-timeout=10s (20 tries each, 2 s apart; apps/v1 is the control)"
+            for p in "${paths[@]}"; do
+              printf '%-46s OK %2d  failed %2d\n' "$p" "${ok[$p]}" "${fail[$p]}"
+            done
+            for p in "${paths[@]}"; do
+              [ -z "${first[$p]}" ] || echo "first failure of ${p}: ${first[$p]}"
+            done
+            echo
+
+            # managedFields are left out (kubectl's default; explicit here). An APIService
+            # holds no Secret: its caBundle is the serving CA's public certificate.
+            echo "\$ kubectl get apiservice v1.metrics.eks.amazonaws.com -o yaml"
+            kubectl get apiservice v1.metrics.eks.amazonaws.com -o yaml --show-managed-fields=false 2>&1 || true
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
