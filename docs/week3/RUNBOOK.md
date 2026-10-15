@@ -120,6 +120,19 @@ Tool: **Actions → eks-openapi-fix** (results on the run's Summary page).
    - Protobuf still fails without the APIService: it was not the cause; restore it.
 3. **Restore** (`action` = `restore`, `restore_run_id` = the ID in the remove run's URL,
    `.../actions/runs/<id>`): `kubectl apply` of the saved APIService. It refuses any other object.
+4. **Diagnose** (`action` = `diagnose`, read-only): checks, saves `/openapi/v2` as JSON (artifact
+   `openapi-v2-json`, 30 days), then converts it the way the API server builds the protobuf form
+   (kube-openapi: `openapi_v2.ParseDocument`, then `proto.Marshal`, with gnostic-models `v0.7.0`).
+   The error names the definition that cannot be converted; the run then shows the CRD or APIService
+   that owns its API group (created time, labels and annotations: which add-on or Helm release
+   installed it), every CRD by creation time, and the EKS add-on versions.
+   If the conversion succeeds here while the cluster still answers 503, the cause is elsewhere,
+   or the API server uses another gnostic-models version: try the one Kubernetes 1.35 vendors.
+
+**Result so far (2026-10-15):** removing `v1.metrics.eks.amazonaws.com` did **not** help (restored
+since): protobuf still 503 10/10, JSON 200 10/10, on a brand-new cluster. So some definition in the
+merged spec cannot be converted to protobuf; run **diagnose** to name it. All EKS add-ons in
+`terraform-aws/eks.tf` use `most_recent = true`, so a new add-on release can bring such a definition.
 
 What is lost while it is deleted: the EKS metrics API (`metrics.eks.amazonaws.com`, control-plane
 metrics from EKS). metrics-server, the HPAs and `kubectl top` use `metrics.k8s.io` and keep working.
