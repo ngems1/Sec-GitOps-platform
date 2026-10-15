@@ -92,7 +92,7 @@ variable "ses_recipients" {
 }
 
 variable "guardduty_alert_min_severity" {
-  description = "GuardDuty findings at or above this severity go to Slack (7 = high, 9 = critical; GuardDuty itself is in terraform-bootstrap)."
+  description = "GuardDuty findings at or above this severity go to Slack (7 = high, 9 = critical; the detector is a shared account service, not managed here)."
   type        = number
   default     = 7
 }

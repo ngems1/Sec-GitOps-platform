@@ -1,75 +1,85 @@
 # 0003: Single-account hardening instead of multi-account
 
-Status: accepted (Phase 1, Day 4). Date: 2026-10-15.
+Status: accepted (Phase 1, Day 4). Date: 2026-10-15. Amended 2026-10-15: shared account services.
 
 ## Context
 
 The platform runs in one AWS account: the shared VPC and EKS cluster, the dev and prod data
 stores, the Terraform state and the GitHub Actions roles. `terraform-aws/` is destroyed and
 re-applied almost every day to save money. The deploy role had AdministratorAccess with no
-ceiling, and the account had no audit trail, no threat detection and no configuration history.
-The project has one maintainer and a one-week schedule for this phase.
+ceiling, and the project had no audit trail of its own. The project has one maintainer and a
+one-week schedule for this phase.
+
+The account also hosts **another project**, which already runs GuardDuty, the AWS Config recorder
+(with its delivery channel) and Security Hub with the AWS Foundational Security Best Practices
+(FSBP) standard. AWS allows each of these only once per account and region, so this project
+cannot create its own, and they are not its to import, re-tag or change.
 
 ## Options considered
 
 1. **AWS Organizations with separate accounts** (security/log archive, dev, prod, CI), SCPs and
    IAM Identity Center.
-   - Strongest isolation: a compromised dev or CI identity cannot reach prod or the logs.
+   - Strongest isolation: a compromised dev or CI identity cannot reach prod or the logs, and this
+     project would own its own detector, recorder and hub.
    - Several accounts to bootstrap, cross-account roles in every workflow, the daily destroy split
-     across accounts, more fixed cost (one trail, detector and recorder per account). Too much for
-     one person in one week (DESIGN D-07).
-2. **One account, hardened inside it**: an audit trail the CI cannot erase, threat detection,
-   posture checks, and permission boundaries plus tag conditions on the CI roles.
+     across accounts, more fixed cost. Too much for one person in one week (DESIGN D-07).
+2. **One account, hardened inside it**: an audit trail the CI cannot erase, permission boundaries
+   and tag conditions on the CI roles, and the account's security services as they are.
    - Fits the schedule and the daily destroy; one bootstrap run.
-   - Isolation is by policy, not by account: an admin principal in the account can still change
-     everything, and a policy mistake has a larger blast radius.
+   - Isolation is by policy, not by account; the detector, recorder and hub are someone else's.
 
 ## Decision
 
-Option 2, applied by `terraform-bootstrap/` (never destroyed), not `terraform-aws/` (destroyed
+Option 2. What this project owns is created by `terraform-bootstrap/` (never destroyed, tagged
+`Project = week3-boutique`, `ManagedBy = terraform-bootstrap`), not `terraform-aws/` (destroyed
 daily: Object Lock files cannot be deleted, so a destroy of the audit bucket would fail):
 
-- **CloudTrail**: one multi-region trail, log file validation, KMS key with rotation; S3 bucket with
-  Object Lock in **GOVERNANCE** mode (30-day default retention), public access blocked, HTTPS
-  only, files deleted after 90 days. GOVERNANCE rather than COMPLIANCE so an admin can still
-  remove files in an emergency or when the project ends; the CI roles cannot.
-- **GuardDuty**: detector on, foundational detection only; the paid protection plans are turned
-  off. Findings with severity >= 7 go to Slack (`terraform-aws/security-alerts.tf`).
-- **Security Hub**: only the AWS Foundational Security Best Practices standard.
-- **AWS Config**: records the resource types the project uses (IAM, S3, VPC/EC2 without network
-  interfaces and volumes, EKS, RDS, KMS), six managed rules (S3 public access, S3 encryption, RDS
-  encrypted, RDS public, root access key, CloudTrail enabled).
+- **CloudTrail (owned)**: this project's own multi-region trail, log file validation, KMS key with
+  rotation; S3 bucket with Object Lock in **GOVERNANCE** mode (30-day default retention), public
+  access blocked, HTTPS only, files deleted after 90 days. GOVERNANCE rather than COMPLIANCE so an
+  admin can still remove files in an emergency or when the project ends; the CI roles cannot.
+- **AWS Config rules (owned)**: six managed rules named `week3-boutique-*` (S3 public access, S3
+  encryption, RDS encrypted, RDS public, root access key, CloudTrail enabled), evaluated by the
+  shared recorder.
 - **Permission boundaries** on `week3-gha-plan` (read-only on the services terraform-aws uses, no
   secret values) and `week3-gha-deploy` (the services terraform-aws and the workflows use; denies
-  on the security services, the audit bucket, the CI identities, IAM users and keys, admin managed
-  policies). The lists were built from every AWS call in `terraform-aws/` and the workflows.
+  on the security services, ours and the shared ones, the audit bucket, the CI identities, IAM
+  users and keys, admin managed policies). The lists were built from every AWS call in
+  `terraform-aws/` and the workflows.
 - **Tag-based access** (`aws:ResourceTag/Project`, `aws:ResourceTag/ManagedBy`,
   `aws:RequestTag/Project`) where the APIs support it: the deploy role cannot change resources
-  of another project or anything the bootstrap made, and every role it creates must carry the
-  project tag.
+  tagged with another `Project` (such as the other project's) or anything the bootstrap made, and
+  every role it creates must carry the project tag.
+
+**Shared, relied on, not owned:** GuardDuty, the AWS Config recorder and delivery channel, and
+Security Hub with FSBP. The bootstrap never imports, tags or changes them. This project only reads
+GuardDuty's findings: severity >= 7 goes to Slack (`terraform-aws/security-alerts.tf`).
 
 ## Consequences
 
-- A leaked or misused CI token cannot stop the trail, disable the detectors, delete audit files or
-  widen its own rights; every API call in the account is recorded, verifiable and kept 30 days
-  at least.
+- A leaked or misused CI token cannot stop the trail, change the detectors, delete audit files or
+  widen its own rights; every API call in the account is recorded in this project's own bucket,
+  verifiable and kept 30 days at least.
+- The settings of GuardDuty (protection plans), the recorder (recorded types, delivery) and
+  Security Hub (standards), and whether they stay on at all, are decided by the other project.
 - A new AWS service in `terraform-aws` now needs a boundary change and a bootstrap run first; a
   missing action shows up as "explicit deny in a permissions boundary" (RUNBOOK section 1).
 - The bootstrap is no longer a one-time step: it is re-run after every change to
   `terraform-bootstrap/`.
-- Cost (estimate, to confirm with Cost Explorer after a month): about USD 25 to 60 a month after
-  the 30-day GuardDuty and Security Hub trials. Fixed part about USD 2 (KMS key and requests, S3;
-  the first trail's management events are free). The rest scales with the daily destroy/apply:
-  AWS Config about USD 20 to 35 (USD 0.003 per recorded change; about 60 recorded resources are
-  created and deleted each day, plus relationship updates), Security Hub checks and the Config
-  rules it runs about USD 5 to 15, GuardDuty foundational about USD 3 to 8. The first lever if it
-  is too much: record fewer EC2 types in `terraform-bootstrap/security.tf`.
+- Cost of what this project adds (estimate, to confirm with Cost Explorer after a month): about
+  USD 8 to 22 a month. The other project already has a trail, so this one is a second copy of the
+  management events, billed at about USD 2 per 100,000 events (about USD 6 to 20 for this account);
+  KMS and S3 about USD 2; the six Config rules under USD 1. GuardDuty, the recorder and Security
+  Hub are billed to the same account whoever owns them, and this project's daily destroy/apply
+  adds to what they record and check.
 - Still open: the deploy role can create a role without a boundary and give it inline rights;
   requiring a boundary on every role terraform-aws creates is the next step (SECURITY.md
-  section 7). The security services cover `us-east-1` only.
+  section 7).
 
 ## Revisit when
 
-- The project gets a second maintainer or real customer data: move to AWS Organizations with a
-  log-archive account (the trail and bucket move there; the boundaries become SCPs).
-- The baseline costs more than about USD 60 a month (then record fewer EC2 types first).
+- The project needs control over its detector, recorder or hub, gets a second maintainer or real
+  customer data: move to its own AWS account (AWS Organizations with a log-archive account; the
+  trail and bucket move there, the boundaries become SCPs).
+- The second trail costs more than it is worth: drop it if the other project's trail is trusted,
+  or move to a separate account.
