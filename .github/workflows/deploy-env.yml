@@ -133,9 +133,12 @@ jobs:
       # Upstream chart instead of the EKS add-on, whose OpenAPI broke /openapi/v2 as protobuf
       # (RUNBOOK section 7). Both serve the same APIService, so the add-on must be gone first:
       # infra apply removes it. If it is still there, this step fails before touching anything.
-      # The add-on is deleted with preserve = true (module default), which can leave its
-      # Deployment behind: that one is deleted (its selector may not match the chart's), the
-      # other leftovers (Service, ServiceAccount, RBAC, APIService) are adopted (--take-ownership).
+      # The add-on is deleted with preserve = true (module default), which leaves its objects
+      # behind. --take-ownership does not adopt them: Helm's server-side apply conflicts with
+      # their field manager "before-first-apply" on the labels app.kubernetes.io/managed-by
+      # and app.kubernetes.io/version. So every leftover the chart also creates is deleted
+      # first, but only if it is not Helm's (label app.kubernetes.io/managed-by != Helm): a
+      # re-run after a successful install deletes nothing.
       # First step after connecting: once the add-on is gone, APIService v1beta1.metrics.k8s.io
       # has no working backend and OpenAPI download fails, which breaks every later kubectl
       # apply ("failed to download openapi"). So this step only uses what works without
@@ -156,13 +159,31 @@ jobs:
             echo "Deleting the Deployment kube-system/metrics-server left by the EKS add-on"
             kubectl -n kube-system delete deployment metrics-server --wait=true
           fi
+          # Namespaced ones live in kube-system; -n is ignored for the cluster-scoped ones.
+          for obj in \
+            serviceaccount/metrics-server \
+            service/metrics-server \
+            rolebinding/metrics-server-auth-reader \
+            poddisruptionbudget/metrics-server \
+            clusterrole/system:metrics-server \
+            clusterrole/system:metrics-server-aggregated-reader \
+            clusterrolebinding/system:metrics-server \
+            clusterrolebinding/metrics-server:system:auth-delegator \
+            apiservice/v1beta1.metrics.k8s.io; do
+            [ -n "$(kubectl -n kube-system get "$obj" --ignore-not-found -o name)" ] || continue
+            managed_by=$(kubectl -n kube-system get "$obj" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')
+            if [ "$managed_by" != Helm ]; then
+              echo "Deleting ${obj} (managed-by: '${managed_by}', left by the EKS add-on)"
+              kubectl -n kube-system delete "$obj" --wait=true
+            fi
+          done
           helm upgrade --install metrics-server metrics-server \
             --disable-openapi-validation --take-ownership \
             --repo https://kubernetes-sigs.github.io/metrics-server/ --version "$METRICS_SERVER_CHART_VERSION" \
             --namespace kube-system \
             --set replicas=2 \
             --set podDisruptionBudget.enabled=true \
-            --set podDisruptionBudget.minAvailable=1 \
+            --set podDisruptionBudget.maxUnavailable=1 \
             --set resources.requests.cpu=100m \
             --set resources.requests.memory=200Mi \
             --set resources.limits.cpu=500m \
