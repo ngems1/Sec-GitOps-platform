@@ -196,6 +196,7 @@ add `--force-conflicts` to that one Helm run.
 
 | Incident | Root cause | Fix |
 |---|---|---|
+| argocd-install: "boutique-dev is not Synced and Healthy at <sha> after 600s" while the log shows `sync=Synced health=Healthy` | `argocd-wait.sh` compared the last sync **operation** revision; the newest commit (the prod tag commit) did not change dev's manifests, so Argo CD ran no sync and that revision never moved | Wait on `status.sync.revision` (the commit Argo CD compared) with Synced, Healthy and no operation running; hard refresh first (also fixes a prod promotion with the same tag) |
 | Grafana crash at start ("unlinkat ... read-only file system") | Adding `plugins: [prometheus]` made Grafana try to reinstall a bundled plugin | Removed; `preinstall_disabled: true` |
 | Grafana and db-migrate `Pending` | 17 pods per t3.medium, cluster full | 4 nodes, then VPC CNI prefix delegation (110 pods/node) |
 | HPA targets `<unknown>` | EKS API couldn't reach metrics-server on 10251 | Node SG rule from the cluster SG (since replaced: metrics-server is now the Helm chart on 10250, section 7) |
