@@ -129,6 +129,48 @@ jobs:
           aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
           kubectl get nodes -o wide
 
+      # CPU/memory numbers for the HPAs and "kubectl top" (APIService v1beta1.metrics.k8s.io).
+      # Upstream chart instead of the EKS add-on, whose OpenAPI broke /openapi/v2 as protobuf
+      # (RUNBOOK section 7). Both serve the same APIService, so the add-on must be gone first:
+      # infra apply removes it. If it is still there, this step fails before touching anything.
+      # The add-on is deleted with preserve = true (module default), which can leave its
+      # Deployment behind: that one is deleted (its selector may not match the chart's), the
+      # other leftovers (Service, ServiceAccount, RBAC, APIService) are adopted (--take-ownership).
+      # First step after connecting: once the add-on is gone, APIService v1beta1.metrics.k8s.io
+      # has no working backend and OpenAPI download fails, which breaks every later kubectl
+      # apply ("failed to download openapi"). So this step only uses what works without
+      # OpenAPI: aws eks describe-addon, kubectl get/delete/wait, helm with
+      # --disable-openapi-validation.
+      - name: metrics-server
+        run: |
+          if out=$(aws eks describe-addon --cluster-name "$CLUSTER" --addon-name metrics-server 2>&1); then
+            echo "::error::The EKS add-on metrics-server is still installed. Run Actions > infra > apply (it removes the add-on), then re-run this deploy. See RUNBOOK section 7."
+            exit 1
+          elif ! grep -q ResourceNotFoundException <<<"$out"; then
+            echo "::error::Could not check the EKS add-on metrics-server: ${out}"
+            exit 1
+          fi
+          owner=$(kubectl -n kube-system get deployment metrics-server --ignore-not-found \
+            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')
+          if [ -n "$(kubectl -n kube-system get deployment metrics-server --ignore-not-found -o name)" ] && [ -z "$owner" ]; then
+            echo "Deleting the Deployment kube-system/metrics-server left by the EKS add-on"
+            kubectl -n kube-system delete deployment metrics-server --wait=true
+          fi
+          helm upgrade --install metrics-server metrics-server \
+            --disable-openapi-validation --take-ownership \
+            --repo https://kubernetes-sigs.github.io/metrics-server/ --version "$METRICS_SERVER_CHART_VERSION" \
+            --namespace kube-system \
+            --set replicas=2 \
+            --set podDisruptionBudget.enabled=true \
+            --set podDisruptionBudget.minAvailable=1 \
+            --set resources.requests.cpu=100m \
+            --set resources.requests.memory=200Mi \
+            --set resources.limits.cpu=500m \
+            --set resources.limits.memory=400Mi \
+            --rollback-on-failure --timeout 5m
+          kubectl -n kube-system rollout status deployment/metrics-server --timeout=3m
+          kubectl wait --for=condition=Available apiservice/v1beta1.metrics.k8s.io --timeout=3m
+
       # dev: Argo CD deploys it once argocd-install.yml has created its Application;
       # until then the Helm steps below do. prod is always deployed by Helm here.
       - name: Who deploys (Argo CD or Helm)
@@ -196,7 +238,7 @@ jobs:
       # server is currently unable to handle the request", although every APIService was
       # Available. Cause: the EKS metrics-server add-on's OpenAPI cannot be converted to
       # protobuf, so /openapi/v2 answered 503 (RUNBOOK section 7); it is replaced by the chart
-      # in the next step. Remove the flag once eks-openapi-fix "check" shows protobuf OK
+      # in the metrics-server step above. Remove the flag once eks-openapi-fix "check" shows protobuf OK
       # 10/10. Only Helm's client-side pass is skipped: the API server still validates
       # every object when it is applied.
       - name: AWS Load Balancer Controller
@@ -212,44 +254,6 @@ jobs:
             --set serviceAccount.name=aws-load-balancer-controller \
             --rollback-on-failure --timeout 5m
           kubectl -n kube-system rollout status deployment/aws-load-balancer-controller --timeout=3m
-
-      # CPU/memory numbers for the HPAs and "kubectl top" (APIService v1beta1.metrics.k8s.io).
-      # Upstream chart instead of the EKS add-on, whose OpenAPI broke /openapi/v2 as protobuf
-      # (RUNBOOK section 7). Both serve the same APIService, so the add-on must be gone first:
-      # infra apply removes it. If it is still there, this step fails before touching anything.
-      # The add-on is deleted with preserve = true (module default), which can leave its
-      # Deployment behind: that one is deleted (its selector may not match the chart's), the
-      # other leftovers (Service, ServiceAccount, RBAC, APIService) are adopted (--take-ownership).
-      # --disable-openapi-validation: same reason as the step above, while a leftover still runs.
-      - name: metrics-server
-        run: |
-          if out=$(aws eks describe-addon --cluster-name "$CLUSTER" --addon-name metrics-server 2>&1); then
-            echo "::error::The EKS add-on metrics-server is still installed. Run Actions > infra > apply (it removes the add-on), then re-run this deploy. See RUNBOOK section 7."
-            exit 1
-          elif ! grep -q ResourceNotFoundException <<<"$out"; then
-            echo "::error::Could not check the EKS add-on metrics-server: ${out}"
-            exit 1
-          fi
-          owner=$(kubectl -n kube-system get deployment metrics-server --ignore-not-found \
-            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')
-          if [ -n "$(kubectl -n kube-system get deployment metrics-server --ignore-not-found -o name)" ] && [ -z "$owner" ]; then
-            echo "Deleting the Deployment kube-system/metrics-server left by the EKS add-on"
-            kubectl -n kube-system delete deployment metrics-server --wait=true
-          fi
-          helm upgrade --install metrics-server metrics-server \
-            --disable-openapi-validation --take-ownership \
-            --repo https://kubernetes-sigs.github.io/metrics-server/ --version "$METRICS_SERVER_CHART_VERSION" \
-            --namespace kube-system \
-            --set replicas=2 \
-            --set podDisruptionBudget.enabled=true \
-            --set podDisruptionBudget.minAvailable=1 \
-            --set resources.requests.cpu=100m \
-            --set resources.requests.memory=200Mi \
-            --set resources.limits.cpu=500m \
-            --set resources.limits.memory=400Mi \
-            --rollback-on-failure --timeout 5m
-          kubectl -n kube-system rollout status deployment/metrics-server --timeout=3m
-          kubectl wait --for=condition=Available apiservice/v1beta1.metrics.k8s.io --timeout=3m
 
       # The label makes the Load Balancer Controller add a readiness gate to new pods:
       # a pod only counts as ready once the ALB sees it healthy, so a rollout never
