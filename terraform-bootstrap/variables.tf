@@ -61,3 +61,27 @@ variable "github_environments" {
   type        = list(string)
   default     = ["dev", "prod"]
 }
+
+variable "project" {
+  description = "Value of the Project tag on everything terraform-aws creates (its var.project). The deploy role's permission boundary only lets it change resources with this tag, or with no Project tag."
+  type        = string
+  default     = "week3-boutique"
+}
+
+variable "bootstrap_role_name" {
+  description = "Name of the hand-made bootstrap role (docs/week3/BOOTSTRAP.md). The plan and deploy roles may not change it."
+  type        = string
+  default     = "week3-bootstrap"
+}
+
+variable "audit_retention_days" {
+  description = "S3 Object Lock retention (GOVERNANCE mode) of the CloudTrail and AWS Config files: nobody without s3:BypassGovernanceRetention can delete or overwrite them before this."
+  type        = number
+  default     = 30
+}
+
+variable "audit_expiry_days" {
+  description = "Lifecycle: CloudTrail and AWS Config files are deleted after this many days."
+  type        = number
+  default     = 90
+}

@@ -1,4 +1,5 @@
 # CloudWatch alarms -> SNS (one topic per environment) -> slack-alerts Lambda -> Slack.
+# GuardDuty findings reach the same Lambda through EventBridge (security-alerts.tf).
 #
 # Alarms go to their own Slack channel (e.g. #boutique-alerts), separate from the
 # pipeline messages (#boutique-deploys), through their own incoming webhook.

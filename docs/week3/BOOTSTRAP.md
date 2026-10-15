@@ -5,7 +5,8 @@ Everything in AWS is created by GitHub Actions, except **one login role** that h
 ```
 You (once, in the console):  GitHub OIDC provider + week3-bootstrap role
         ↓
-bootstrap workflow (Terraform):  state bucket + week3-gha-plan + week3-gha-deploy
+bootstrap workflow (Terraform):  state bucket + week3-gha-plan + week3-gha-deploy (with permission boundaries)
+                                 + account baseline: CloudTrail, GuardDuty, Security Hub, AWS Config
         ↓
 infra / deploy workflows:  everything else, with the plan or deploy role
 ```
@@ -13,8 +14,8 @@ infra / deploy workflows:  everything else, with the plan or deploy role
 | Role | Created by | Used by | Rights |
 |---|---|---|---|
 | `week3-bootstrap` | You, by hand | `bootstrap` workflow, only in the protected `prod` environment | Admin (it creates IAM roles) |
-| `week3-gha-plan` | bootstrap workflow | Pull-request plans | Read-only, plus the Terraform state lock |
-| `week3-gha-deploy` | bootstrap workflow | `main` branch, `dev` / `prod` environments | Admin (applies Terraform, deploys) |
+| `week3-gha-plan` | bootstrap workflow | Pull-request plans | Read-only, plus the Terraform state lock; boundary: reads of the services terraform-aws uses only |
+| `week3-gha-deploy` | bootstrap workflow | `main` branch, `dev` / `prod` environments | Admin (applies Terraform, deploys), capped by a permission boundary (SECURITY.md section 2a) |
 
 So a pull request from any branch can only **read**. Changes need a merge to `main` or an approved environment.
 
@@ -94,10 +95,22 @@ Then continue with SETUP.md step 5 (`infra` > `apply`).
 | `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Compare the `sub` printed in the step "Show the identity GitHub presents to AWS" with the trust policy (step 3.2). Case and spelling must match exactly. |
 | `No OpenIDConnect provider found` | Step 2 is missing, or was done in another AWS account |
 | A run failed half-way | Run it again: resources that already exist are imported, not duplicated |
+| "An AWS Config recorder named '...' already exists" | Only one recorder per region. The bootstrap manages one named `default`: delete the other one (Config console > Settings), then re-run |
+| An existing GuardDuty detector, Security Hub or Config recorder `default` | Nothing to do: the run imports it (step "terraform init" lists the imports) and then applies this project's settings to it |
+
+## Re-running after a change in `terraform-bootstrap/`
+
+The bootstrap is not only one-time: the CI roles' permission boundaries and the account security
+baseline (CloudTrail, GuardDuty, Security Hub, AWS Config) live here too, because `terraform-aws` is
+destroyed every day. After a merge that changes `terraform-bootstrap/`, run **bootstrap** with
+**apply unchecked**, read the plan, then run it again with **apply checked**. A new AWS service in
+`terraform-aws` needs its line in `terraform-bootstrap/boundaries.tf` and this run **before** the
+infra apply that uses it.
 
 ## Security notes (for the demo)
 
 - **No keys anywhere:** GitHub gets credentials valid for at most 2 hours, through OIDC.
 - **Least privilege:** pull requests can't change anything (`week3-gha-plan` is read-only).
 - **Admin rights are gated:** the admin roles only work from `main` or a protected environment.
-- **Remediation item:** `week3-gha-deploy` still has AdministratorAccess. Next step would be a policy limited to the services Terraform uses. You can also delete `week3-bootstrap` after this setup and recreate it only when the bootstrap changes.
+- **Permission boundaries:** `week3-gha-deploy` still has AdministratorAccess, but its boundary limits it to the services Terraform and the workflows use, and denies touching the audit trail, the security services, the CI roles and resources of other projects (`terraform-bootstrap/boundaries.tf`, ADR 0003).
+- You can delete `week3-bootstrap` after a bootstrap run and recreate it only when `terraform-bootstrap/` changes.
