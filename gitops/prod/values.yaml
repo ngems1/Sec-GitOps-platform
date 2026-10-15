@@ -3,4 +3,52 @@
 # Terraform created for prod and the image tag, which must already run in dev. Argo CD
 # reads it from the prod promotion branch, not from main (ADR 0007). Don't edit by hand;
 # to roll back, see docs/week3/RUNBOOK.md section 8.
-{}
+{
+  "images": {
+    "repository": "866934333672.dkr.ecr.us-east-1.amazonaws.com/boutique",
+    "tag": "95072fd10cae"
+  },
+  "frontend": {
+    "ingress": {
+      "allowFromCidr": "10.0.0.0/16",
+      "certificateArn": "arn:aws:acm:us-east-1:866934333672:certificate/a9fdd956-5a97-4584-8a35-12b1ffe2df27"
+    }
+  },
+  "cartDatabase": {
+    "connectionString": "master.week3-boutique-prod-redis.m25p71.use1.cache.amazonaws.com:6379"
+  },
+  "checkoutService": {
+    "orders": {
+      "awsRegion": "us-east-1",
+      "eventBusName": "week3-boutique-prod-events",
+      "dbHost": "week3-boutique-prod-mysql.cefo7yhuwfxg.us-east-1.rds.amazonaws.com",
+      "dbPort": 3306,
+      "dbName": "boutique",
+      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-371e440e-e3ef-4e4b-aba4-fc92f40692b6-gBK2OZ"
+    }
+  },
+  "inventoryService": {
+    "awsRegion": "us-east-1",
+    "tableName": "week3-boutique-prod-inventory",
+    "queueUrl": "https://sqs.us-east-1.amazonaws.com/866934333672/week3-boutique-prod-inventory-q",
+    "eventBusName": "week3-boutique-prod-events"
+  },
+  "productCatalogService": {
+    "catalog": {
+      "awsRegion": "us-east-1",
+      "dbHost": "week3-boutique-prod-mysql.cefo7yhuwfxg.us-east-1.rds.amazonaws.com",
+      "dbPort": "3306",
+      "dbName": "boutique",
+      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-371e440e-e3ef-4e4b-aba4-fc92f40692b6-gBK2OZ",
+      "redisAddr": "master.week3-boutique-prod-redis.m25p71.use1.cache.amazonaws.com:6379"
+    }
+  },
+  "emailService": {
+    "notifications": {
+      "awsRegion": "us-east-1",
+      "queueUrl": "https://sqs.us-east-1.amazonaws.com/866934333672/week3-boutique-prod-notification-q",
+      "tableName": "week3-boutique-prod-notifications",
+      "sesFromAddress": "orders@sebngembou-cloud.click"
+    }
+  }
+}
