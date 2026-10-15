@@ -17,6 +17,8 @@ guardrails:
   quota:
     requests.cpu: "5"
     requests.memory: 5Gi
-    limits.cpu: "16"
+    # 20, not 16: at autoscaling maximum plus one surge pod per Deployment the limits
+    # add up to 15.2 CPU, too close to 16 for a rollout during a load peak.
+    limits.cpu: "20"
     limits.memory: 8Gi
     pods: "50"

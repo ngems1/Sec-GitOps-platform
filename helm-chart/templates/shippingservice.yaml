@@ -32,6 +32,7 @@ spec:
       {{- else }}
       serviceAccountName: default
       {{- end }}
+      terminationGracePeriodSeconds: 15
       {{- include "boutique.podGuardrails" (dict "root" $ "app" .Values.shippingService.name) | nindent 6 }}
       securityContext:
         fsGroup: 1000
