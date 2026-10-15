@@ -6,7 +6,7 @@
 {
   "images": {
     "repository": "866934333672.dkr.ecr.us-east-1.amazonaws.com/boutique",
-    "tag": "c0226dcb4ab7"
+    "tag": "8d7519bdd446"
   },
   "frontend": {
     "ingress": {
