@@ -1,0 +1,19 @@
+{{- /*
+PriorityClass named after the namespace: prod outranks dev and may preempt it;
+dev never preempts anything.
+
+It is cluster-scoped, so the release never renders it: the Argo CD project
+"boutique" allows no cluster-wide objects (ADR 0006). deploy-env.yml renders this
+file alone (--show-only, guardrails.priority.render=true) and applies it with the
+namespace.
+*/ -}}
+{{- if .Values.guardrails.priority.render }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Release.Namespace }}
+value: {{ .Values.guardrails.priority.value }}
+preemptionPolicy: {{ .Values.guardrails.priority.preemptionPolicy }}
+globalDefault: false
+description: "Pods of {{ .Release.Namespace }}"
+{{- end }}

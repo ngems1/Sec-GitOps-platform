@@ -210,6 +210,21 @@ jobs:
           kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace "$NS" elbv2.k8s.aws/pod-readiness-gate-inject=enabled --overwrite
 
+      # The namespace's PriorityClass (cluster-scoped, so the Argo CD project may not
+      # create it, and the release never renders it; ADR 0006). Applied before anything
+      # starts pods: a pod naming a missing PriorityClass is refused.
+      - name: PriorityClass
+        run: |
+          helm template "$RELEASE" ./helm-chart --namespace "$NS" \
+            -f helm-chart/values-aws.yaml \
+            -f "helm-chart/values-${ENVIRONMENT}.yaml" \
+            -f values-terraform.json \
+            --set guardrails.priority.render=true \
+            --show-only templates/priorityclass.yaml > priorityclass.yaml
+          grep -q '^kind: PriorityClass$' priorityclass.yaml \
+            || { echo "::error::no PriorityClass rendered for ${NS}"; exit 1; }
+          kubectl apply -f priorityclass.yaml
+
       - name: Database migrations
         run: |
           set -euo pipefail

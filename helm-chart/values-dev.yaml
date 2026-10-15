@@ -5,3 +5,9 @@ inventoryService:
   replicas: 1
   # The Mug starts with 2 in stock, so a 3-mug order shows the InventoryFailed path.
   stockOverrides: "6E92ZMYYFZ:2"
+
+# Lower priority than prod, and never preempts.
+guardrails:
+  priority:
+    value: 1000
+    preemptionPolicy: Never

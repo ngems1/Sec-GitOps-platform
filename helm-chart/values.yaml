@@ -272,3 +272,12 @@ autoscaling:
   scaleDownStabilizationSeconds: 120
   # Deployment name -> replica range. The Deployments must not set "replicas" themselves.
   targets: {}
+
+# PriorityClass per namespace (templates/priorityclass.yaml), sized in values-<env>.yaml.
+guardrails:
+  priority:
+    # Never in the release (cluster-scoped): deploy-env.yml sets it to render only
+    # templates/priorityclass.yaml and applies that with the namespace.
+    render: false
+    value: 1000
+    preemptionPolicy: Never
