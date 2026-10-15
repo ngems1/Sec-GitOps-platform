@@ -38,10 +38,13 @@ module "eks" {
         }
       })
     }
-    # CPU/memory numbers per pod for the HorizontalPodAutoscaler (and "kubectl top").
-    metrics-server = {
-      most_recent = true
-    }
+    # No metrics-server add-on: its OpenAPI definitions (metrics.k8s.io v1beta1 and the *_v2
+    # apimachinery copies) cannot be converted to protobuf, which made /openapi/v2 answer 503
+    # to Argo CD and Helm (RUNBOOK section 7). metrics-server is the upstream Helm chart,
+    # installed by deploy-env.yml. Its port 10250 is already open from the cluster security
+    # group (the module's kubelet rule), so the old 10251/tcp rule is gone too.
+    # TODO pin every add-on in this map: addon_version = "<running version>", most_recent = false
+    # Never most_recent: a new add-on release is how this broke (RUNBOOK section 7).
     eks-pod-identity-agent = {
       most_recent    = true
       before_compute = true
@@ -62,20 +65,6 @@ module "eks" {
           }
         }
       })
-    }
-  }
-
-  # The EKS metrics-server add-on listens on port 10251 on its pods. The Kubernetes API
-  # (control plane) must reach it there, otherwise "kubectl top" and the HPAs get
-  # "unable to fetch metrics from resource metrics API" and stay at <unknown>.
-  node_security_group_additional_rules = {
-    ingress_cluster_metrics_server = {
-      description                   = "Cluster API to metrics-server (EKS add-on) 10251/tcp"
-      protocol                      = "tcp"
-      from_port                     = 10251
-      to_port                       = 10251
-      type                          = "ingress"
-      source_cluster_security_group = true
     }
   }
 
