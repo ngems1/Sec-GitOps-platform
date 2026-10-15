@@ -66,7 +66,7 @@ limit while the nodes stayed around 40% CPU. So:
   HorizontalPodAutoscaler for frontend, currencyservice (1-4 pods), productcatalogservice,
   cartservice and recommendationservice (1-3 pods). It adds pods above 70% of the CPU
   request and removes them after 2 minutes of lower CPU.
-- metrics-server (EKS add-on in `terraform-aws/eks.tf`) gives the HPA its CPU numbers.
+- metrics-server (upstream Helm chart, installed by `deploy-env.yml`; not the EKS add-on, see RUNBOOK section 7) gives the HPA its CPU numbers.
 - VPC CNI prefix delegation (`eks.tf`): up to 110 pods per t3.medium instead of 17, so
   the extra replicas are not stuck in "Too many pods". Applies to new nodes, i.e. after
   `infra -> destroy` + `infra -> apply`.

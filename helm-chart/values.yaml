@@ -263,7 +263,7 @@ cartDatabase:
     certificate: ""
 
 # Week 3: HorizontalPodAutoscaler (templates/hpa.yaml). Off by default (local runs);
-# turned on for EKS in values-aws.yaml. Needs metrics-server (EKS add-on in Terraform).
+# turned on for EKS in values-aws.yaml. Needs metrics-server (Helm chart, deploy-env.yml).
 autoscaling:
   enabled: false
   # Add replicas when the average CPU of the pods goes above this % of their CPU *request*.

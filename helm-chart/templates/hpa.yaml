@@ -2,7 +2,7 @@
 Week 3: one HorizontalPodAutoscaler per entry of .Values.autoscaling.targets.
 It adds pods when their average CPU goes above targetCPUUtilization % of the CPU
 request, and removes them again after scaleDownStabilizationSeconds of lower CPU.
-The CPU numbers come from metrics-server (EKS add-on, see terraform-aws/eks.tf).
+The CPU numbers come from metrics-server (Helm chart, installed by deploy-env.yml).
 */ -}}
 {{- if .Values.autoscaling.enabled }}
 {{- range $name, $range := .Values.autoscaling.targets }}

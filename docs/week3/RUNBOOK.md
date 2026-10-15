@@ -22,7 +22,8 @@ aws eks update-kubeconfig --name week3-boutique-eks --region us-east-1
 | Build | Code doesn't compile; Docker Hub / package registry hiccup | Read the build log; re-run failed jobs for a transient error |
 | Scan gate | ECR found a CRITICAL vulnerability | Update the base image or dependency. Emergency only: `SCAN_BLOCKING=false` |
 | `Read Terraform outputs` | Infrastructure not created (or destroyed) | Actions → infra → `apply`, then re-run deploy |
-| `AWS Load Balancer Controller`: `UPGRADE FAILED: error validating "": error validating data: the server is currently unable to handle the request` | Helm's client-side OpenAPI validation breaks on the EKS-managed API `v1.metrics.eks.amazonaws.com` (`kube-system/eks-extension-metrics-api`), even with every APIService `Available=True` ([aws-load-balancer-controller#4543](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543)) | The step passes `--disable-openapi-validation` (the API server still validates on apply). If it comes back: cluster-status → `kube-system` → "API services" for the APIService conditions. Do not delete the EKS-managed APIService by hand; only through eks-openapi-fix (section 7) |
+| `AWS Load Balancer Controller`: `UPGRADE FAILED: error validating "": error validating data: the server is currently unable to handle the request` | Helm's client-side OpenAPI validation reads `/openapi/v2`, which the EKS metrics-server add-on broke (section 7), even with every APIService `Available=True` | The step passes `--disable-openapi-validation` (the API server still validates on apply). Remove the flag once eks-openapi-fix `check` shows protobuf OK 10/10. If it comes back: eks-openapi-fix `diagnose` names the definition that breaks it |
+| `metrics-server`: "The EKS add-on metrics-server is still installed" | `infra` apply has not removed the add-on yet (merging the fix starts `infra` and `deploy` at the same time) | Wait for Actions → infra (apply) to finish green, then re-run the failed deploy jobs (section 7, "Rollout order") |
 | `Database migrations` | RDS not reachable, or SQL error | Section 3. The Job's log is printed in the step |
 | `Deploy with Helm` (timeout) | New pods never became Ready. Helm already rolled back (`--rollback-on-failure`) | The `Diagnostics` step ran `deploy/diagnose.sh`: read pods / events / logs; then section 2 |
 | `Smoke test` | The ALB, HTTPS name, a page or inventory `/stock` failed. The `Roll back` step restored the previous revision | A new ALB needs 2-3 min: re-run once. Otherwise read which URL failed |
@@ -43,7 +44,7 @@ Check: cluster-status → the namespace. Look at the pod's STATUS and "container
 | Restarts with reason `OOMKilled` | Memory limit too low | Raise the limit in `helm-chart/values.yaml` (Grafana: `monitoring/kube-prometheus-stack.values.yaml`, now 768Mi) |
 | Restarts with `Liveness probe failed` under load | Pod too busy to answer the probe in time | Probes already allow 5 s × 6 failures; let the HPA add pods, or raise the CPU limit |
 | `ImagePullBackOff` | Tag missing in ECR (ECR is emptied by `destroy`) | Run deploy without `image_tag` to rebuild |
-| HPA shows `<unknown>` targets | metrics-server not reachable | cluster-status → `kube-system`: "metrics API" must be `Available=True`. The node security group must allow 10251/tcp from the cluster SG (`eks.tf`) |
+| HPA shows `<unknown>` targets | metrics-server not reachable | cluster-status → `kube-system`: "metrics API" must be `Available=True`. metrics-server is the Helm chart from `deploy-env.yml` (2 replicas, port 10250, open to the cluster SG through the kubelet rule); check its pods in `kube-system` |
 
 A single deleted pod is recreated by Kubernetes in about 5 s (chaos test). With one replica there
 is a short gap; services that matter can run `minReplicas: 2`.
@@ -102,10 +103,41 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 Symptom: on a new cluster (seen on EKS 1.35, platform `eks.24`) Argo CD never syncs:
 `failed to load open api schema while syncing cluster cache: error getting openapi resources: the
 server is currently unable to handle the request`, while `kubectl get --raw /openapi/v2` (JSON)
-works. Suspect: the EKS-managed APIService `v1.metrics.eks.amazonaws.com` breaks the **protobuf**
-form of `/openapi/v2`, which Argo CD requests
-([aws-load-balancer-controller#4543](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543),
-[argo-cd#19490](https://github.com/argoproj/argo-cd/issues/19490)).
+works. The **protobuf** form of `/openapi/v2`, which Argo CD requests, answers 503
+([argo-cd#19490](https://github.com/argoproj/argo-cd/issues/19490)). Helm's client-side
+validation (section 1, LBC step) fails the same way.
+
+**Root cause** (found with `diagnose`, 2026-10-15): the **EKS metrics-server add-on** (APIService
+`v1beta1.metrics.k8s.io`), installed with `most_recent = true`, publishes OpenAPI definitions that
+cannot be converted to protobuf. `openapi_v2.ParseDocument` fails on
+`io.k8s.metrics.pkg.apis.metrics.v1beta1.*` (`NodeMetrics`, `PodMetrics`, `ContainerMetrics`, ...)
+and on `*_v2` copies of apimachinery types (`ObjectMeta_v2`, `Quantity_v2`, ...), each with
+`invalid properties: ArbitraryKeys, SchemaProps, SwaggerSchemaProps`: a schema serialized from Go
+struct fields instead of as OpenAPI. Deleting `v1.metrics.eks.amazonaws.com` (the first suspect,
+[aws-load-balancer-controller#4543](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543))
+did not help.
+
+**Fix:** `terraform-aws/eks.tf` no longer installs the metrics-server add-on (and drops its 10251/tcp
+node rule); `deploy-env.yml` installs the upstream chart (`kubernetes-sigs/metrics-server`, pinned
+`METRICS_SERVER_CHART_VERSION`, 2 replicas, PodDisruptionBudget, requests and limits) right after the
+Load Balancer Controller. Both serve the same APIService, so the add-on must be gone first: the
+deploy step fails with "The EKS add-on metrics-server is still installed" otherwise.
+
+**Rollout order** (merging touches `terraform-aws/**` and `deploy-env.yml`, so `infra` and `deploy`
+both start on the push to `main`):
+1. Merge the PR.
+2. Actions → infra (push run, apply): removes the add-on. From here until step 3 there is no
+   metrics API: HPAs keep their replica count, `kubectl top` fails.
+3. Actions → deploy: if it reached the metrics-server step before step 2 finished, it failed there
+   (before changing anything): **re-run failed jobs** once infra is green.
+4. Verify: eks-openapi-fix `check` (protobuf OK 10/10), Argo CD `boutique-dev` syncs, `kubectl get
+   hpa -A` shows CPU targets. Then remove `--disable-openapi-validation` from the LBC step.
+
+**Rule: pin add-on versions; never `most_recent`.** `most_recent = true` means a new cluster (or any
+apply) can pick up an add-on release nobody tested; that is how this broke. Every add-on in
+`eks.tf` gets `addon_version = "<tested version>"` and `most_recent = false`; upgrades are a
+reviewed change. (Pending: the remaining add-ons are pinned once their running versions are read
+from the `diagnose` run's "EKS add-ons" table.)
 
 Tool: **Actions → eks-openapi-fix** (results on the run's Summary page).
 
@@ -129,12 +161,7 @@ Tool: **Actions → eks-openapi-fix** (results on the run's Summary page).
    If the conversion succeeds here while the cluster still answers 503, the cause is elsewhere,
    or the API server uses another gnostic-models version: try the one Kubernetes 1.35 vendors.
 
-**Result so far (2026-10-15):** removing `v1.metrics.eks.amazonaws.com` did **not** help (restored
-since): protobuf still 503 10/10, JSON 200 10/10, on a brand-new cluster. So some definition in the
-merged spec cannot be converted to protobuf; run **diagnose** to name it. All EKS add-ons in
-`terraform-aws/eks.tf` use `most_recent = true`, so a new add-on release can bring such a definition.
-
-What is lost while it is deleted: the EKS metrics API (`metrics.eks.amazonaws.com`, control-plane
+What is lost while `v1.metrics.eks.amazonaws.com` is deleted (remove): the EKS metrics API (`metrics.eks.amazonaws.com`, control-plane
 metrics from EKS). metrics-server, the HPAs and `kubectl top` use `metrics.k8s.io` and keep working.
 
 ## Incident log (things that actually happened)
@@ -143,7 +170,8 @@ metrics from EKS). metrics-server, the HPAs and `kubectl top` use `metrics.k8s.i
 |---|---|---|
 | Grafana crash at start ("unlinkat ... read-only file system") | Adding `plugins: [prometheus]` made Grafana try to reinstall a bundled plugin | Removed; `preinstall_disabled: true` |
 | Grafana and db-migrate `Pending` | 17 pods per t3.medium, cluster full | 4 nodes, then VPC CNI prefix delegation (110 pods/node) |
-| HPA targets `<unknown>` | EKS API couldn't reach metrics-server on 10251 | Node SG rule from the cluster SG |
+| HPA targets `<unknown>` | EKS API couldn't reach metrics-server on 10251 | Node SG rule from the cluster SG (since replaced: metrics-server is now the Helm chart on 10250, section 7) |
+| Argo CD "failed to load open api schema", Helm "error validating data" (new cluster, EKS 1.35) | EKS metrics-server add-on (`most_recent`) publishes OpenAPI that cannot be converted to protobuf: `/openapi/v2` protobuf 503, JSON 200 | Add-on removed, upstream Helm chart in `deploy-env.yml`; rule: pin add-on versions (section 7) |
 | Grafana 503 during stress test | Grafana OOMKilled at 384Mi | Limit 768Mi |
 | `destroy` failed on Redis | ElastiCache still deleting | Wait, re-run `destroy` |
 | cluster-status failed from a branch | OIDC deploy role only trusts `main` | Diagnostics changes go through `main` |
