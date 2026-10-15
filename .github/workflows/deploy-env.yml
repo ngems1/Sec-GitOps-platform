@@ -189,9 +189,19 @@ jobs:
 
       # Shared by dev and prod; its IAM role (Pod Identity) comes from Terraform.
       # Installing it again with the same version changes nothing.
+      #
+      # --disable-openapi-validation: Helm's client-side check of the rendered objects
+      # against the cluster's OpenAPI schema fails here with "error validating data: the
+      # server is currently unable to handle the request", although every APIService is
+      # Available. The EKS-managed API v1.metrics.eks.amazonaws.com
+      # (kube-system/eks-extension-metrics-api) has broken this check before:
+      # https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543
+      # Only Helm's client-side pass is skipped: the API server still validates every
+      # object when it is applied. Remove the flag once AWS confirms a fix (DESIGN gap).
       - name: AWS Load Balancer Controller
         run: |
           helm upgrade --install aws-load-balancer-controller aws-load-balancer-controller \
+            --disable-openapi-validation \
             --repo https://aws.github.io/eks-charts --version "$LBC_CHART_VERSION" \
             --namespace kube-system \
             --set clusterName="$CLUSTER" \
