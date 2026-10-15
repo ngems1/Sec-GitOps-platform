@@ -12,15 +12,18 @@ name: eks-openapi-fix
 #   remove   check; save the APIService as an artifact; delete it (nothing else); wait 2 min;
 #            report whether EKS recreated it; check again; hard-refresh Argo CD boutique-dev
 #   restore  kubectl apply the APIService saved by the remove run restore_run_id
+#   diagnose read-only: check; save /openapi/v2 (JSON) as an artifact; convert it the way the
+#            API server builds the protobuf form, to name the definition that breaks it and
+#            the CRD or APIService that owns it; list the EKS add-on versions
 # Results are on the run's Summary page. See RUNBOOK section 7.
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "check (read-only), remove the APIService, or restore it"
+        description: "check or diagnose (read-only), remove the APIService, or restore it"
         type: choice
-        options: [check, remove, restore]
+        options: [check, diagnose, remove, restore]
         default: check
       restore_run_id:
         description: "restore only: ID of the remove run whose artifact to apply"
@@ -44,7 +47,7 @@ env:
 jobs:
   fix:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # two checks of up to 20 x 30 s, plus the 2 min wait
+    timeout-minutes: 30 # remove: two checks of up to 20 x 30 s, plus the 2 min wait
     steps:
       - uses: actions/checkout@v5
 
@@ -80,6 +83,222 @@ jobs:
             kubectl get apiservice "$APISERVICE" 2>&1 || true
             echo
             bash deploy/openapi-check.sh 10
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Read-only from here to "Save the APIService": diagnose changes nothing in the cluster.
+      # The JSON form of /openapi/v2 works, so it is the input for reproducing the conversion.
+      - name: Save /openapi/v2 (JSON)
+        if: inputs.action == 'diagnose'
+        run: |
+          kubectl get --raw /openapi/v2 --request-timeout=60s > openapi-v2.json
+          {
+            echo "### /openapi/v2 as JSON (artifact \`openapi-v2-json\`)"
+            echo '```'
+            echo "$(wc -c < openapi-v2.json) bytes, $(jq '.definitions | length' openapi-v2.json) definitions, $(jq '.paths | length' openapi-v2.json) paths"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload /openapi/v2 (JSON)
+        if: inputs.action == 'diagnose'
+        uses: actions/upload-artifact@v5
+        with:
+          name: openapi-v2-json
+          path: openapi-v2.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/setup-go@v6
+        if: inputs.action == 'diagnose'
+        with:
+          go-version: "1.26"
+          cache: false # throwaway module, no go.sum to key on
+
+      # The API server builds the protobuf form in kube-openapi (handler ToProtoBinary):
+      # openapi_v2.ParseDocument(json), then proto.Marshal. Same calls here, on the same JSON.
+      # The program is inline (no go.mod in the repo, so CodeQL's Go autobuild ignores it); the
+      # module version is pinned and its checksum verified against sum.golang.org.
+      - name: Reproduce the protobuf conversion
+        if: inputs.action == 'diagnose'
+        env:
+          GNOSTIC_MODELS: v0.7.0
+        run: |
+          src="$RUNNER_TEMP/openapi-parse"
+          mkdir -p "$src"
+          cat > "$src/main.go" <<'EOF'
+          // Reads /openapi/v2 as JSON and converts it like kube-openapi's ToProtoBinary.
+          // On failure, prints the error and writes to owners.tsv the GVK of every definition
+          // the error names: group, version, kind, definition (tab separated).
+          package main
+
+          import (
+              "encoding/json"
+              "fmt"
+              "os"
+              "sort"
+              "strings"
+
+              openapi_v2 "github.com/google/gnostic-models/openapiv2"
+              "google.golang.org/protobuf/proto"
+          )
+
+          type spec struct {
+              Definitions map[string]struct {
+                  GVK []struct{ Group, Version, Kind string } `json:"x-kubernetes-group-version-kind"`
+              } `json:"definitions"`
+          }
+
+          // isNameChar: a definition name continues past a match (Pod vs PodSpec).
+          func isNameChar(b byte) bool {
+              return b == '_' || b == '-' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+          }
+
+          // named returns the definitions that appear in msg as whole names.
+          func named(msg string, defs []string) []string {
+              var out []string
+              for _, d := range defs {
+                  for from := 0; ; {
+                      i := strings.Index(msg[from:], d)
+                      if i < 0 {
+                          break
+                      }
+                      end := from + i + len(d)
+                      if end == len(msg) || !isNameChar(msg[end]) {
+                          out = append(out, d)
+                          break
+                      }
+                      from += i + 1
+                  }
+              }
+              return out
+          }
+
+          func main() {
+              data, err := os.ReadFile(os.Args[1])
+              if err != nil {
+                  fmt.Println(err)
+                  os.Exit(1)
+              }
+              stage := "openapi_v2.ParseDocument"
+              doc, err := openapi_v2.ParseDocument(data)
+              if err == nil {
+                  stage = "proto.Marshal"
+                  _, err = proto.Marshal(doc)
+              }
+              if err == nil {
+                  fmt.Println("openapi_v2.ParseDocument and proto.Marshal both succeeded: this JSON converts to protobuf.")
+                  return
+              }
+              msg := err.Error()
+              fmt.Printf("%s FAILED:\n%s\n", stage, msg)
+
+              var s spec
+              if jerr := json.Unmarshal(data, &s); jerr != nil {
+                  fmt.Println("cannot read definitions:", jerr)
+                  os.Exit(2)
+              }
+              defs := make([]string, 0, len(s.Definitions))
+              for d := range s.Definitions {
+                  defs = append(defs, d)
+              }
+              sort.Strings(defs)
+              f, ferr := os.Create("owners.tsv")
+              if ferr != nil {
+                  fmt.Println(ferr)
+                  os.Exit(2)
+              }
+              defer f.Close()
+              fmt.Println()
+              fmt.Println("Definitions named in the error:")
+              for _, d := range named(msg, defs) {
+                  gvks := s.Definitions[d].GVK
+                  if len(gvks) == 0 {
+                      fmt.Printf("  %s (no x-kubernetes-group-version-kind: a nested or built-in type)\n", d)
+                      continue
+                  }
+                  for _, g := range gvks {
+                      fmt.Printf("  %s -> group %q, version %s, kind %s\n", d, g.Group, g.Version, g.Kind)
+                      fmt.Fprintf(f, "%s\t%s\t%s\t%s\n", g.Group, g.Version, g.Kind, d)
+                  }
+              }
+              f.Close()
+              os.Exit(2)
+          }
+          EOF
+          cd "$src"
+          go mod init openapiparse
+          for attempt in 1 2 3; do
+            go get "github.com/google/gnostic-models@${GNOSTIC_MODELS}" && go mod tidy && break
+            if [ "$attempt" = 3 ]; then echo "::error::go get failed 3 times"; exit 1; fi
+            sleep $((attempt * 10))
+          done
+          go build -o parse .
+          cd "$GITHUB_WORKSPACE"
+          rc=0
+          "$src/parse" openapi-v2.json > parse.out 2>&1 || rc=$?
+          touch owners.tsv
+          {
+            echo "### Protobuf conversion (gnostic-models ${GNOSTIC_MODELS}, exit ${rc})"
+            echo '```'
+            cat parse.out
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Read-only (get). Who owns each group the error names: a CRD (its labels and annotations
+      # show the add-on or Helm release; last-applied-configuration is left out, it is the whole
+      # object again) or an APIService (Local = built into the API server).
+      - name: Owners of the failing definitions
+        if: inputs.action == 'diagnose'
+        run: |
+          {
+            echo "### Owners"
+            echo '```'
+            echo "\$ kubectl get crd -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp"
+            kubectl get crd -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp \
+              --sort-by=.metadata.creationTimestamp 2>&1 || true
+            echo
+            if [ ! -s owners.tsv ]; then
+              echo "The error names no definition with a group/version/kind: read its path above."
+            fi
+            kubectl get crd -o json > crds.json 2>/dev/null || echo '{"items":[]}' > crds.json
+            sort -u owners.tsv | while IFS=$'\t' read -r group version kind def; do
+              echo "--- ${def}: group \"${group}\", version ${version}, kind ${kind}"
+              if [ -z "$group" ]; then
+                echo "Core API group: built into the API server."
+                continue
+              fi
+              crd=$(jq -r --arg g "$group" --arg k "$kind" \
+                '.items[] | select(.spec.group == $g and .spec.names.kind == $k) | .metadata.name' crds.json)
+              if [ -n "$crd" ]; then
+                echo "\$ kubectl get crd ${crd} (created, labels, annotations)"
+                kubectl get crd "$crd" -o json | jq '{created: .metadata.creationTimestamp, labels: .metadata.labels,
+                  annotations: ((.metadata.annotations // {}) | del(."kubectl.kubernetes.io/last-applied-configuration"))}'
+              elif kubectl get apiservice "${version}.${group}" -o json > apisvc.json 2>/dev/null; then
+                echo "\$ kubectl get apiservice ${version}.${group} (created, service, labels, annotations)"
+                jq '{created: .metadata.creationTimestamp, service: (.spec.service // "Local (built into the API server)"),
+                  labels: .metadata.labels,
+                  annotations: ((.metadata.annotations // {}) | del(."kubectl.kubernetes.io/last-applied-configuration"))}' apisvc.json
+              else
+                echo "No CRD for ${kind}.${group} and no APIService ${version}.${group}."
+              fi
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: EKS add-on versions
+        if: inputs.action == 'diagnose'
+        run: |
+          {
+            echo "### EKS add-ons"
+            echo '```'
+            cluster=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
+            cluster="${cluster##*/}"
+            printf '%-34s %-26s %-9s %-34s %s\n' NAME VERSION STATUS CREATED MODIFIED
+            for addon in $(aws eks list-addons --cluster-name "$cluster" --region "$AWS_REGION" --query 'addons[]' --output text); do
+              aws eks describe-addon --cluster-name "$cluster" --addon-name "$addon" --region "$AWS_REGION" \
+                --query 'addon.[addonName,addonVersion,status,createdAt,modifiedAt]' --output text \
+                | awk -F'\t' '{ printf "%-34s %-26s %-9s %-34s %s\n", $1, $2, $3, $4, $5 }'
+            done
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
