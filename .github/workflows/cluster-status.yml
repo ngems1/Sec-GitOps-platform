@@ -62,6 +62,33 @@ jobs:
           echo "Image running now:"
           kubectl -n "$NS" get deploy frontend -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}' 2>/dev/null || true
 
+      # Read-only (get, describe). PriorityClasses come from deploy-env.yml (ADR 0006); quota,
+      # limits and disruption budgets from the chart. Missing objects are reported, not errors.
+      - name: Guardrails
+        if: startsWith(inputs.namespace, 'boutique-')
+        env:
+          NS: ${{ inputs.namespace }}
+        run: |
+          {
+            echo "### Guardrails in ${NS}"
+            echo '```'
+            echo "\$ kubectl get priorityclass boutique-dev boutique-prod"
+            kubectl get priorityclass boutique-dev boutique-prod 2>&1 || true
+            echo
+            echo "\$ kubectl -n ${NS} get resourcequota,limitrange,pdb"
+            kubectl -n "$NS" get resourcequota,limitrange,pdb 2>&1 || true
+            echo
+            echo "\$ kubectl -n ${NS} describe resourcequota"
+            kubectl -n "$NS" describe resourcequota 2>&1 || true
+            if [ -n "$(kubectl get crd applications.argoproj.io --ignore-not-found -o name 2>/dev/null)" ]; then
+              echo
+              echo "\$ Argo CD Application boutique-dev (sync, health, revision)"
+              kubectl -n argocd get application boutique-dev --ignore-not-found \
+                -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}' 2>&1 || true
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Namespace snapshot
         env:
           NS: ${{ inputs.namespace }}
