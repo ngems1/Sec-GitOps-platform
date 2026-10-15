@@ -22,7 +22,7 @@ aws eks update-kubeconfig --name week3-boutique-eks --region us-east-1
 | Build | Code doesn't compile; Docker Hub / package registry hiccup | Read the build log; re-run failed jobs for a transient error |
 | Scan gate | ECR found a CRITICAL vulnerability | Update the base image or dependency. Emergency only: `SCAN_BLOCKING=false` |
 | `Read Terraform outputs` | Infrastructure not created (or destroyed) | Actions → infra → `apply`, then re-run deploy |
-| `AWS Load Balancer Controller`: `UPGRADE FAILED: error validating "": error validating data: the server is currently unable to handle the request` | Helm's client-side OpenAPI validation breaks on the EKS-managed API `v1.metrics.eks.amazonaws.com` (`kube-system/eks-extension-metrics-api`), even with every APIService `Available=True` ([aws-load-balancer-controller#4543](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543)) | The step passes `--disable-openapi-validation` (the API server still validates on apply). If it comes back: cluster-status → `kube-system` → "API services" for the APIService conditions. Do not delete the EKS-managed APIService |
+| `AWS Load Balancer Controller`: `UPGRADE FAILED: error validating "": error validating data: the server is currently unable to handle the request` | Helm's client-side OpenAPI validation breaks on the EKS-managed API `v1.metrics.eks.amazonaws.com` (`kube-system/eks-extension-metrics-api`), even with every APIService `Available=True` ([aws-load-balancer-controller#4543](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543)) | The step passes `--disable-openapi-validation` (the API server still validates on apply). If it comes back: cluster-status → `kube-system` → "API services" for the APIService conditions. Do not delete the EKS-managed APIService by hand; only through eks-openapi-fix (section 7) |
 | `Database migrations` | RDS not reachable, or SQL error | Section 3. The Job's log is printed in the step |
 | `Deploy with Helm` (timeout) | New pods never became Ready. Helm already rolled back (`--rollback-on-failure`) | The `Diagnostics` step ran `deploy/diagnose.sh`: read pods / events / logs; then section 2 |
 | `Smoke test` | The ALB, HTTPS name, a page or inventory `/stock` failed. The `Roll back` step restored the previous revision | A new ALB needs 2-3 min: re-run once. Otherwise read which URL failed |
@@ -96,6 +96,33 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 | Browser certificate warning | You're on the raw `*.elb.amazonaws.com` name; use `dev.` / `shop.` / `grafana.<domain>` |
 | Name doesn't resolve after a fresh apply | The deploy workflow creates the records (`deploy/dns-record.sh`); run deploy |
 | ACM certificate stuck "Pending validation" | The validation CNAMEs must be in the hosted zone (`terraform-aws/dns.tf`); check `DOMAIN_NAME` matches the zone |
+
+## 7. Argo CD: "failed to load open api schema"
+
+Symptom: on a new cluster (seen on EKS 1.35, platform `eks.24`) Argo CD never syncs:
+`failed to load open api schema while syncing cluster cache: error getting openapi resources: the
+server is currently unable to handle the request`, while `kubectl get --raw /openapi/v2` (JSON)
+works. Suspect: the EKS-managed APIService `v1.metrics.eks.amazonaws.com` breaks the **protobuf**
+form of `/openapi/v2`, which Argo CD requests
+([aws-load-balancer-controller#4543](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543),
+[argo-cd#19490](https://github.com/argoproj/argo-cd/issues/19490)).
+
+Tool: **Actions → eks-openapi-fix** (results on the run's Summary page).
+
+1. **Check** (`action` = `check`, read-only): 10 GETs of `/openapi/v2` as protobuf and 10 as JSON
+   through `kubectl proxy`. Protobuf failing (503 or `000`) while JSON is OK confirms the symptom.
+2. **Remove** (`action` = `remove`): checks, saves the APIService as artifact
+   `apiservice-v1.metrics.eks.amazonaws.com` (kept 90 days), deletes that APIService only (its
+   Service `kube-system/eks-extension-metrics-api` stays), waits 2 min, says whether EKS recreated
+   it, checks again, then hard-refreshes the Argo CD Application `boutique-dev`.
+   - Protobuf OK after and not recreated: the cause is confirmed; Argo CD should sync within minutes.
+   - EKS recreated it and protobuf fails again: deleting does not help; restore is not needed.
+   - Protobuf still fails without the APIService: it was not the cause; restore it.
+3. **Restore** (`action` = `restore`, `restore_run_id` = the ID in the remove run's URL,
+   `.../actions/runs/<id>`): `kubectl apply` of the saved APIService. It refuses any other object.
+
+What is lost while it is deleted: the EKS metrics API (`metrics.eks.amazonaws.com`, control-plane
+metrics from EKS). metrics-server, the HPAs and `kubectl top` use `metrics.k8s.io` and keep working.
 
 ## Incident log (things that actually happened)
 

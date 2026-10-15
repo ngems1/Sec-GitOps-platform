@@ -1,0 +1,217 @@
+name: eks-openapi-fix
+
+# Argo CD on a new cluster (EKS 1.35, eks.24) fails with "failed to load open api schema while
+# syncing cluster cache: ... the server is currently unable to handle the request", while
+# "kubectl get --raw /openapi/v2" (JSON) works. Suspect: the EKS-managed APIService
+# v1.metrics.eks.amazonaws.com breaks the protobuf form of /openapi/v2, which Argo CD asks for.
+# https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/4543
+# https://github.com/argoproj/argo-cd/issues/19490
+#
+# Actions > eks-openapi-fix > Run workflow:
+#   check    read-only: /openapi/v2 as protobuf and as JSON, 10 tries each
+#   remove   check; save the APIService as an artifact; delete it (nothing else); wait 2 min;
+#            report whether EKS recreated it; check again; hard-refresh Argo CD boutique-dev
+#   restore  kubectl apply the APIService saved by the remove run restore_run_id
+# Results are on the run's Summary page. See RUNBOOK section 7.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "check (read-only), remove the APIService, or restore it"
+        type: choice
+        options: [check, remove, restore]
+        default: check
+      restore_run_id:
+        description: "restore only: ID of the remove run whose artifact to apply"
+        type: string
+        required: false
+
+permissions:
+  id-token: write # GitHub OIDC -> AWS
+  contents: read
+  actions: read # download the artifact of another run (restore)
+
+concurrency:
+  group: eks-openapi-fix
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  APISERVICE: v1.metrics.eks.amazonaws.com
+  ARTIFACT: apiservice-v1.metrics.eks.amazonaws.com
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # two checks of up to 20 x 30 s, plus the 2 min wait
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the restore input
+        if: inputs.action == 'restore' && inputs.restore_run_id == ''
+        run: |
+          echo "::error::restore needs restore_run_id (the ID of the remove run, from its URL)"
+          exit 1
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Connect kubectl to the cluster
+        run: |
+          aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/week3/terraform.tfstate" state.json --only-show-errors
+          aws eks update-kubeconfig --name "$(jq -r '.outputs.cluster_name.value' state.json)" --region "$AWS_REGION"
+          rm -f state.json
+
+      - name: Check OpenAPI v2
+        if: inputs.action != 'restore'
+        run: |
+          {
+            echo "### OpenAPI v2 (before)"
+            echo '```'
+            arn=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
+            aws eks describe-cluster --name "${arn##*/}" --region "$AWS_REGION" \
+              --query 'cluster.{version:version,platformVersion:platformVersion}' --output text 2>&1 \
+              | sed 's/^/EKS version, platform: /' || true
+            echo "\$ kubectl get apiservice ${APISERVICE}"
+            kubectl get apiservice "$APISERVICE" 2>&1 || true
+            echo
+            bash deploy/openapi-check.sh 10
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The saved copy has no managedFields, status, resourceVersion, uid or creationTimestamp,
+      # so restore can apply it as is. An APIService holds no Secret: its caBundle is the
+      # serving CA's public certificate.
+      - name: Save the APIService
+        id: save
+        if: inputs.action == 'remove'
+        run: |
+          mkdir -p saved
+          if ! kubectl get apiservice "$APISERVICE" -o yaml > full.yaml 2> get.err; then
+            echo "### Save" >> "$GITHUB_STEP_SUMMARY"
+            { echo "Could not read ${APISERVICE}; nothing deleted:"; echo '```'; cat get.err; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "uid=$(yq '.metadata.uid' full.yaml)" >> "$GITHUB_OUTPUT"
+          yq 'del(.metadata.managedFields) | del(.metadata.resourceVersion) | del(.metadata.uid) | del(.metadata.creationTimestamp) | del(.status)' \
+            full.yaml > "saved/${APISERVICE}.yaml"
+          {
+            echo "### Saved ${APISERVICE} (artifact \`${ARTIFACT}\`)"
+            echo "Restore: run this workflow with action \`restore\` and restore_run_id \`${GITHUB_RUN_ID}\`."
+            echo '```yaml'
+            cat "saved/${APISERVICE}.yaml"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the saved APIService
+        if: inputs.action == 'remove'
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: saved/${{ env.APISERVICE }}.yaml
+          if-no-files-found: error
+          retention-days: 90
+
+      # Only this APIService. Its Service kube-system/eks-extension-metrics-api stays.
+      - name: Delete the APIService
+        if: inputs.action == 'remove'
+        run: |
+          {
+            echo "### Delete"
+            echo '```'
+            echo "\$ kubectl delete apiservice ${APISERVICE} --wait=true"
+            kubectl delete apiservice "$APISERVICE" --wait=true 2>&1
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}" # no pipefail in the default shell: tee would hide a failure
+
+      - name: Wait 2 minutes, did EKS recreate it?
+        if: inputs.action == 'remove'
+        env:
+          OLD_UID: ${{ steps.save.outputs.uid }}
+        run: |
+          sleep 120
+          {
+            echo "### After 2 minutes"
+            echo '```'
+            uid=$(kubectl get apiservice "$APISERVICE" --ignore-not-found -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            if [ -z "$uid" ]; then
+              echo "${APISERVICE} is gone: EKS did not recreate it (yet)."
+            elif [ "$uid" = "$OLD_UID" ]; then
+              echo "${APISERVICE} still has its old uid ${uid}: the delete did not take effect."
+            else
+              echo "EKS recreated ${APISERVICE} (new uid ${uid}):"
+              kubectl get apiservice "$APISERVICE" \
+                -o jsonpath='created {.metadata.creationTimestamp}{"\n"}{range .status.conditions[*]}{.type}={.status} {.reason}{"\n"}{end}' 2>&1 || true
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check OpenAPI v2 again
+        if: inputs.action == 'remove'
+        run: |
+          {
+            echo "### OpenAPI v2 (after)"
+            echo '```'
+            bash deploy/openapi-check.sh 10
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Only the refresh annotation; Argo CD removes it once it has refreshed.
+      - name: Hard refresh Argo CD boutique-dev
+        if: inputs.action == 'remove'
+        run: |
+          {
+            echo "### Argo CD boutique-dev"
+            echo '```'
+            if [ -z "$(kubectl get crd applications.argoproj.io --ignore-not-found -o name 2>/dev/null)" ] ||
+               [ -z "$(kubectl -n argocd get application boutique-dev --ignore-not-found -o name 2>/dev/null)" ]; then
+              echo "No Application argocd/boutique-dev: nothing to refresh."
+            else
+              echo "\$ kubectl -n argocd annotate application boutique-dev argocd.argoproj.io/refresh=hard --overwrite"
+              kubectl -n argocd annotate application boutique-dev argocd.argoproj.io/refresh=hard --overwrite 2>&1 || true
+              sleep 60
+              echo
+              echo "After 60 s (sync, health, revision):"
+              kubectl -n argocd get application boutique-dev \
+                -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}{range .status.conditions[*]}{.type}: {.message}{"\n"}{end}' 2>&1 || true
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Download the saved APIService
+        if: inputs.action == 'restore'
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: restore
+          run-id: ${{ inputs.restore_run_id }}
+          github-token: ${{ github.token }}
+
+      # Refuses anything but this one APIService, so a wrong run ID cannot apply other objects.
+      - name: Restore the APIService
+        if: inputs.action == 'restore'
+        env:
+          RUN: ${{ inputs.restore_run_id }}
+        run: |
+          file="restore/${APISERVICE}.yaml"
+          {
+            echo "### Restore ${APISERVICE} from run ${RUN}"
+            echo '```'
+            kind=$(yq '.kind' "$file"); name=$(yq '.metadata.name' "$file"); docs=$(yq ea '[.] | length' "$file")
+            if [ "$kind" != APIService ] || [ "$name" != "$APISERVICE" ] || [ "$docs" != 1 ]; then
+              echo "The artifact is not the single APIService ${APISERVICE} (kind ${kind}, name ${name}, ${docs} documents). Nothing applied."
+              echo '```'
+              exit 1
+            fi
+            echo "\$ kubectl apply -f ${file}"
+            kubectl apply -f "$file" 2>&1
+            echo
+            kubectl get apiservice "$APISERVICE" 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}" # no pipefail in the default shell: tee would hide a failure
