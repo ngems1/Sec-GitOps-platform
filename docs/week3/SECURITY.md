@@ -92,8 +92,8 @@ read-only disk (`preinstall_disabled` keeps it from trying to write plugins).
 | Gap | Risk | Fix |
 |---|---|---|
 | ~~Prod Redis reachable from dev pods, no auth, no TLS~~ | Fixed | ElastiCache with TLS required and an auth token per environment (token in the encrypted Terraform state, delivered as a Kubernetes Secret); isolation test checks dev gets `NOAUTH` |
-| No ResourceQuota / LimitRange | A dev load test could starve prod | Quota per namespace, higher PriorityClass for prod |
-| No Pod Security Standard label | A privileged pod could be deployed | `pod-security.kubernetes.io/enforce: restricted` on both namespaces |
+| ~~No ResourceQuota / LimitRange~~ | Implemented, pending first deploy | ResourceQuota + LimitRange per namespace (dev sized so a stress test still fits); PriorityClass: prod outranks and may preempt dev; PodDisruptionBudget, topology spread and preStop per service |
+| Pod Security Standard only at `baseline` | A pod could run as root (privileged pods are already blocked) | Pod Security labels implemented, pending first deploy: `baseline` is enforced and `restricted` audited/warned on both namespaces; the db-migrate Job and the isolation probe already run as non-root; move to enforcing `restricted` once the cluster shows no `restricted` warnings |
 | EKS API endpoint public | Exposed to the internet (still IAM-authenticated) | Restrict `cluster_endpoint_public_access_cidrs` or go private + runner in the VPC |
 | Admin-only cluster access | No per-namespace roles | EKS access entries: edit in dev, view in prod |
 | Checkov in soft-fail | Findings don't block | Fix or explicitly skip each finding, then make it blocking |

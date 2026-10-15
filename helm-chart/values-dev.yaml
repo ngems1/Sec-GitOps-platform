@@ -11,3 +11,12 @@ guardrails:
   priority:
     value: 1000
     preemptionPolicy: Never
+  # Room for every service at its autoscaling maximum plus a stress test (up to
+  # 6 Locust pods of 300m), but never the whole cluster (4 x t3.medium = ~7.6 CPU
+  # allocatable).
+  quota:
+    requests.cpu: "5"
+    requests.memory: 6Gi
+    limits.cpu: "20"
+    limits.memory: 12Gi
+    pods: "60"

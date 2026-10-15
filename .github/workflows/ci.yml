@@ -166,11 +166,18 @@ jobs:
             # Autoscaling is on for EKS: the HPAs must be in the rendered chart.
             grep -q '^kind: HorizontalPodAutoscaler' "rendered-${env}.yaml" \
               || { echo "::error::${env}: no HorizontalPodAutoscaler rendered"; exit 1; }
+            # Guardrails are on for EKS: quota, limits and disruption budgets.
+            for kind in ResourceQuota LimitRange PodDisruptionBudget; do
+              grep -q "^kind: ${kind}$" "rendered-${env}.yaml" \
+                || { echo "::error::${env}: no ${kind} rendered"; exit 1; }
+            done
             # The PriorityClass is cluster-scoped: the Argo CD project refuses it, so the
             # release must not contain it. deploy-env.yml renders and applies it alone.
             if grep -q '^kind: PriorityClass$' "rendered-${env}.yaml"; then
               echo "::error::${env}: the release renders a PriorityClass (deploy-env.yml owns it)"; exit 1
             fi
+            grep -q "priorityClassName: boutique-${env}" "rendered-${env}.yaml" \
+              || { echo "::error::${env}: pods do not use the boutique-${env} PriorityClass"; exit 1; }
             # As the PriorityClass step in deploy-env.yml does it.
             helm template "${chart[@]}" --set guardrails.priority.render=true \
               --show-only templates/priorityclass.yaml > "priorityclass-${env}.yaml"
