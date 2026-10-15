@@ -1,10 +1,13 @@
-"""slack-alerts Lambda: CloudWatch alarm (via SNS) -> Slack message.
+"""slack-alerts Lambda: CloudWatch alarm (via SNS) or GuardDuty finding (via EventBridge) -> Slack.
 
 Every alarm topic (one per environment) is subscribed to this function. It turns
 the alarm into a short Slack message (red for ALARM, green for OK) and posts it to
 the incoming webhook stored in Secrets Manager (SLACK_SECRET_ARN). The webhook URL
 is written there by the infra workflow, so it never appears in code, Terraform
 state or this function's settings.
+
+An EventBridge rule (security-alerts.tf) also sends GuardDuty findings of high
+severity here; they become one message each, with a link to the finding.
 
 No webhook stored yet -> the alarm is logged and skipped (nothing fails).
 """
@@ -66,6 +69,47 @@ def slack_message(alarm):
     }
 
 
+def severity_label(severity):
+    """GuardDuty's bands: 9.0+ critical, 7.0+ high, 4.0+ medium, otherwise low."""
+    return "CRITICAL" if severity >= 9 else "HIGH" if severity >= 7 else "MEDIUM" if severity >= 4 else "LOW"
+
+
+def guardduty_message(event):
+    """Slack payload for one GuardDuty finding (an EventBridge "GuardDuty Finding" event)."""
+    finding = event.get("detail", {})
+    severity = float(finding.get("severity", 0))
+    label = severity_label(severity)
+    region = event.get("region") or finding.get("region") or os.environ.get("AWS_REGION", "us-east-1")
+    link = (f"https://{region}.console.aws.amazon.com/guardduty/home?region={region}"
+            f"#/findings?macros=current&fId={urllib.parse.quote(finding.get('id', ''), safe='')}")
+    resource = finding.get("resource", {}).get("resourceType", "-")
+    lines = [finding.get("description") or "",
+             f"*Severity:* {severity:g} ({label})    *Type:* {finding.get('type', '-')}",
+             f"*Resource:* {resource}    *Region:* {region}",
+             f"<{link}|Open the finding in GuardDuty>"]
+    return {
+        "text": f":rotating_light: GuardDuty {label}: {finding.get('title') or finding.get('type', 'finding')}",
+        "attachments": [{"color": COLORS["ALARM"] if severity >= 7 else "#f9ab00",
+                         "text": "\n".join(line for line in lines if line),
+                         "footer": finding.get("updatedAt", "")}],
+    }
+
+
+def payloads(event):
+    """One Slack payload per alarm (SNS records) or for the GuardDuty finding (EventBridge)."""
+    if event.get("source") == "aws.guardduty":
+        return [guardduty_message(event)]
+    out = []
+    for record in event.get("Records", []):
+        raw = record.get("Sns", {}).get("Message", "{}")
+        try:
+            alarm = json.loads(raw)
+        except json.JSONDecodeError:
+            alarm = {"AlarmName": "SNS message", "NewStateValue": "INSUFFICIENT_DATA", "NewStateReason": raw}
+        out.append(slack_message(alarm))
+    return out
+
+
 def post(url, payload):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -75,15 +119,9 @@ def post(url, payload):
 
 def handler(event, context, get_url=webhook_url, send=post):
     url = get_url()
-    for record in event.get("Records", []):
-        raw = record.get("Sns", {}).get("Message", "{}")
-        try:
-            alarm = json.loads(raw)
-        except json.JSONDecodeError:
-            alarm = {"AlarmName": "SNS message", "NewStateValue": "INSUFFICIENT_DATA", "NewStateReason": raw}
-        payload = slack_message(alarm)
+    for payload in payloads(event):
         if not url:
             log.warning(json.dumps({"msg": "no Slack webhook stored, alarm not sent", "alarm": payload["text"]}))
             continue
-        send(url, payload)  # an error here makes SNS retry the delivery
+        send(url, payload)  # an error here makes the (asynchronous) delivery retry
         log.info(json.dumps({"msg": "alarm sent to Slack", "alarm": payload["text"]}))

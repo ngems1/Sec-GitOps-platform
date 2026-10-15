@@ -19,6 +19,7 @@ aws eks update-kubeconfig --name week3-boutique-eks --region us-east-1
 | Failed step | Likely cause | Fix |
 |---|---|---|
 | `Configure AWS credentials` | The run isn't on `main` (or an approved environment): the OIDC roles only trust those | Re-run from `main`. Branches only get the read-only plan role |
+| Any step: `AccessDenied ... with an explicit deny in a permissions boundary` | The deploy (or plan) role's boundary does not allow that action: a new AWS service, or something the boundary protects on purpose (SECURITY.md section 2a) | Add the action or service to `terraform-bootstrap/boundaries.tf` (never to the deny statements), merge, run **bootstrap** (plan, then apply), then re-run the failed job |
 | Build | Code doesn't compile; Docker Hub / package registry hiccup | Read the build log; re-run failed jobs for a transient error |
 | Scan gate | ECR found a CRITICAL vulnerability | Update the base image or dependency. Emergency only: `SCAN_BLOCKING=false` |
 | `Read Terraform outputs` | Infrastructure not created (or destroyed) | Actions → infra → `apply`, then re-run deploy |
@@ -89,6 +90,7 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 | "Datasource prometheus was not found", empty Prometheus settings | Bundled plugins broke on the read-only disk; `preinstall_disabled: true` in `grafana.ini` must stay |
 | CloudWatch panels "No data" | Traffic needed (run load-test), time range ≥ 30 min; cluster-status → `monitoring` runs the dashboard queries directly against AWS to separate a Grafana problem from a missing metric |
 | CloudWatch "AccessDenied" in Grafana | The Grafana Pod Identity role (`terraform-aws/monitoring.tf`) lacks that read action; add it there, never broader than read-only |
+| `#boutique-alerts`: ":rotating_light: GuardDuty HIGH/CRITICAL: ..." | GuardDuty found something with severity >= 7 (for example credentials used from outside AWS, a node talking to a known bad address) | Open the finding (link in the message). Do not delete anything first: the CloudTrail files are kept 30 days under Object Lock. Real: rotate what leaked (the CI roles have no keys; check the Pod Identity role named in the finding), then `infra` destroy/apply if a node is suspect. False positive: archive it in GuardDuty (only an admin can: the CI roles may not) |
 
 ## 6. HTTPS and DNS
 

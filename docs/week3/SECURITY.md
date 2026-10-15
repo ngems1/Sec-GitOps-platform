@@ -4,13 +4,14 @@ How the platform is protected, layer by layer, and what is still open.
 
 ```mermaid
 flowchart LR
-    gh[GitHub Actions] -->|OIDC, no keys| roles[plan role: read-only<br/>deploy role: main only]
+    gh[GitHub Actions] -->|OIDC, no keys| roles[plan role: read-only<br/>deploy role: main only<br/>both with a permission boundary]
     roles --> aws[AWS account]
     user([Internet]) -->|HTTPS only| alb[ALBs]
     alb --> fe[frontend]
     fe -->|NetworkPolicy allow-list| svc[services]
     svc -->|Pod Identity role<br/>per service + namespace| data[(RDS · Redis · DynamoDB<br/>SQS · EventBridge · SES)]
     data --- kms[KMS key per environment]
+    aws --> audit[CloudTrail · GuardDuty<br/>Security Hub · Config]
 ```
 
 ## 1. Pipeline identity (no stored keys)
@@ -18,8 +19,8 @@ flowchart LR
 | Control | Where |
 |---|---|
 | GitHub signs in with **OIDC**; no AWS access keys exist anywhere | `terraform-bootstrap/`, [BOOTSTRAP.md](BOOTSTRAP.md) |
-| `week3-gha-plan`: read-only + state lock, the only role a pull request can get | `terraform-bootstrap/` |
-| `week3-gha-deploy`: trusts only `main` and the `dev` / `prod` environments | `terraform-bootstrap/` |
+| `week3-gha-plan`: read-only + state lock, the only role a pull request can get; its **permission boundary** caps it at reading the services terraform-aws uses (no secret values, no table or log contents) | `terraform-bootstrap/main.tf`, `boundaries.tf` |
+| `week3-gha-deploy`: trusts only `main` and the `dev` / `prod` environments; its **permission boundary** caps AdministratorAccess (section 2a) | `terraform-bootstrap/main.tf`, `boundaries.tf` |
 | `week3-bootstrap`: only usable from the protected `prod` environment | [BOOTSTRAP.md](BOOTSTRAP.md) |
 | Prod deploys wait for a reviewer (`prod` environment) | GitHub Environments |
 | `main` protected by a ruleset: PR + `ci-ok` required, no force push, no deletion | [GITHUB-FLOW.md](GITHUB-FLOW.md) |
@@ -41,6 +42,33 @@ merge to `main`.
 - **Company IAM restrictions respected**: the personal IAM user has no SES console or role-creation
   rights outside the allowed prefix; checks that need those (SES status, CloudWatch queries) run in
   workflows with the deploy role instead of bypassing the policy.
+
+## 2a. Account baseline and the CI roles' boundaries (ADR 0003)
+
+One AWS account (D-07), so the controls that a multi-account setup would give by separation are
+added inside it. All of them are in `terraform-bootstrap/` (never destroyed; `terraform-aws/` is
+destroyed daily and Object Lock would block that) and applied by the `bootstrap` workflow.
+
+| Control | Detail |
+|---|---|
+| CloudTrail | One multi-region trail, management events, log file validation, KMS-encrypted (`alias/week3-boutique-audit`, rotation on) |
+| Audit bucket | `week3-boutique-audit-<account-id>`: S3 Object Lock **GOVERNANCE, 30 days** (no delete or overwrite without `s3:BypassGovernanceRetention`), public access blocked, HTTPS only, deleted after 90 days. CloudTrail under `cloudtrail/`, Config under `config/` |
+| GuardDuty | Detector on, foundational detection only (CloudTrail, VPC Flow Logs, DNS); the paid protection plans are turned off explicitly. Findings with severity >= 7 go to `#boutique-alerts` through EventBridge and the slack-alerts Lambda (`terraform-aws/security-alerts.tf`) |
+| Security Hub | AWS Foundational Security Best Practices only (CIS not enabled) |
+| AWS Config | Records IAM roles, policies and users, S3 buckets, the VPC/EC2 resources (not network interfaces or volumes: too much churn), EKS clusters, RDS, KMS keys. Rules: S3 public access, S3 encryption, RDS encrypted, RDS not public, no root access key, CloudTrail enabled |
+
+**Permission boundaries** (`terraform-bootstrap/boundaries.tf`). A boundary is a ceiling: the role
+can do only what both its policies and its boundary allow. The lists come from every AWS call in
+`terraform-aws/` and in the workflows that use the roles (listed at the top of the file).
+
+| Role | Boundary allows | Boundary denies (always wins) |
+|---|---|---|
+| `week3-gha-plan` | `Describe*`/`Get*`/`List*` on the services terraform-aws uses (no `secretsmanager:GetSecretValue`, no DynamoDB, log or S3 object reads), public SSM parameters, the state bucket | everything else |
+| `week3-gha-deploy` | acm, cloudwatch, dynamodb, ec2, ecr, eks, elasticache, events, iam, kms, lambda, logs, rds, route53, secretsmanager, ses, sns, sqs; read-only ELB and Auto Scaling; the state bucket only | changing CloudTrail, Config, GuardDuty, Security Hub; the audit bucket; anything tagged `ManagedBy = terraform-bootstrap` (the CI roles, the boundaries, the audit key); the bootstrap role and the GitHub OIDC provider by name; IAM users and access keys; attaching AdministratorAccess, PowerUserAccess or IAMFullAccess; creating a role without `Project = week3-boutique`; any resource tagged with **another** `Project` |
+
+Tag-based conditions use `aws:ResourceTag/Project`, `aws:ResourceTag/ManagedBy` and
+`aws:RequestTag/Project` on the services that support them. Resources with no `Project` tag (made by
+EKS or the Load Balancer Controller) stay usable, so the daily destroy still works.
 
 ## 3. Network
 
@@ -100,3 +128,6 @@ read-only disk (`preinstall_disabled` keeps it from trying to write plugins).
 | No WAF on the ALBs | No managed-rule filtering | AWS WAF with managed rule groups on the prod ALB |
 | RDS `deletion_protection = false` | Accidental deletion | Kept off so the daily `destroy` works; turn on for a real prod |
 | SES in sandbox | Only verified recipients | Request production access when real customers exist |
+| Deploy role can create a role without a boundary and give it broad inline rights | Privilege escalation inside the account (admin-level managed policies and IAM users are already denied) | Require a permission boundary on every role terraform-aws creates (`iam:PermissionsBoundary` condition on `iam:CreateRole`) |
+| GuardDuty foundational only | No S3 data-event, EKS audit-log, runtime, malware, RDS login or Lambda network detection | Turn single protection plans on in `terraform-bootstrap/security.tf` when the budget allows (EKS audit logs first) |
+| Security services in one region | GuardDuty, Security Hub and Config cover `us-east-1` only (the trail is multi-region) | Enable them in other regions if anything ever runs there |

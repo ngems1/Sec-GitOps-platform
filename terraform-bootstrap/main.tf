@@ -1,9 +1,11 @@
 # One-time bootstrap: what GitHub Actions needs BEFORE it can run terraform-aws.
 #   1. an S3 bucket for Terraform state (private, encrypted, versioned, HTTPS only)
 #   2. the GitHub OIDC identity provider (optional: usually created by hand, see docs/week3/BOOTSTRAP.md)
-#   3. two roles with different rights (least privilege):
+#   3. two roles with different rights (least privilege), each with a permission boundary:
 #        week3-gha-plan    read-only, for pull-request plans (any branch)
 #        week3-gha-deploy  apply + deploy, only from main or the dev/prod environments
+#   4.-9. the account security baseline (security.tf): CloudTrail to an Object Lock bucket,
+#        GuardDuty, Security Hub, AWS Config
 # Normally run by .github/workflows/bootstrap.yml.
 
 data "aws_caller_identity" "current" {}
@@ -128,6 +130,7 @@ resource "aws_iam_role" "plan" {
   name                 = var.plan_role_name
   description          = "GitHub Actions: read-only terraform plan on pull requests"
   assume_role_policy   = data.aws_iam_policy_document.plan_trust.json
+  permissions_boundary = aws_iam_policy.plan_boundary.arn # boundaries.tf
   max_session_duration = 7200
 }
 
@@ -192,6 +195,7 @@ resource "aws_iam_role" "deploy" {
   name                 = var.deploy_role_name
   description          = "GitHub Actions: terraform apply and deployments (main branch, dev/prod environments)"
   assume_role_policy   = data.aws_iam_policy_document.deploy_trust.json
+  permissions_boundary = aws_iam_policy.deploy_boundary.arn # boundaries.tf
   max_session_duration = 7200 # the workflows ask for 2-hour credentials
 }
 

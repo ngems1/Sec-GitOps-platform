@@ -16,3 +16,12 @@ output "AWS_DEPLOY_ROLE_ARN" {
 output "TF_STATE_BUCKET" {
   value = aws_s3_bucket.state.bucket
 }
+
+# Not GitHub variables: where to look for the audit trail (docs/week3/SECURITY.md).
+output "audit_bucket" {
+  value = aws_s3_bucket.audit.bucket
+}
+
+output "cloudtrail_trail" {
+  value = aws_cloudtrail.main.name
+}

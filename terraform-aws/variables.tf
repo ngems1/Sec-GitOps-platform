@@ -90,3 +90,9 @@ variable "ses_recipients" {
   type        = string
   default     = ""
 }
+
+variable "guardduty_alert_min_severity" {
+  description = "GuardDuty findings at or above this severity go to Slack (7 = high, 9 = critical; GuardDuty itself is in terraform-bootstrap)."
+  type        = number
+  default     = 7
+}

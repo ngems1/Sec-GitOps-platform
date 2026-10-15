@@ -5,6 +5,9 @@ name: bootstrap
 #   - the S3 bucket that holds every Terraform state
 #   - week3-gha-plan   (read-only, pull-request plans)
 #   - week3-gha-deploy (apply + deploy, main branch and dev/prod environments only)
+#   - a permission boundary on each of the two roles
+#   - the account security baseline: CloudTrail (Object Lock bucket, KMS), GuardDuty,
+#     Security Hub (Foundational Security Best Practices), AWS Config
 #
 # It signs in with a "bootstrap" role you create once by hand (docs/week3/BOOTSTRAP.md),
 # because the roles it creates don't exist yet. The job runs in the protected "prod"
@@ -119,10 +122,9 @@ jobs:
           fi
           terraform init -input=false
 
-          # Resources that exist in AWS but not in the state are adopted (imported).
-          if [ -z "$(terraform state list 2>/dev/null || true)" ]; then
-            bash import-existing.sh "$BUCKET"
-          fi
+          # Resources that exist in AWS but not in the state are adopted (imported). Runs
+          # every time: GuardDuty, Security Hub or Config may have been turned on by hand.
+          bash import-existing.sh "$BUCKET"
 
       - name: terraform plan
         env:
