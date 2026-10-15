@@ -7,6 +7,7 @@
 # workflow points the names at them:
 #   dev.<domain> -> boutique-dev ALB, shop.<domain> -> boutique-prod ALB,
 #   grafana.<domain> -> boutique-monitoring ALB (still limited to MONITORING_ALLOWED_CIDR)
+#   argocd.<domain>  -> boutique-argocd ALB (limited to ARGOCD_ALLOWED_CIDR, argocd-install)
 
 locals {
   tls_enabled = var.domain_name != ""
@@ -14,6 +15,7 @@ locals {
     dev        = "dev.${var.domain_name}"
     prod       = "shop.${var.domain_name}"
     monitoring = "grafana.${var.domain_name}"
+    argocd     = "argocd.${var.domain_name}"
   }
 }
 

@@ -81,11 +81,12 @@ EKS or the Load Balancer Controller) stay usable, so the daily destroy still wor
 
 | Control | Detail |
 |---|---|
-| Public surface | Only the three ALBs (dev, prod, Grafana) |
+| Public surface | Only the four ALBs (dev, prod, Grafana, Argo CD UI) |
 | Private subnets | EKS nodes, RDS, ElastiCache, Lambda: no public IP, outbound through one NAT gateway |
 | RDS / Redis security groups | Port 3306 / 6379 from inside the VPC only; Redis also requires TLS and the environment's auth token |
 | NetworkPolicies | Deny-all in each namespace + one allow rule per service call; prod accepts callers only from `boutique-prod`. Enforced by the VPC CNI |
 | Grafana | ALB restricted to `MONITORING_ALLOWED_CIDR`; the pipeline refuses `0.0.0.0/0` |
+| Argo CD UI | `argocd.<domain>`, HTTPS only, ALB restricted to `ARGOCD_ALLOWED_CIDR` (`0.0.0.0/0` refused), admin password from a GitHub secret (bcrypt in `argocd-secret`, never logged). Next: GitHub SSO through Dex |
 | HTTPS | ACM certificate for `<domain>` and `*.<domain>`, policy `ELBSecurityPolicy-TLS13-1-2-2021-06`, port 80 only redirects |
 
 Proven by the isolation test after every prod deploy ([ISOLATION.md](ISOLATION.md)).

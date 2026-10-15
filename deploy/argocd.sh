@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs or updates Argo CD in namespace "argocd" and points it at this repository:
-#   1. the argo-cd Helm chart (deploy/argocd/values.yaml): no Dex, no notifications,
-#      the UI only inside the cluster (kubectl port-forward, see docs/week3/ARGOCD.md)
+#   1. the argo-cd Helm chart (deploy/argocd/values.yaml): no Dex, no notifications;
+#      then the UI (deploy/argocd-ui.sh): admin password, HTTPS Ingress at argocd.<domain>
+#      limited to ARGOCD_ALLOWED_CIDR (docs/week3/ARGOCD.md)
 #   2. the repository credential: a read-only GitHub deploy key, copied from AWS Secrets
 #      Manager into a Kubernetes Secret (never in Git, GitHub secrets or Terraform state)
 #   3. the project "boutique" and the Application "boutique-dev", once
@@ -25,6 +26,10 @@ helm upgrade --install argo-cd argo-cd \
   --namespace "$NS" -f deploy/argocd/values.yaml \
   --rollback-on-failure --timeout 10m
 echo "argo-cd: $(helm -n "$NS" list -f '^argo-cd$' -o json | jq -r '.[0].chart + " (Argo CD " + .[0].app_version + ")"')"
+
+# 1b) The UI: admin password and the HTTPS Ingress at argocd.<domain> (both optional).
+#     Before the Applications, so the UI works even if a wait below fails.
+bash deploy/argocd-ui.sh
 
 # 2) Repository credential: through a private file, never on a command line or in the log.
 umask 077

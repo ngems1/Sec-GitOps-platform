@@ -7,6 +7,8 @@ name: argocd-install
 # prod after its first approved deploy from main has created the promotion branch: the
 # next run creates "boutique-prod" (ADR 0007).
 # Before the first run: docs/week3/ARGOCD.md (deploy key, GitHub App, terraform apply).
+# Optional UI at https://argocd.<domain>: secret ARGOCD_ADMIN_PASSWORD and variable
+# ARGOCD_ALLOWED_CIDR (deploy/argocd-ui.sh).
 
 on:
   workflow_dispatch:
@@ -50,12 +52,21 @@ jobs:
           secret_arn=$(jq -r '.outputs.argocd_repo_key_secret_arn.value // empty' state.json)
           [ -n "$secret_arn" ] || { echo "::error::No argocd_repo_key_secret_arn in the Terraform outputs. Run the infra workflow (apply) first."; exit 1; }
           echo "REPO_KEY_SECRET_ARN=${secret_arn}" >> "$GITHUB_ENV"
+          # The UI's HTTPS name, certificate and zone (terraform-aws/dns.tf; empty without a domain).
+          {
+            echo "ARGOCD_HOST=$(jq -r '.outputs.tls.value.hosts.argocd // (if .outputs.tls.value.domain then "argocd." + .outputs.tls.value.domain else empty end)' state.json)"
+            echo "CERT_ARN=$(jq -r '.outputs.tls.value.certificate_arn // empty' state.json)"
+            echo "DNS_ZONE_ID=$(jq -r '.outputs.tls.value.zone_id // empty' state.json)"
+          } >> "$GITHUB_ENV"
           aws eks update-kubeconfig --name "$(jq -r '.outputs.cluster_name.value' state.json)" --region "$AWS_REGION"
           rm -f state.json
 
       - name: Install Argo CD and the Applications
         env:
           REPO_URL: git@github.com:${{ github.repository }}.git
+          # UI (deploy/argocd-ui.sh). Masked in the script; never echoed.
+          ARGOCD_ADMIN_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
+          ARGOCD_ALLOWED_CIDR: ${{ vars.ARGOCD_ALLOWED_CIDR }}
         run: bash deploy/argocd.sh
 
       - name: Summary
@@ -70,5 +81,5 @@ jobs:
             kubectl -n argocd get applications 2>/dev/null || true
             echo '```'
             echo
-            echo "UI (no public address): \`kubectl -n argocd port-forward svc/argo-cd-argocd-server 8080:443\`, see docs/week3/ARGOCD.md."
+            echo "UI: https://${ARGOCD_HOST:-argocd.<domain>} once ARGOCD_ALLOWED_CIDR and ARGOCD_ADMIN_PASSWORD are set (reachable only from that address), see docs/week3/ARGOCD.md."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -192,6 +192,33 @@ finalizer: prod keeps running), then the next prod deploy uses the Helm steps. T
 field-ownership conflict as in dev can appear on the first `helm upgrade` (ARGOCD.md, Rollback):
 add `--force-conflicts` to that one Helm run.
 
+## 9. Argo CD UI (https://argocd.&lt;domain&gt;)
+
+Exposed by `argocd-install` only when the variable `ARGOCD_ALLOWED_CIDR` and the secret
+`ARGOCD_ADMIN_PASSWORD` are both set ([ARGOCD.md](ARGOCD.md), UI). User `admin`.
+
+**Change the allowed IP** (new network, the presentation venue):
+1. Find the venue's public IP: open https://checkip.amazonaws.com on the laptop you will present
+   from, on the venue's Wi-Fi.
+2. Settings > Secrets and variables > Actions > Variables > `ARGOCD_ALLOWED_CIDR` = `<that-ip>/32`.
+   Several places: comma-separated (`198.51.100.4/32,203.0.113.7/32`). Never `0.0.0.0/0` (refused).
+3. Actions > argocd-install > Run workflow. Only the ALB rule changes (a few seconds); the UI and
+   the Applications are untouched. Remove the venue's IP the same way afterwards.
+
+**Change the password:** update the secret `ARGOCD_ADMIN_PASSWORD`, then run argocd-install. The
+hash in `argocd-secret` is replaced and every open session is logged out. Unchanged secret = no
+change, sessions stay valid. Don't change it in the UI: the next run puts the secret's value back.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Browser times out | Your address is not in `ARGOCD_ALLOWED_CIDR` (new network, mobile hotspot), or the ALB is less than 3 minutes old | Update the variable (above), run argocd-install, wait 2-3 minutes |
+| Run summary: "Argo CD UI not exposed" | The variable or the secret is missing, or there is no domain (`DOMAIN_NAME`) | Set them; HTTPS needs the domain |
+| "Invalid username or password" | The secret changed but argocd-install did not run since | Run argocd-install |
+| 404 from the ALB | Opened by its `*.elb.amazonaws.com` name or an IP: the rule only answers `argocd.<domain>` | Use https://argocd.&lt;domain&gt; |
+
+**Better next step: GitHub SSO (Dex).** Personal GitHub logins instead of one shared password,
+read-only access for viewers, and the local `admin` user turned off (ARGOCD.md, UI).
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |
