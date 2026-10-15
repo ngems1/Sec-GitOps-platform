@@ -166,6 +166,32 @@ Tool: **Actions → eks-openapi-fix** (results on the run's Summary page).
 What is lost while `v1.metrics.eks.amazonaws.com` is deleted (remove): the EKS metrics API (`metrics.eks.amazonaws.com`, control-plane
 metrics from EKS). metrics-server, the HPAs and `kubectl top` use `metrics.k8s.io` and keep working.
 
+## 8. prod on Argo CD (promotion branch)
+
+prod is deployed by the Application `boutique-prod`, which syncs the **promotion branch** `env/prod` (the
+`targetRevision` in `deploy/argocd/boutique-prod.yaml`), never `main` directly. Only an approved
+prod deploy moves the branch (ADR 0007, [ARGOCD.md](ARGOCD.md)). The deploy log says "prod is
+deployed by: Argo CD (boutique-prod)" or "Helm" (before the handover).
+
+| Failed step / symptom | Cause | Fix |
+|---|---|---|
+| `Promotion check (prod)`: "dev runs X, not Y" | prod only gets an image tag that runs in dev, and dev now runs another one (a later dev deploy, or a dev rollback) | Deploy the tag dev runs, or redeploy the wanted tag with `target = dev-then-prod` so dev runs it first |
+| `Promotion check (prod)`: "boutique-dev is OutOfSync/Degraded" | dev is not in a good state, so nothing is promoted from it | Fix dev first (sections 1 and 2), then deploy again |
+| `Promotion check (prod)`: "boutique-dev does not exist" | dev is still on Helm | Hand dev over first (ARGOCD.md, steps 5 and 6) |
+| `Commit the image tag`: "main changed since dev was checked ... (not only gitops/)" | Something outside `gitops/` was merged after dev was checked (often a chart change merged while prod waited for approval) | Run the deploy again: dev checks the new `main` first, then prod can be promoted |
+| `Commit the image tag`: "No GitHub App token. Set the prod environment variable GITOPS_APP_ID..." | The App variable/secret is set on `dev` only | Settings > Environments > `prod`: add `GITOPS_APP_ID` and `GITOPS_APP_PRIVATE_KEY` |
+| `Wait for Argo CD` times out, or the smoke test fails | The new version does not become healthy in prod | Automatic: `Roll back (Argo CD, prod)` puts the branch back on its previous commit and reverts the tag commit on `main`. Then read `Diagnostics` |
+| `boutique-prod` OutOfSync, nothing to fix in the cluster | An object left the chart: prod does not prune it (on purpose) | Check it really should go, then in the UI: Sync with **Prune** ticked for that object (or `kubectl -n boutique-prod delete <kind>/<name>`) |
+
+**Manual rollback:** Actions > deploy > Run workflow with `image_tag` = an older commit SHA and
+`target = dev-then-prod` (dev runs it first, then prod after approval). Never move the promotion
+branch by hand: the deploy job is the only writer.
+
+**Back to Helm (emergency):** `kubectl -n argocd delete application boutique-prod` (no
+finalizer: prod keeps running), then the next prod deploy uses the Helm steps. The same
+field-ownership conflict as in dev can appear on the first `helm upgrade` (ARGOCD.md, Rollback):
+add `--force-conflicts` to that one Helm run.
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |

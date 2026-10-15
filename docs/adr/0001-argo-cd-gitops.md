@@ -48,6 +48,6 @@ which version ran in dev. The plan (DESIGN D-03) is pull-based GitOps with Argo 
 
 ## Revisit when
 
-- prod moves to Argo CD (Day 4): add `boutique-prod` to the project, decide how prod
+- prod moves to Argo CD (Day 4, done: ADR 0007): add `boutique-prod` to the project, decide how prod
   promotion is approved.
 - Secrets move to External Secrets or similar (DESIGN D-06 revisit).

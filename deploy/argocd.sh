@@ -6,6 +6,8 @@
 #      Manager into a Kubernetes Secret (never in Git, GitHub secrets or Terraform state)
 #   3. the project "boutique" and the Application "boutique-dev", once
 #      gitops/dev/values.yaml holds an image tag (written by a dev deploy from main)
+#   4. the Application "boutique-prod", once the prod promotion branch exists and its
+#      gitops/prod/values.yaml holds an image tag (written by an approved prod deploy)
 # Needs kubectl + helm on the cluster, a full checkout of main, and:
 #   ARGOCD_CHART_VERSION   argo-cd chart version
 #   REPO_URL               SSH URL of this repository (git@github.com:<owner>/<repo>.git)
@@ -54,8 +56,26 @@ envsubst '${REPO_URL}' < deploy/argocd/project.yaml | kubectl apply -f -
 tag=$(sed '/^#/d' gitops/dev/values.yaml | jq -r '.images.tag // empty')
 if [ -z "$tag" ]; then
   echo "::notice::gitops/dev/values.yaml has no image tag yet. Run a dev deploy from main, then this workflow again. Until then dev is deployed by Helm."
+else
+  envsubst '${REPO_URL}' < deploy/argocd/boutique-dev.yaml | kubectl apply -f -
+  echo "Application boutique-dev created (image tag ${tag}). From now on dev is deployed by Argo CD."
+  bash deploy/argocd-wait.sh boutique-dev "$(git rev-parse HEAD)" .
+fi
+
+# 4) The prod Application once the promotion branch describes prod (ADR 0007). The branch
+#    is created and moved only by an approved prod deploy from main, so this step never
+#    changes what prod runs: Argo CD adopts exactly what Helm last deployed there.
+branch=$(sed -n 's/^ *targetRevision: *//p' deploy/argocd/boutique-prod.yaml)
+if ! head=$(git ls-remote --exit-code origin "refs/heads/${branch}" | cut -f1); then
+  echo "::notice::No promotion branch ${branch} yet. Run an approved prod deploy from main, then this workflow again. Until then prod is deployed by Helm."
   exit 0
 fi
-envsubst '${REPO_URL}' < deploy/argocd/boutique-dev.yaml | kubectl apply -f -
-echo "Application boutique-dev created (image tag ${tag}). From now on dev is deployed by Argo CD."
-bash deploy/argocd-wait.sh boutique-dev "$(git rev-parse HEAD)" .
+git fetch --quiet origin "refs/heads/${branch}"
+prod_tag=$(git show "FETCH_HEAD:gitops/prod/values.yaml" 2>/dev/null | sed '/^#/d' | jq -r '.images.tag // empty')
+if [ -z "$prod_tag" ]; then
+  echo "::notice::gitops/prod/values.yaml on ${branch} has no image tag yet. Until then prod is deployed by Helm."
+  exit 0
+fi
+envsubst '${REPO_URL}' < deploy/argocd/boutique-prod.yaml | kubectl apply -f -
+echo "Application boutique-prod created (image tag ${prod_tag}, ${branch} at ${head:0:12}). From now on prod is deployed by Argo CD."
+ARGOCD_WAIT_EXACT=1 bash deploy/argocd-wait.sh boutique-prod "$head" .

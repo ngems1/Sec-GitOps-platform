@@ -192,27 +192,26 @@ jobs:
           kubectl -n kube-system rollout status deployment/metrics-server --timeout=3m
           kubectl wait --for=condition=Available apiservice/v1beta1.metrics.k8s.io --timeout=3m
 
-      # dev: Argo CD deploys it once argocd-install.yml has created its Application;
-      # until then the Helm steps below do. prod is always deployed by Helm here.
+      # Each environment: Argo CD deploys it once argocd-install.yml has created its
+      # Application (boutique-dev, boutique-prod); until then the Helm steps below do.
+      # Never both: the Helm steps are skipped as soon as the Application exists.
       - name: Who deploys (Argo CD or Helm)
         id: mode
         run: |
           # An API error fails the step: it must never fall back to Helm by mistake.
           argocd=false
-          if [ "$ENVIRONMENT" = dev ]; then
-            crd=$(kubectl get crd applications.argoproj.io --ignore-not-found -o name)
-            app=""
-            [ -z "$crd" ] || app=$(kubectl -n argocd get application boutique-dev --ignore-not-found -o name)
-            [ -z "$app" ] || argocd=true
-          fi
+          crd=$(kubectl get crd applications.argoproj.io --ignore-not-found -o name)
+          app=""
+          [ -z "$crd" ] || app=$(kubectl -n argocd get application "boutique-${ENVIRONMENT}" --ignore-not-found -o name)
+          [ -z "$app" ] || argocd=true
           if [ "$argocd" = true ]; then
             if [ "$GITHUB_REF" != refs/heads/main ]; then
-              echo "::error::dev is deployed by Argo CD from main. Run the deploy from main (this run: ${GITHUB_REF})."
+              echo "::error::${ENVIRONMENT} is deployed by Argo CD from main. Run the deploy from main (this run: ${GITHUB_REF})."
               exit 1
             fi
           fi
           echo "argocd=${argocd}" >> "$GITHUB_OUTPUT"
-          echo "${ENVIRONMENT} is deployed by: $([ "$argocd" = true ] && echo 'Argo CD (boutique-dev)' || echo Helm)"
+          echo "${ENVIRONMENT} is deployed by: $([ "$argocd" = true ] && echo "Argo CD (boutique-${ENVIRONMENT})" || echo Helm)"
 
       # Read-only evidence: how the frontend Deployment was last written. "helm Apply" means
       # Helm used server-side apply, "helm Update" client-side apply. kubectl leaves
@@ -400,11 +399,12 @@ jobs:
             "${safety[@]}" --timeout 10m
           kubectl -n "$NS" get pods -o wide
 
-      # dev from main: the image tag goes to Git (gitops/dev/values.yaml), committed by a
+      # From main: the image tag goes to Git (gitops/<env>/values.yaml), committed by a
       # GitHub App, the only bypass actor on the main ruleset. Not set up yet = not recorded.
+      # GITOPS_APP_ID / GITOPS_APP_PRIVATE_KEY are set per environment (dev, prod).
       - name: GitHub App token (gitops commits)
         id: app
-        if: inputs.environment == 'dev' && github.ref == 'refs/heads/main' && vars.GITOPS_APP_ID != ''
+        if: github.ref == 'refs/heads/main' && vars.GITOPS_APP_ID != ''
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.GITOPS_APP_ID }}
@@ -420,19 +420,56 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           fetch-depth: 0
 
-      # Argo CD: the commit is the deploy. Argo CD syncs main and rolls the pods.
+      # prod only gets what dev runs (ADR 0007): boutique-dev must be Synced and Healthy at
+      # a commit whose gitops/dev/values.yaml has this run's image tag. That commit is what
+      # prod is promoted from: main may only differ from it in gitops/ (gitops-commit.sh).
+      - name: Promotion check (prod)
+        id: promote
+        if: inputs.environment == 'prod' && steps.mode.outputs.argocd == 'true' && steps.app.outcome == 'success'
+        run: |
+          dev=$(kubectl -n argocd get application boutique-dev --ignore-not-found -o json)
+          if [ -z "$dev" ]; then
+            echo "::error::prod is promoted from Argo CD's boutique-dev, which does not exist. Hand dev over first (argocd-install)."
+            exit 1
+          fi
+          sync=$(jq -r '.status.sync.status // ""' <<<"$dev")
+          health=$(jq -r '.status.health.status // ""' <<<"$dev")
+          validated=$(jq -r '.status.sync.revision // ""' <<<"$dev")
+          [ "$sync" = Synced ] && [ "$health" = Healthy ] || {
+            echo "::error::boutique-dev is ${sync:-?}/${health:-?}, not Synced/Healthy: prod is not promoted."
+            exit 1
+          }
+          dev_tag=$(git -C gitops-repo show "${validated}:gitops/dev/values.yaml" | sed '/^#/d' | jq -r '.images.tag // empty')
+          if [ "$dev_tag" != "$TAG" ]; then
+            echo "::error::dev runs ${dev_tag:-no tag} (at ${validated:0:12}), not ${TAG}: prod only gets an image tag that already runs in dev."
+            exit 1
+          fi
+          echo "validated=${validated}" >> "$GITHUB_OUTPUT"
+          echo "dev runs ${TAG} at ${validated:0:12}: prod is promoted from that commit."
+
+      # Argo CD: the commit is the deploy. dev: Argo CD syncs main. prod: the commit is made
+      # on main, then the promotion branch is moved to it (deploy/argocd/boutique-prod.yaml).
       - name: Commit the image tag (Argo CD deploys it)
         id: gitops
         if: steps.mode.outputs.argocd == 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
-        run: bash deploy/gitops-commit.sh commit
+          GITOPS_ENV: ${{ inputs.environment }}
+          VALIDATED: ${{ steps.promote.outputs.validated }}
+        run: |
+          if [ "$ENVIRONMENT" = prod ]; then
+            bash deploy/gitops-commit.sh promote "$VALIDATED"
+          else
+            bash deploy/gitops-commit.sh commit
+          fi
 
+      # prod waits for exactly the promoted commit (its branch never follows main by itself).
       - name: Wait for Argo CD (Synced and Healthy)
         if: steps.mode.outputs.argocd == 'true'
         run: |
-          bash deploy/argocd-wait.sh boutique-dev "${{ steps.gitops.outputs.revision }}"
+          [ "$ENVIRONMENT" != prod ] || export ARGOCD_WAIT_EXACT=1
+          bash deploy/argocd-wait.sh "boutique-${ENVIRONMENT}" "${{ steps.gitops.outputs.revision }}"
           kubectl -n "$NS" get pods -o wide
 
       - name: Smoke test
@@ -492,19 +529,29 @@ jobs:
           echo "inventory /stock: ${stock}"
           jq -e 'length > 0' <<<"$stock" >/dev/null || { echo "::error::inventoryservice /stock returned no stock"; exit 1; }
 
-      # Helm deployed dev and it passed: record that version in Git, so Argo CD starts
-      # from what runs when argocd-install.yml creates the Application.
+      # Helm deployed this environment and it passed: record that version in Git, so Argo CD
+      # starts from what runs when argocd-install.yml creates the Application. prod: also
+      # moves the promotion branch to it (the commit Helm deployed from, plus gitops/ only).
       - name: Record the image tag in Git
-        if: steps.mode.outputs.argocd != 'true' && inputs.environment == 'dev' && github.ref == 'refs/heads/main'
+        if: steps.mode.outputs.argocd != 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GITOPS_ENV: ${{ inputs.environment }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::notice::GITOPS_APP_ID is not set for dev: the image tag is not recorded in Git (docs/week3/ARGOCD.md)."
+            echo "::notice::GITOPS_APP_ID is not set for ${ENVIRONMENT}: the image tag is not recorded in Git (docs/week3/ARGOCD.md)."
             exit 0
           fi
-          bash deploy/gitops-commit.sh commit
+          if [ "$ENVIRONMENT" = prod ]; then
+            # Helm already deployed prod and it passed: a refused recording (main moved
+            # outside gitops/ meanwhile) must not fail the job, or "Roll back" would undo a
+            # good deploy. The next prod deploy records it.
+            bash deploy/gitops-commit.sh promote "$GITHUB_SHA" ||
+              echo "::warning::prod was deployed by Helm but not recorded in Git (see the error above); the next prod deploy will."
+          else
+            bash deploy/gitops-commit.sh commit
+          fi
 
       # Why pods aren't ready: status, scheduling/probe events, and the logs of
       # containers that crashed. Printed in the log and on the run's Summary page.
@@ -527,7 +574,7 @@ jobs:
 
       # Argo CD: revert the tag commit; Argo CD syncs the previous version back.
       - name: Roll back (Argo CD)
-        if: failure() && steps.gitops.outputs.commit != ''
+        if: failure() && steps.gitops.outputs.commit != '' && inputs.environment == 'dev'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
@@ -536,6 +583,21 @@ jobs:
           echo "::warning::dev failed after ${FAILED:0:12}, reverting that commit."
           revision=$(bash deploy/gitops-commit.sh revert "$FAILED")
           bash deploy/argocd-wait.sh boutique-dev "$revision"
+
+      # prod: put the promotion branch back where it was (chart and tag together) and revert
+      # the tag commit on main, so Git says what runs. Also when only the chart moved.
+      - name: Roll back (Argo CD, prod)
+        if: failure() && inputs.environment == 'prod' && steps.gitops.outputs.previous != '' && steps.gitops.outputs.revision != steps.gitops.outputs.previous
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GITOPS_ENV: prod
+          PREVIOUS: ${{ steps.gitops.outputs.previous }}
+          FAILED: ${{ steps.gitops.outputs.commit }}
+        run: |
+          echo "::warning::prod failed at ${{ steps.gitops.outputs.revision }}, putting it back on ${PREVIOUS:0:12}."
+          revision=$(bash deploy/gitops-commit.sh restore "$PREVIOUS" $FAILED)
+          ARGOCD_WAIT_EXACT=1 bash deploy/argocd-wait.sh boutique-prod "$revision"
 
       - name: Summary
         if: always()
@@ -548,7 +610,7 @@ jobs:
             echo
             echo '```'
             if [ "${{ steps.mode.outputs.argocd }}" = true ]; then
-              kubectl -n argocd get application boutique-dev \
+              kubectl -n argocd get application "boutique-${ENVIRONMENT}" \
                 -o custom-columns='APPLICATION:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision' 2>/dev/null || true
             else
               helm -n "${NS:-x}" history "$RELEASE" --max 5 2>/dev/null || echo "no release yet"

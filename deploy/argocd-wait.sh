@@ -2,6 +2,8 @@
 # Waits until an Argo CD Application has synced a Git revision (or a later commit of
 # main) and is Healthy. Fails on a failed sync or after the timeout (default 10 min).
 #   argocd-wait.sh <application> <revision> [checkout of the repo, default gitops-repo]
+# ARGOCD_WAIT_EXACT=1: only <revision> itself counts (a prod rollback moves the promotion
+# branch back, so a later commit of main must not count as reached).
 set -euo pipefail
 app=${1:?application}
 want=${2:?revision}
@@ -9,9 +11,10 @@ repo=${3:-gitops-repo}
 timeout=${ARGOCD_WAIT_SECONDS:-600}
 deadline=$(( $(date +%s) + timeout ))
 
-# True when revision $1 is $want or a later commit of main.
+# True when revision $1 is $want or (unless ARGOCD_WAIT_EXACT=1) a later commit of main.
 reached() {
   [ "$1" = "$want" ] && return 0
+  [ "${ARGOCD_WAIT_EXACT:-0}" = 1 ] && return 1
   [ -n "$1" ] || return 1
   git -C "$repo" fetch --quiet origin main 2>/dev/null || true
   git -C "$repo" merge-base --is-ancestor "$want" "$1" 2>/dev/null

@@ -134,12 +134,11 @@ jobs:
         run: helm lint ./helm-chart -f helm-chart/values-local.yaml
       # Renders exactly what deploy.yml installs, with placeholder AWS names,
       # so a template mistake fails here and not during a deployment.
-      # dev also reads gitops/dev/values.yaml, the file Argo CD deploys dev from.
+      # Each environment also reads gitops/<env>/values.yaml, the file Argo CD deploys it from.
       - name: Render dev and prod
         run: |
           for env in dev prod; do
-            gitops=()
-            [ "$env" = dev ] && gitops=(-f gitops/dev/values.yaml)
+            gitops=(-f "gitops/${env}/values.yaml")
             # The release, rendered with placeholder AWS names (also used for the PriorityClass below).
             chart=(boutique ./helm-chart --namespace "boutique-${env}"
               -f helm-chart/values-aws.yaml -f "helm-chart/values-${env}.yaml" "${gitops[@]}" \

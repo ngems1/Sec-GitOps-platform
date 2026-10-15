@@ -1,0 +1,42 @@
+# prod, deployed by Argo CD: the same chart as dev, with values-prod.yaml and
+# gitops/prod/values.yaml (Terraform names + image tag, written by the deploy workflow).
+# deploy/argocd.sh fills in the repository URL.
+#
+# targetRevision is the prod promotion branch, not main (ADR 0007): only the approved prod
+# deploy job moves it, to the main commit dev already runs. So chart, values-prod.yaml and
+# image tag changes all reach prod after the prod approval, never at merge time.
+# deploy/gitops-commit.sh and deploy/argocd.sh read the branch name from this line.
+#
+# prune: false. Objects that disappear from the chart are shown as OutOfSync, not deleted:
+# a removed template or a wrong value cannot delete a prod object by itself. Delete them
+# with a manual sync with prune (docs/week3/RUNBOOK.md section 8).
+# selfHeal: true. A manual change in the cluster is reverted to what Git says.
+#
+# No resources finalizer: deleting this Application leaves the shop running.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-prod
+  namespace: argocd
+spec:
+  project: boutique
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: env/prod
+    path: helm-chart
+    helm:
+      releaseName: boutique
+      valueFiles:
+        - values-aws.yaml
+        - values-prod.yaml
+        - ../gitops/prod/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique-prod
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      # The namespace, its labels and the Secrets in it belong to the deploy workflow.
+      - CreateNamespace=false
