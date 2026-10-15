@@ -5,12 +5,12 @@
 {
   "images": {
     "repository": "866934333672.dkr.ecr.us-east-1.amazonaws.com/boutique",
-    "tag": "b02649fc6b5d"
+    "tag": "ac9021aa9839"
   },
   "frontend": {
     "ingress": {
       "allowFromCidr": "10.0.0.0/16",
-      "certificateArn": "arn:aws:acm:us-east-1:866934333672:certificate/89966328-2045-4243-b031-d9484fffad41"
+      "certificateArn": "arn:aws:acm:us-east-1:866934333672:certificate/a9fdd956-5a97-4584-8a35-12b1ffe2df27"
     }
   },
   "cartDatabase": {
@@ -23,7 +23,7 @@
       "dbHost": "week3-boutique-dev-mysql.cefo7yhuwfxg.us-east-1.rds.amazonaws.com",
       "dbPort": 3306,
       "dbName": "boutique",
-      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-0e5b686b-b3a3-493b-ba48-0d4ad8782987-6tXSFI"
+      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-936bc9b1-392e-456f-ad04-be118c0d01fb-v92QFe"
     }
   },
   "inventoryService": {
@@ -38,7 +38,7 @@
       "dbHost": "week3-boutique-dev-mysql.cefo7yhuwfxg.us-east-1.rds.amazonaws.com",
       "dbPort": "3306",
       "dbName": "boutique",
-      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-0e5b686b-b3a3-493b-ba48-0d4ad8782987-6tXSFI",
+      "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-936bc9b1-392e-456f-ad04-be118c0d01fb-v92QFe",
       "redisAddr": "master.week3-boutique-dev-redis.m25p71.use1.cache.amazonaws.com:6379"
     }
   },
