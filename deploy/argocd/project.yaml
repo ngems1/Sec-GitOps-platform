@@ -1,4 +1,4 @@
-# Argo CD project of the shop: only this repository, only the boutique namespaces,
+# Argo CD project of the shop: only this repository, only the boutique namespaces (dev and prod),
 # no cluster-wide objects. deploy/argocd.sh fills in the repository URL.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -12,4 +12,6 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: boutique-dev
+    - server: https://kubernetes.default.svc
+      namespace: boutique-prod
   clusterResourceWhitelist: []

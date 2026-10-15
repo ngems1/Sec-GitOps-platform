@@ -3,7 +3,9 @@ name: argocd-install
 # Installs or updates Argo CD in the cluster (namespace "argocd") and hands dev over to it:
 # Actions > argocd-install > Run workflow, from main. Run it again after the first dev
 # deploy from main has written gitops/dev/values.yaml: that run creates the Application
-# "boutique-dev", and from then on deploy-env.yml deploys dev through Git.
+# "boutique-dev", and from then on deploy-env.yml deploys dev through Git. The same for
+# prod after its first approved deploy from main has created the promotion branch: the
+# next run creates "boutique-prod" (ADR 0007).
 # Before the first run: docs/week3/ARGOCD.md (deploy key, GitHub App, terraform apply).
 
 on:
@@ -51,7 +53,7 @@ jobs:
           aws eks update-kubeconfig --name "$(jq -r '.outputs.cluster_name.value' state.json)" --region "$AWS_REGION"
           rm -f state.json
 
-      - name: Install Argo CD and the dev Application
+      - name: Install Argo CD and the Applications
         env:
           REPO_URL: git@github.com:${{ github.repository }}.git
         run: bash deploy/argocd.sh

@@ -1,0 +1,6 @@
+# Helm values of boutique-prod, deployed by Argo CD (deploy/argocd/boutique-prod.yaml).
+# Written by the deploy workflow after each approved prod deploy from main: the names
+# Terraform created for prod and the image tag, which must already run in dev. Argo CD
+# reads it from the prod promotion branch, not from main (ADR 0007). Don't edit by hand;
+# to roll back, see docs/week3/RUNBOOK.md section 8.
+{}
