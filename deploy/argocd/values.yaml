@@ -7,15 +7,20 @@ configs:
     # boutique-dev (redis-auth, emailservice-slack, db-migrate...) are never touched.
     application.resourceTrackingMethod: annotation
     exec.enabled: false # no shell into pods from the UI
+  params:
+    # TLS ends at the ALB (deploy/argocd/ingress.yaml, ACM certificate); argocd-server
+    # speaks plain HTTP inside the VPC, so the ALB health check and requests don't loop
+    # through its own redirect to HTTPS.
+    server.insecure: true
 
 dex:
-  enabled: false # no SSO: the local admin user, reached through kubectl port-forward only
+  enabled: false # no SSO yet: the local admin user (password from ARGOCD_ADMIN_PASSWORD)
 
 notifications:
   enabled: false
 
 server:
   service:
-    type: ClusterIP # never a LoadBalancer: the UI has no public address
+    type: ClusterIP # never a LoadBalancer: the only public way in is the ALB of the Ingress
   ingress:
-    enabled: false
+    enabled: false # the Ingress is applied by deploy/argocd-ui.sh (address and certificate from Terraform)

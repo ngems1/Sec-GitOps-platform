@@ -1,0 +1,36 @@
+# The Argo CD UI on its own internet-facing ALB, at argocd.<domain>: HTTPS only (port 80
+# only redirects), reachable ONLY from ARGOCD_ALLOWED_CIDR (GitHub variable), and protected
+# by the admin password (ARGOCD_ADMIN_PASSWORD secret). Rendered by deploy/argocd-ui.sh
+# (envsubst); removed by "infra -> destroy" like the other ALBs.
+# The ALB ends TLS with the domain's ACM certificate and talks plain HTTP to argocd-server
+# inside the VPC (server.insecure in deploy/argocd/values.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: boutique-argocd
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/inbound-cidrs: "${ARGOCD_ALLOWED_CIDR}"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "${CERT_ARN}"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/tags: "Namespace=argocd"
+spec:
+  ingressClassName: alb
+  rules:
+  - host: "${ARGOCD_HOST}"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: argo-cd-argocd-server
+            port:
+              number: 80

@@ -16,7 +16,8 @@ merge to main ──► deploy: build, scan, DB migrations
 |---|---|
 | `.github/workflows/argocd-install.yml` | Manual. Installs or updates Argo CD, the repository credential, the project and the Applications (each once Git describes its environment) |
 | `deploy/argocd.sh` | The install steps (called by the workflow) |
-| `deploy/argocd/values.yaml` | Argo CD settings: no Dex, no notifications, UI without a public address |
+| `deploy/argocd-ui.sh`, `deploy/argocd/ingress.yaml` | The UI: admin password from `ARGOCD_ADMIN_PASSWORD`, HTTPS Ingress at `argocd.<domain>` limited to `ARGOCD_ALLOWED_CIDR` |
+| `deploy/argocd/values.yaml` | Argo CD settings: no Dex, no notifications, server in plain HTTP behind the ALB (`server.insecure`), no Service of type LoadBalancer |
 | `deploy/argocd/project.yaml` | Project `boutique`: only this repository, only `boutique-dev` and `boutique-prod`, no cluster-wide objects (the namespace's PriorityClass is applied by `deploy-env.yml`, like the namespace itself; ADR 0006) |
 | `deploy/argocd/boutique-dev.yaml` | Application `boutique-dev`: `helm-chart/` with `values-aws.yaml`, `values-dev.yaml`, `gitops/dev/values.yaml`; automated sync with prune and self-heal |
 | `gitops/dev/values.yaml` | The names Terraform created for dev and the image tag. Written by the deploy workflow only |
@@ -104,15 +105,31 @@ steps are skipped for prod.
 Prune only deletes objects Argo CD created (it tracks them with an annotation), so the
 workflow's Secrets and Job are never removed.
 
-## UI (no public address)
+## UI at https://argocd.&lt;domain&gt;
 
-```bash
-kubectl -n argocd port-forward svc/argo-cd-argocd-server 8080:443
-# https://localhost:8080, user admin. First login password:
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
-```
+The UI has its own internet-facing ALB, made by `argocd-install` (`deploy/argocd-ui.sh`,
+`deploy/argocd/ingress.yaml`). It is exposed only when both are set:
 
-Change the password in the UI (User info), then delete `argocd-initial-admin-secret`.
+| Setting | Where | What |
+|---|---|---|
+| `ARGOCD_ALLOWED_CIDR` | Repository variable | The only address range the ALB accepts, e.g. `203.0.113.7/32` (your IP). `0.0.0.0/0` is refused |
+| `ARGOCD_ADMIN_PASSWORD` | Repository secret | The `admin` password. bcrypt-hashed into `argocd-secret`; `argocd-initial-admin-secret` is deleted |
+
+- **HTTPS only:** the ACM certificate of the domain (`*.<domain>`), TLS 1.3/1.2 policy; port 80
+  only redirects to 443. Needs the domain (`DOMAIN_NAME`), like `dev.` and `shop.`. The ALB ends
+  TLS and talks plain HTTP to `argocd-server` inside the VPC (`server.insecure`).
+- **Name:** `argocd.<domain>`, an alias record in the same Route 53 zone, written by the workflow;
+  `infra` destroy removes the ALB and the record with the others.
+- **Public logs:** the password, its hash and the allowed address are masked; nothing prints them.
+- Then: Actions > argocd-install > Run workflow, and open the URL from the run's Summary (a new
+  ALB needs 2-3 minutes). Changing the IP or the password: RUNBOOK section 9.
+
+Without kubectl, this is the way in. With kubectl, the old way still works:
+`kubectl -n argocd port-forward svc/argo-cd-argocd-server 8080:80` (now plain HTTP: http://localhost:8080).
+
+**Next step: GitHub SSO.** One shared `admin` password is the weakest part. Dex with the GitHub
+connector (an OAuth App, `dex.enabled: true`, an RBAC policy mapping a GitHub team to roles) gives
+personal logins, read-only roles for viewers, and lets the local admin be disabled.
 
 ## Rollback
 
