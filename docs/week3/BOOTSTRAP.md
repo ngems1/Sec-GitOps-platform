@@ -6,7 +6,7 @@ Everything in AWS is created by GitHub Actions, except **one login role** that h
 You (once, in the console):  GitHub OIDC provider + week3-bootstrap role
         ↓
 bootstrap workflow (Terraform):  state bucket + week3-gha-plan + week3-gha-deploy (with permission boundaries)
-                                 + account baseline: CloudTrail, GuardDuty, Security Hub, AWS Config
+                                 + audit baseline: own CloudTrail trail (Object Lock bucket, KMS key), AWS Config rules
         ↓
 infra / deploy workflows:  everything else, with the plan or deploy role
 ```
@@ -95,13 +95,12 @@ Then continue with SETUP.md step 5 (`infra` > `apply`).
 | `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Compare the `sub` printed in the step "Show the identity GitHub presents to AWS" with the trust policy (step 3.2). Case and spelling must match exactly. |
 | `No OpenIDConnect provider found` | Step 2 is missing, or was done in another AWS account |
 | A run failed half-way | Run it again: resources that already exist are imported, not duplicated |
-| "An AWS Config recorder named '...' already exists" | Only one recorder per region. The bootstrap manages one named `default`: delete the other one (Config console > Settings), then re-run |
-| An existing GuardDuty detector, Security Hub or Config recorder `default` | Nothing to do: the run imports it (step "terraform init" lists the imports) and then applies this project's settings to it |
+| The plan lists GuardDuty, a Config recorder or Security Hub | It must not: those are shared account services of another project, never managed here (SECURITY.md section 2a). Stop and check `terraform-bootstrap/` for a resource that was added back |
 
 ## Re-running after a change in `terraform-bootstrap/`
 
-The bootstrap is not only one-time: the CI roles' permission boundaries and the account security
-baseline (CloudTrail, GuardDuty, Security Hub, AWS Config) live here too, because `terraform-aws` is
+The bootstrap is not only one-time: the CI roles' permission boundaries and this project's audit
+baseline (its CloudTrail trail, Object Lock bucket, KMS key and AWS Config rules) live here too, because `terraform-aws` is
 destroyed every day. After a merge that changes `terraform-bootstrap/`, run **bootstrap** with
 **apply unchecked**, read the plan, then run it again with **apply checked**. A new AWS service in
 `terraform-aws` needs its line in `terraform-bootstrap/boundaries.tf` and this run **before** the
@@ -114,3 +113,13 @@ infra apply that uses it.
 - **Admin rights are gated:** the admin roles only work from `main` or a protected environment.
 - **Permission boundaries:** `week3-gha-deploy` still has AdministratorAccess, but its boundary limits it to the services Terraform and the workflows use, and denies touching the audit trail, the security services, the CI roles and resources of other projects (`terraform-bootstrap/boundaries.tf`, ADR 0003).
 - You can delete `week3-bootstrap` after a bootstrap run and recreate it only when `terraform-bootstrap/` changes.
+
+## Shared account services (not managed here)
+
+This AWS account also hosts another project, which already runs **GuardDuty**, the **AWS Config
+recorder** (with its delivery channel) and **Security Hub** with the Foundational Security Best
+Practices standard. AWS allows each of them only once per account and region, so this project uses
+them as they are: the bootstrap never imports, tags or changes them, and a bootstrap plan must show
+**no** change to them. This project adds only its own trail, bucket, key and Config rules (the rules
+are evaluated by the shared recorder). Owning these services needs a separate AWS account (future
+work, ADR 0003).

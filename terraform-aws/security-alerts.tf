@@ -1,9 +1,9 @@
 # GuardDuty findings of high severity (>= 7 by default) -> slack-alerts Lambda -> Slack.
 #
-# GuardDuty itself is account-level and lives in terraform-bootstrap (never destroyed,
-# ADR 0003); this rule is destroyed and recreated with the rest of terraform-aws. Findings
-# arrive on the default event bus of this region. Before GuardDuty is on, the rule simply
-# never matches.
+# GuardDuty itself is an account-level service shared with another project in this account
+# (not managed by this repo, ADR 0003); this rule only reads what the detector publishes and
+# is destroyed and recreated with the rest of terraform-aws. Findings arrive on the default
+# event bus of this region. If the detector is ever turned off, the rule simply never matches.
 resource "aws_cloudwatch_event_rule" "guardduty_high" {
   name        = "${var.project}-guardduty-high"
   description = "GuardDuty findings with severity >= ${var.guardduty_alert_min_severity}, to the slack-alerts Lambda"

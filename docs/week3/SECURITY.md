@@ -46,16 +46,23 @@ merge to `main`.
 ## 2a. Account baseline and the CI roles' boundaries (ADR 0003)
 
 One AWS account (D-07), so the controls that a multi-account setup would give by separation are
-added inside it. All of them are in `terraform-bootstrap/` (never destroyed; `terraform-aws/` is
-destroyed daily and Object Lock would block that) and applied by the `bootstrap` workflow.
+added inside it. What this project owns is in `terraform-bootstrap/` (never destroyed; `terraform-aws/`
+is destroyed daily and Object Lock would block that) and applied by the `bootstrap` workflow.
+
+The account also hosts another project, which already runs the services AWS allows only once per
+account and region: **GuardDuty, the AWS Config recorder (and its delivery channel) and Security Hub**.
+This project **relies on them but does not own them**: it never imports, tags or changes them, and
+its deploy role is denied any change to them. Owning them needs a separate AWS account (future work,
+ADR 0003).
 
 | Control | Detail |
 |---|---|
-| CloudTrail | One multi-region trail, management events, log file validation, KMS-encrypted (`alias/week3-boutique-audit`, rotation on) |
-| Audit bucket | `week3-boutique-audit-<account-id>`: S3 Object Lock **GOVERNANCE, 30 days** (no delete or overwrite without `s3:BypassGovernanceRetention`), public access blocked, HTTPS only, deleted after 90 days. CloudTrail under `cloudtrail/`, Config under `config/` |
-| GuardDuty | Detector on, foundational detection only (CloudTrail, VPC Flow Logs, DNS); the paid protection plans are turned off explicitly. Findings with severity >= 7 go to `#boutique-alerts` through EventBridge and the slack-alerts Lambda (`terraform-aws/security-alerts.tf`) |
-| Security Hub | AWS Foundational Security Best Practices only (CIS not enabled) |
-| AWS Config | Records IAM roles, policies and users, S3 buckets, the VPC/EC2 resources (not network interfaces or volumes: too much churn), EKS clusters, RDS, KMS keys. Rules: S3 public access, S3 encryption, RDS encrypted, RDS not public, no root access key, CloudTrail enabled |
+| CloudTrail (owned) | This project's own multi-region trail, management events, log file validation, KMS-encrypted (`alias/week3-boutique-audit`, rotation on). Other trails in the account are not ours |
+| Audit bucket (owned) | `week3-boutique-audit-<account-id>`: S3 Object Lock **GOVERNANCE, 30 days** (no delete or overwrite without `s3:BypassGovernanceRetention`), public access blocked, HTTPS only, deleted after 90 days. CloudTrail files under `cloudtrail/` |
+| Config rules (owned) | Six managed rules named `week3-boutique-*`: S3 public access, S3 encryption, RDS encrypted, RDS not public, no root access key, CloudTrail enabled. Evaluated by the shared recorder |
+| GuardDuty (shared) | Detector of the other project. This project only reads its findings: severity >= 7 goes to `#boutique-alerts` through EventBridge and the slack-alerts Lambda (`terraform-aws/security-alerts.tf`) |
+| Security Hub (shared) | Already on with AWS Foundational Security Best Practices; this project's resources appear in its findings |
+| AWS Config recorder (shared) | Recorder `default` and its delivery channel belong to the other project; what it records and where it delivers is decided there |
 
 **Permission boundaries** (`terraform-bootstrap/boundaries.tf`). A boundary is a ceiling: the role
 can do only what both its policies and its boundary allow. The lists come from every AWS call in
@@ -64,7 +71,7 @@ can do only what both its policies and its boundary allow. The lists come from e
 | Role | Boundary allows | Boundary denies (always wins) |
 |---|---|---|
 | `week3-gha-plan` | `Describe*`/`Get*`/`List*` on the services terraform-aws uses (no `secretsmanager:GetSecretValue`, no DynamoDB, log or S3 object reads), public SSM parameters, the state bucket | everything else |
-| `week3-gha-deploy` | acm, cloudwatch, dynamodb, ec2, ecr, eks, elasticache, events, iam, kms, lambda, logs, rds, route53, secretsmanager, ses, sns, sqs; read-only ELB and Auto Scaling; the state bucket only | changing CloudTrail, Config, GuardDuty, Security Hub; the audit bucket; anything tagged `ManagedBy = terraform-bootstrap` (the CI roles, the boundaries, the audit key); the bootstrap role and the GitHub OIDC provider by name; IAM users and access keys; attaching AdministratorAccess, PowerUserAccess or IAMFullAccess; creating a role without `Project = week3-boutique`; any resource tagged with **another** `Project` |
+| `week3-gha-deploy` | acm, cloudwatch, dynamodb, ec2, ecr, eks, elasticache, events, iam, kms, lambda, logs, rds, route53, secretsmanager, ses, sns, sqs; read-only ELB and Auto Scaling; the state bucket only | changing CloudTrail, Config, GuardDuty, Security Hub (ours and the shared ones); the audit bucket; anything tagged `ManagedBy = terraform-bootstrap` (the CI roles, the boundaries, the audit key); the bootstrap role and the GitHub OIDC provider by name; IAM users and access keys; attaching AdministratorAccess, PowerUserAccess or IAMFullAccess; creating a role without `Project = week3-boutique`; any resource tagged with **another** `Project` |
 
 Tag-based conditions use `aws:ResourceTag/Project`, `aws:ResourceTag/ManagedBy` and
 `aws:RequestTag/Project` on the services that support them. Resources with no `Project` tag (made by
@@ -129,5 +136,5 @@ read-only disk (`preinstall_disabled` keeps it from trying to write plugins).
 | RDS `deletion_protection = false` | Accidental deletion | Kept off so the daily `destroy` works; turn on for a real prod |
 | SES in sandbox | Only verified recipients | Request production access when real customers exist |
 | Deploy role can create a role without a boundary and give it broad inline rights | Privilege escalation inside the account (admin-level managed policies and IAM users are already denied) | Require a permission boundary on every role terraform-aws creates (`iam:PermissionsBoundary` condition on `iam:CreateRole`) |
-| GuardDuty foundational only | No S3 data-event, EKS audit-log, runtime, malware, RDS login or Lambda network detection | Turn single protection plans on in `terraform-bootstrap/security.tf` when the budget allows (EKS audit logs first) |
-| Security services in one region | GuardDuty, Security Hub and Config cover `us-east-1` only (the trail is multi-region) | Enable them in other regions if anything ever runs there |
+| Account-level security services not owned | GuardDuty, the Config recorder and Security Hub belong to another project in the same account: their settings (protection plans, recorded types, standards) and their lifetime are not under this project's control | A separate AWS account for this project (AWS Organizations, D-07 revisit) with its own detector, recorder and hub |
+| Two trails in one account | The other project already has a trail, so this one is a second copy of the management events, which CloudTrail bills (about USD 2 per 100,000 events) | Accept for now (own Object Lock and key); drop it if the cost matters and the other trail is trusted, or move to a separate account |

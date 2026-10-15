@@ -128,7 +128,8 @@ data "aws_iam_policy_document" "deploy_boundary" {
 
   # --- denies (win over any allow) -------------------------------------------
 
-  # The audit trail and the detectors stay on, whatever the deploy role is given later.
+  # The audit trail and the detectors (this project's and the shared ones) stay on, whatever
+  # the deploy role is given later.
   statement {
     sid    = "DenySecurityServiceChanges"
     effect = "Deny"

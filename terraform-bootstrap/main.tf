@@ -4,8 +4,8 @@
 #   3. two roles with different rights (least privilege), each with a permission boundary:
 #        week3-gha-plan    read-only, for pull-request plans (any branch)
 #        week3-gha-deploy  apply + deploy, only from main or the dev/prod environments
-#   4.-9. the account security baseline (security.tf): CloudTrail to an Object Lock bucket,
-#        GuardDuty, Security Hub, AWS Config
+#   4.-7. this project's audit baseline (security.tf): its CloudTrail trail, KMS key, Object Lock
+#        bucket and AWS Config rules (GuardDuty, the Config recorder and Security Hub are shared)
 # Normally run by .github/workflows/bootstrap.yml.
 
 data "aws_caller_identity" "current" {}
