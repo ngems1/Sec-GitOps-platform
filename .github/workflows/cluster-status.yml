@@ -89,6 +89,40 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Read-only (get). An aggregated API that is down makes kubectl's discovery fail with
+      # "the server is currently unable to handle the request" (seen in deploy-env's Load
+      # Balancer Controller step). Lists every APIService, then the conditions of each one
+      # that is not Available=True.
+      - name: API services
+        if: inputs.namespace == 'kube-system'
+        run: |
+          {
+            echo "### API services"
+            echo '```'
+            echo "\$ kubectl get apiservice"
+            kubectl get apiservice 2>&1 || true
+            echo
+            # stderr kept apart: discovery warnings from a down API must not be read as names.
+            if ! list=$(kubectl get apiservice -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.conditions[?(@.type=="Available")].status}{"\n"}{end}' 2>apiservice.err); then
+              echo "Could not list the APIServices:"
+              cat apiservice.err
+            else
+              # No Available condition at all counts as not available.
+              down=$(awk '$2 != "True" { print $1 }' <<<"$list")
+              if [ -z "$down" ]; then
+                echo "Every APIService is Available=True."
+              fi
+              for name in $down; do
+                echo "\$ kubectl get apiservice ${name} -o jsonpath=<conditions>"
+                conditions=$(kubectl get apiservice "$name" \
+                  -o jsonpath='{range .status.conditions[*]}{.type}={.status}  reason: {.reason}  message: {.message}{"\n"}{end}' 2>apiservice.err || true)
+                if [ -n "$conditions" ]; then echo "$conditions"; else echo "(no status conditions)"; cat apiservice.err; fi
+                echo
+              done
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Namespace snapshot
         env:
           NS: ${{ inputs.namespace }}
