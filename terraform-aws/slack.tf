@@ -103,3 +103,27 @@ resource "aws_sns_topic_subscription" "slack_alerts" {
 
   depends_on = [aws_lambda_permission.slack_alerts]
 }
+
+# Bedrock daily budget (terraform-bootstrap, ADR 0009): AWS Budgets publishes to a topic that
+# the bootstrap owns (it is never destroyed); this Lambda subscribes to it once the GitHub
+# variable BUDGET_ALERTS_TOPIC_ARN holds its ARN. Empty = no subscription, so this apply
+# never depends on the bootstrap having run first.
+resource "aws_lambda_permission" "budget_alerts" {
+  count = var.budget_alerts_topic_arn == "" ? 0 : 1
+
+  statement_id  = "sns-budget"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.slack_alerts.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = var.budget_alerts_topic_arn
+}
+
+resource "aws_sns_topic_subscription" "budget_alerts" {
+  count = var.budget_alerts_topic_arn == "" ? 0 : 1
+
+  topic_arn = var.budget_alerts_topic_arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.slack_alerts.arn
+
+  depends_on = [aws_lambda_permission.budget_alerts]
+}

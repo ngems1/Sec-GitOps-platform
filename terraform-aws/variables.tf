@@ -70,6 +70,7 @@ variable "services" {
     "productcatalogservice",
     "recommendationservice",
     "shippingservice",
+    "shoppingassistantservice", # AI shopping assistant (ADR 0009)
   ]
 }
 
@@ -95,4 +96,24 @@ variable "guardduty_alert_min_severity" {
   description = "GuardDuty findings at or above this severity go to Slack (7 = high, 9 = critical; the detector is a shared account service, not managed here)."
   type        = number
   default     = 7
+}
+
+# AI shopping assistant (ADR 0009). The same two settings are Helm values of the chart
+# (shoppingAssistant.model.id / useInferenceProfile): keep them equal.
+variable "shopping_assistant_model_id" {
+  description = "Bedrock model the shopping assistant may invoke (us-east-1). Its Pod Identity role is scoped to exactly this model."
+  type        = string
+  default     = "amazon.nova-lite-v1:0"
+}
+
+variable "shopping_assistant_use_inference_profile" {
+  description = "true = call the model through its US cross-region inference profile (us.<model id>) instead of on-demand in us-east-1."
+  type        = bool
+  default     = false
+}
+
+variable "budget_alerts_topic_arn" {
+  description = "SNS topic of the Bedrock daily budget (terraform-bootstrap output BUDGET_ALERTS_TOPIC_ARN). Set: the slack-alerts Lambda posts its alerts. Empty: not subscribed."
+  type        = string
+  default     = ""
 }

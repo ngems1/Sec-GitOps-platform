@@ -85,3 +85,9 @@ variable "audit_expiry_days" {
   type        = number
   default     = 90
 }
+
+variable "bedrock_daily_budget_usd" {
+  description = "Daily Amazon Bedrock cost (USD) of the AI shopping assistant; alerts at 50% and 100% (ADR 0009). Nova Lite costs about USD 0.0004 per question."
+  type        = string
+  default     = "1"
+}
