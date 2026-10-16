@@ -6,7 +6,7 @@
 {
   "images": {
     "repository": "866934333672.dkr.ecr.us-east-1.amazonaws.com/boutique",
-    "tag": "294dbae8fae4"
+    "tag": "6785a83fd5db"
   },
   "frontend": {
     "ingress": {
@@ -42,9 +42,6 @@
       "dbSecretArn": "arn:aws:secretsmanager:us-east-1:866934333672:secret:rds!db-371e440e-e3ef-4e4b-aba4-fc92f40692b6-gBK2OZ",
       "redisAddr": "master.week3-boutique-prod-redis.m25p71.use1.cache.amazonaws.com:6379"
     }
-  },
-  "loadGenerator": {
-    "frontendUrl": "https://shop.sebngembou-cloud.click"
   },
   "emailService": {
     "notifications": {
