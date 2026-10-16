@@ -106,19 +106,24 @@ func (fe *frontendServer) assistantHandler(w http.ResponseWriter, r *http.Reques
 func serveAssistant(w http.ResponseWriter, r *http.Request, p platformDetails, details map[string]string) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	data := map[string]interface{}{
-		"session_id":        sessionID(r),
-		"request_id":        r.Context().Value(ctxKeyRequestID{}),
-		"user_currency":     currentCurrency(r),
-		"show_currency":     false,
-		"platform_css":      p.css,
-		"platform_name":     p.provider,
-		"is_cymbal_brand":   isCymbalBrand,
-		"deploymentDetails": details,
-		"frontendMessage":   frontendMessage,
-		"max_question":      assistantMaxQuestion,
+		"session_id":         sessionID(r),
+		"request_id":         r.Context().Value(ctxKeyRequestID{}),
+		"user_currency":      currentCurrency(r),
+		"show_currency":      false,
+		"platform_css":       p.css,
+		"platform_name":      p.provider,
+		"is_cymbal_brand":    isCymbalBrand,
+		"deploymentDetails":  details,
+		"frontendMessage":    frontendMessage,
+		"max_question":       assistantMaxQuestion,
+		"hide_assistant_fab": true, // no floating "Ask AI" button on the assistant page itself
 	}
 	status := http.StatusOK
-	if r.Method == http.MethodPost {
+	if r.Method != http.MethodPost {
+		// ?q= (the product page's "Ask about this product"): only shown in the text box, never
+		// sent to the assistant until the shopper presses Ask.
+		data["question"] = prefill(r.URL.Query().Get("q"))
+	} else {
 		question := strings.TrimSpace(r.FormValue("question"))
 		data["question"] = question
 		switch {
@@ -188,4 +193,13 @@ func answerParts(answer string, products []assistantProduct) []answerPart {
 	}
 	parts = append(parts, answerPart{Text: answer[last:]})
 	return parts
+}
+
+// prefill is the ?q= question shown in the text box: trimmed and cut to the question cap.
+func prefill(q string) string {
+	q = strings.TrimSpace(q)
+	if r := []rune(q); len(r) > assistantMaxQuestion {
+		q = string(r[:assistantMaxQuestion])
+	}
+	return q
 }

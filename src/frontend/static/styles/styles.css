@@ -658,8 +658,50 @@ the rules below could be extracted.
 
 /* AI shopping assistant link (assistant.go), only shown when ASSISTANT_URL is set */
 header .assistant-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-right: 24px;
   font-weight: bold;
   color: #605f64;
   text-decoration: none;
+}
+
+.assistant-icon {
+  flex-shrink: 0;
+}
+
+/* Floating "Ask AI" button, on every page but the assistant itself */
+.assistant-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 24px;
+  background: #CE0631; /* the shop's primary button colour */
+  color: #fff;
+  font-weight: bold;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.assistant-fab:hover,
+.assistant-fab:focus {
+  color: #fff;
+  text-decoration: none;
+  background: #a8052a;
+}
+
+/* "Ask about this product" on the product page */
+.assistant-ask-product {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 16px;
+  color: #CE0631;
+  font-weight: bold;
 }

@@ -50,6 +50,11 @@
             </div>
             <button type="submit" class="cymbal-button-primary">Add To Cart</button>
           </form>
+          {{ if assistantEnabled }}
+          {{/* Opens the assistant with the question in its text box only: never sent by itself.
+               html/template escapes the name as a URL query value. */}}
+          <a class="assistant-ask-product" href="/assistant?q={{ printf "Tell me more about %s" $.product.Item.Name }}">{{ template "assistant_icon" }}<span>Ask about this product</span></a>
+          {{ end }}
         </div>
       </div>
     </div>
