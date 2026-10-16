@@ -235,6 +235,12 @@ through the ALB name (`dev.` / `shop.<domain>`) all the time, ~1.5 requests/s in
 prod, so the canary always gets its share. Without a domain it cannot reach the ALB, and every
 frontend canary aborts for lack of traffic (the deploy log warns).
 
+**Why did a canary stop?** A failed Argo CD deploy prints a **Canary report** on the run's Summary
+page *before* the rollback resets the Rollout: its abort message, every AnalysisRun with the
+values each metric measured, the canary and stable pods, Rollout events and the last 30 lines of
+the loadgenerator. The same report, any time: Actions > cluster-status > `boutique-dev` (or
+`boutique-prod`), section **Rollouts** (`deploy/rollouts-report.sh`, read-only).
+
 ### Demo: a good canary
 
 1. Nothing to start: the loadgenerator already sends steady traffic through the ALB. (For a
