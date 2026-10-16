@@ -64,9 +64,9 @@ func TestMetricsSkipHealthChecks(t *testing.T) {
 
 func TestHistogramIsCumulative(t *testing.T) {
 	m := newHTTPMetrics()
-	m.observe(200, 30*time.Millisecond)
-	m.observe(200, 700*time.Millisecond)
-	m.observe(200, 20*time.Second) // above every bound
+	m.observe(200, 30*time.Millisecond, true)
+	m.observe(200, 700*time.Millisecond, true)
+	m.observe(200, 20*time.Second, true) // above every bound
 	out := scrape(t, m)
 	for _, want := range []string{
 		`frontend_http_request_duration_seconds_bucket{le="0.05"} 1`,

@@ -46,6 +46,7 @@ var (
 			Funcs(template.FuncMap{
 			"renderMoney":        renderMoney,
 			"renderCurrencyLogo": renderCurrencyLogo,
+			"assistantEnabled":   assistantEnabled,
 		}).ParseGlob("templates/*.html"))
 	plat platformDetails
 )

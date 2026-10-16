@@ -655,3 +655,11 @@ the rules below could be extracted.
   width: 10px;
   height: 5px;
 }
+
+/* AI shopping assistant link (assistant.go), only shown when ASSISTANT_URL is set */
+header .assistant-link {
+  margin-right: 24px;
+  font-weight: bold;
+  color: #605f64;
+  text-decoration: none;
+}

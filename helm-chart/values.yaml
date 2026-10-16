@@ -135,6 +135,30 @@ inventoryService:
       cpu: 200m
       memory: 192Mi
 
+shoppingAssistantService:
+  # AI shopping assistant (ADR 0009). Off by default and in prod; on in dev (values-dev.yaml).
+  # When on, the frontend shows its /assistant page (ASSISTANT_URL).
+  create: false
+  name: shoppingassistantservice
+  replicas: 1
+  awsRegion: us-east-1
+  # Must equal terraform-aws/variables.tf (shopping_assistant_model_id and
+  # shopping_assistant_use_inference_profile): the pod role allows only that model. CI checks
+  # it; set them here only, not in values-<env>.yaml.
+  modelId: amazon.nova-lite-v1:0
+  useInferenceProfile: false
+  maxTokens: 600
+  requestTimeoutSeconds: 15
+  ratePerMinute: 10        # questions per shopper (hashed session) per minute
+  dailyQuestionCap: 300    # per pod and UTC day; 0 = paused (the kill switch)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
 frontend:
   create: true
   name: frontend

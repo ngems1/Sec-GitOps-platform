@@ -83,7 +83,7 @@ jobs:
             missing=0
             for svc in adservice cartservice checkoutservice currencyservice emailservice frontend \
                        inventoryservice loadgenerator paymentservice productcatalogservice \
-                       recommendationservice shippingservice; do
+                       recommendationservice shippingservice shoppingassistantservice; do
               aws ecr describe-images --repository-name "${REGISTRY#*/}/${svc}" \
                 --image-ids imageTag="$INPUT_TAG" >/dev/null 2>&1 || { echo "::error::${svc}:${INPUT_TAG} not found in ECR"; missing=1; }
             done

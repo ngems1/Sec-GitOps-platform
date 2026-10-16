@@ -1,6 +1,10 @@
 # dev (namespace boutique-dev): deployed automatically on every push to main.
 # Kept small: one replica of each service.
 
+# AI shopping assistant (ADR 0009): on in dev only, with the /assistant page in the frontend.
+shoppingAssistantService:
+  create: true
+
 inventoryService:
   replicas: 1
   # The Mug starts with 2 in stock, so a 3-mug order shows the InventoryFailed path.
