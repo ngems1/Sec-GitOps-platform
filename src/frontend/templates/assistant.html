@@ -25,15 +25,9 @@
 
                 {{ if $.answer }}
                 <div class="mt-4 p-3 border rounded bg-white" aria-live="polite">
-                    <p style="white-space: pre-wrap;">{{ $.answer }}</p>
-                    {{ if $.products }}
-                    <p class="mb-1"><strong>Products mentioned:</strong></p>
-                    <ul>
-                        {{ range $.products }}
-                        <li><a href="/product/{{ .ID }}">{{ .Name }}</a></li>
-                        {{ end }}
-                    </ul>
-                    {{ end }}
+                    {{- /* Each cited product is a link named after it (assistant.go answerParts); kept on
+                         one line: white-space is preserved inside the paragraph. */}}
+                    <p class="mb-0" style="white-space: pre-wrap;">{{ range $.answer_parts }}{{ if .Link }}<a href="{{ .Link }}">{{ .Text }}</a>{{ else }}{{ .Text }}{{ end }}{{ end }}</p>
                 </div>
                 {{ end }}
             </div>

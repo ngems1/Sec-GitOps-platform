@@ -19,6 +19,9 @@ class FakeCatalog:
         self.products = {p["id"]: p for p in products}
         self.searches = []
 
+    def list_products(self):
+        return list(self.products.values())
+
     def search(self, query):
         self.searches.append(query)
         return [p for p in self.products.values() if query.lower() in (p["name"] + p["description"]).lower()]
@@ -82,6 +85,7 @@ class GroundedAnswerTest(unittest.TestCase):
 
         self.assertEqual(out["outcome"], "answered")
         self.assertEqual(out["products"], [{"id": "6E92ZMYYFZ", "name": "Mug"}])  # the invented ID is dropped
+        self.assertEqual(out["answer"], "The Mug [6E92ZMYYFZ] costs 8.99 USD. Also see.")  # and removed from the text
         self.assertEqual(catalog.searches, ["mug"])
         self.assertEqual(metrics.tokens, {"input": 300, "output": 40})
         self.assertIn(("request", {"outcome": "answered"}), metrics.counts)
@@ -102,7 +106,7 @@ class GroundedAnswerTest(unittest.TestCase):
         self.assertEqual(req["inferenceConfig"], {"maxTokens": 600, "temperature": 0.2})
         self.assertIn("EUR", req["system"][0]["text"])
         self.assertEqual([t["toolSpec"]["name"] for t in req["toolConfig"]["tools"]],
-                         ["search_products", "get_product"])
+                         ["list_products", "search_products", "get_product"])
 
     def test_session_id_never_sent_to_model(self):
         model = FakeModel(final("Hello."))
@@ -124,6 +128,72 @@ class GroundedAnswerTest(unittest.TestCase):
     def test_empty_answer_is_refused(self):
         out = make(FakeModel(final("  "))).ask("hi")
         self.assertEqual(out["outcome"], "refused")
+
+
+CANDLE = {"id": "0PUK6V6EV0", "name": "Candle Holder", "description": "The cheapest way to light up a room.",
+          "price_usd": {"currency_code": "USD", "units": 18, "nanos": 990000000}, "categories": ["decor", "home"]}
+
+
+class ThinkingTest(unittest.TestCase):
+    """Amazon Nova may write its reasoning in <thinking> tags: shoppers never see it."""
+
+    def test_strip_thinking(self):
+        for raw, want in [
+            # the first real answer in dev
+            ("<thinking>I found only one product, the Candle Holder [0PUK6V6EV0], priced at 18.99 USD. "
+             "It seems to be the cheapest product in the catalog.</thinking> The cheapest product in the "
+             "catalog is the Candle Holder [0PUK6V6EV0], priced at 18.99 USD.",
+             "The cheapest product in the catalog is the Candle Holder [0PUK6V6EV0], priced at 18.99 USD."),
+            ("Answer one. <THINKING>a\nb</Thinking> Answer two.", "Answer one. Answer two."),
+            ("The Mug is 8.99 USD. <thinking>cut off by maxTokens", "The Mug is 8.99 USD."),  # unclosed
+            ("lost opening tag</thinking> The Mug is 8.99 USD.", "The Mug is 8.99 USD."),
+            ("No reasoning here.", "No reasoning here."),
+        ]:
+            self.assertEqual(core.strip_thinking(raw), want)
+
+    def test_answer_never_contains_thinking(self):
+        model = FakeModel(final("<thinking>The user wants a mug [6E92ZMYYFZ].</thinking> Our Mug [6E92ZMYYFZ] costs 8.99 USD."))
+        out = make(model).ask("mug?")
+        self.assertEqual(out["outcome"], "answered")
+        self.assertEqual(out["answer"], "Our Mug [6E92ZMYYFZ] costs 8.99 USD.")
+        self.assertNotIn("thinking", out["answer"].lower())
+
+    def test_only_thinking_is_refused(self):
+        out = make(FakeModel(final("<thinking>no idea</thinking>"))).ask("hm?")
+        self.assertEqual(out["outcome"], "refused")
+        self.assertEqual(out["answer"], core.GIVE_UP_ANSWER)
+
+
+class WholeCatalogTest(unittest.TestCase):
+    """'Which product is the cheapest?': a keyword search misses products, list_products does not."""
+
+    def test_cheapest_uses_the_full_list(self):
+        catalog = FakeCatalog((MUG, JAR, CANDLE))
+        # The trap of the first dev answer: searching "cheapest" finds only the Candle Holder.
+        self.assertEqual([p["id"] for p in catalog.search("cheapest")], [CANDLE["id"]])
+        catalog.searches.clear()
+
+        model = FakeModel(tool_use("list_products", {}),
+                          final("The cheapest product is the Bamboo Glass Jar [9SIQT8TOJO] at 5.49 USD."))
+        metrics = FakeMetrics()
+        out = make(model, catalog, metrics=metrics).ask("Which product is the cheapest?")
+
+        listed = model.requests[1]["messages"][2]["content"][0]["toolResult"]["content"][0]["json"]["products"]
+        self.assertEqual(sorted(p["id"] for p in listed), sorted([MUG["id"], JAR["id"], CANDLE["id"]]))
+        jar = next(p for p in listed if p["id"] == JAR["id"])
+        self.assertEqual(jar, {"id": "9SIQT8TOJO", "name": "Bamboo Glass Jar", "price_usd": "5.49 USD",
+                               "categories": ["kitchen"]})  # no description, no picture
+        self.assertEqual(catalog.searches, [])
+        self.assertIn(("tool_call", {"tool": "list_products"}), metrics.counts)
+        self.assertEqual(out["products"], [{"id": "9SIQT8TOJO", "name": "Bamboo Glass Jar"}])
+
+    def test_prompt_sends_catalog_questions_to_list_products(self):
+        model = FakeModel(final("ok"))
+        make(model).ask("hi")
+        system = model.requests[0]["system"][0]["text"]
+        self.assertIn("call list_products", system)
+        self.assertIn("cheapest", system)
+        self.assertIn("<thinking>", system)  # told never to write it
 
 
 class LimitsTest(unittest.TestCase):

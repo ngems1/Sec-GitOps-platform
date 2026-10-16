@@ -10,8 +10,9 @@ package main
 //
 // What leaves the frontend: the question, the shopper's currency and a SHA-256 of the
 // session ID (X-Session-Id, the per-shopper rate-limit key). Never the session ID itself.
-// The answer is rendered by html/template (escaped); product links are made only for the
-// product IDs the service returned, which it validated against the catalog.
+// The answer is rendered by html/template (escaped). The service cites products as "Name [ID]":
+// each citation becomes a link named after the product, only for the product IDs the service
+// returned (it validated them against the catalog); any other [ID] is removed. No raw ID shows.
 
 import (
 	"bytes"
@@ -40,6 +41,7 @@ var (
 	assistantURL    = strings.TrimRight(strings.TrimSpace(os.Getenv("ASSISTANT_URL")), "/")
 	assistantClient = &http.Client{Timeout: assistantTimeout}
 	productIDFormat = regexp.MustCompile(`^[A-Z0-9]{6,20}$`)
+	citedIDPattern  = regexp.MustCompile(`\s*\[([A-Z0-9]{6,20})\]`)
 )
 
 func assistantEnabled() bool { return assistantURL != "" }
@@ -140,9 +142,50 @@ func serveAssistant(w http.ResponseWriter, r *http.Request, p platformDetails, d
 			}
 		}
 	}
+	if answer, ok := data["answer"].(string); ok {
+		products, _ := data["products"].([]assistantProduct)
+		data["answer_parts"] = answerParts(answer, products)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := templates.ExecuteTemplate(w, "assistant", data); err != nil {
 		log.Println(err)
 	}
+}
+
+// answerPart is a piece of the answer: plain text, or a product link when Link is set.
+type answerPart struct {
+	Text string
+	Link string
+}
+
+// answerParts turns each "Name [ID]" citation into a link labelled with the name (or, when
+// the name is not just before it, with the product's name), for the products the service
+// returned only. Any other [ID] is dropped, so the shopper never sees a raw product ID.
+// The template escapes every part.
+func answerParts(answer string, products []assistantProduct) []answerPart {
+	byID := make(map[string]assistantProduct, len(products))
+	for _, p := range products {
+		byID[p.ID] = p
+	}
+	var parts []answerPart
+	last := 0
+	for _, m := range citedIDPattern.FindAllStringSubmatchIndex(answer, -1) {
+		before := answer[last:m[0]]
+		last = m[1]
+		p, ok := byID[answer[m[2]:m[3]]]
+		if !ok || p.Name == "" {
+			parts = append(parts, answerPart{Text: before})
+			continue
+		}
+		label := p.Name
+		if n := len(p.Name); len(before) >= n && strings.EqualFold(before[len(before)-n:], p.Name) {
+			label, before = before[len(before)-n:], before[:len(before)-n] // "the Mug [ID]" -> "the " + link "Mug"
+		} else if before != "" {
+			before += " " // "is [ID]" -> "is " + link "Mug"
+		}
+		parts = append(parts, answerPart{Text: before}, answerPart{Text: label, Link: "/product/" + p.ID})
+	}
+	parts = append(parts, answerPart{Text: answer[last:]})
+	return parts
 }
