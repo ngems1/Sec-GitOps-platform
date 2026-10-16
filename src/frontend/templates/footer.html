@@ -50,6 +50,10 @@
         </div>
     </div>
 </footer>
+{{ if and assistantEnabled (not $.hide_assistant_fab) }}
+<div class="assistant-fab-spacer" aria-hidden="true"></div>
+<a href="/assistant" class="assistant-fab">{{ template "assistant_icon" }}<span>Ask AI</span></a>
+{{ end }}
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"
     integrity="sha384-smHYKdLADwkXOn1EmN1qk/HfnUcbVRZyYmZ4qpPea6sjB/pTJ0euyQp0Mk8ck+5T" crossorigin="anonymous">
 </script>

@@ -13,6 +13,16 @@
                    Answers come from our catalog only, written by an AI model (Amazon Bedrock),
                    and can be wrong. Don't type personal details.</p>
 
+                {{ if assistantEnabled }}
+                {{/* Example questions: each only fills the text box (?q=), never sends it. */}}
+                <p class="mb-2">Try one of these:</p>
+                <ul class="assistant-chips">
+                    {{ range $.examples }}
+                    <li><a class="assistant-chip" href="/assistant?q={{ . }}">{{ . }}</a></li>
+                    {{ end }}
+                </ul>
+                {{ end }}
+
                 <form method="POST" action="/assistant">
                     <div class="form-group">
                         <label for="assistant-question">Your question</label>
