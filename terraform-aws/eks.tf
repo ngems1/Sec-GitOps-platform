@@ -15,15 +15,24 @@ module "eks" {
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.private_subnets
 
+  # Every add-on is pinned to an exact version (DESIGN D-16): never most_recent, so neither an
+  # apply nor a new cluster after destroy picks up an untested release (the metrics-server
+  # add-on broke /openapi/v2 that way, RUNBOOK section 7). Versions = what ran on 2026-10-16
+  # (Kubernetes 1.35). Upgrading one is a reviewed PR: RUNBOOK section 11.
+  # Not here: aws-guardduty-agent, installed and updated by GuardDuty runtime monitoring of the
+  # account's shared detector (ADR 0003), not by this repo.
   cluster_addons = {
     coredns = {
-      most_recent = true
+      addon_version = "v1.14.7-eksbuild.11"
+      most_recent   = false
     }
     kube-proxy = {
-      most_recent = true
+      addon_version = "v1.35.3-eksbuild.52"
+      most_recent   = false
     }
     vpc-cni = {
-      most_recent    = true
+      addon_version  = "v1.23.2-eksbuild.3"
+      most_recent    = false
       before_compute = true
       # Enforce Kubernetes NetworkPolicies (blocks traffic between boutique-dev and boutique-prod).
       # Prefix delegation: each node gets /28 IP blocks instead of single IPs, so a
@@ -43,15 +52,15 @@ module "eks" {
     # to Argo CD and Helm (RUNBOOK section 7). metrics-server is the upstream Helm chart,
     # installed by deploy-env.yml. Its port 10250 is already open from the cluster security
     # group (the module's kubelet rule), so the old 10251/tcp rule is gone too.
-    # TODO pin every add-on in this map: addon_version = "<running version>", most_recent = false
-    # Never most_recent: a new add-on release is how this broke (RUNBOOK section 7).
     eks-pod-identity-agent = {
-      most_recent    = true
+      addon_version  = "v1.4.0-eksbuild.4"
+      most_recent    = false
       before_compute = true
     }
     # CloudWatch Container Insights: node/pod metrics and container logs.
     amazon-cloudwatch-observability = {
-      most_recent = true
+      addon_version = "v6.7.0-eksbuild.1"
+      most_recent   = false
       # Container Insights (node/pod metrics, container logs) stays on. Application
       # Signals auto-monitor is turned off: by default it injects an OpenTelemetry
       # agent into every pod, which made the JVM of adservice too slow to start
