@@ -24,7 +24,7 @@ PriorityClass from the chart. Prod is still deployed by Helm, which could create
   - Everything stays in the chart.
   - The whitelist is per kind, not per name: anything merged to `main` could create any
     PriorityClass, including `globalDefault: true` or a value above prod's, until an
-    admission policy (Kyverno, Phase 2) limits it.
+    admission policy (Kyverno, Phase 5; docs/roadmap.md) limits it.
   - `project.yaml` is applied only by the manual `argocd-install.yml`; it must be rerun before
     the first sync, or the sync fails and the deploy workflow reverts the tag commit.
   - Prod's class would still come from Helm, and Day 4 would move its ownership.
