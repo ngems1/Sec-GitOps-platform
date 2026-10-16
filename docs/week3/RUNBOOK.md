@@ -227,6 +227,10 @@ only (Prometheus): **at least 10 requests in 2 min**, **success rate >= 99%** an
 every 30 s; no data counts as a failure. A second failed
 measurement aborts: traffic goes back to stable at once, the Rollout and the Application turn
 **Degraded**, and the deploy rolls back (dev: tag commit reverted; prod: `env/prod` moved back).
+While the canary runs, "Wait for Argo CD" follows the Rollout (`rollout: wait ...` lines in its
+log), not the Application's health: a resource that is Degraded for a moment during a pause
+does not fail the deploy. It fails when the Rollout is aborted or Degraded, or the AnalysisRun
+fails or errors.
 
 **Needs:** argocd-install has run (it installs the Rollouts controller, namespace `argo-rollouts`),
 and Prometheus runs (deploy workflow, job "monitoring"). Without Prometheus every canary aborts.
@@ -267,7 +271,7 @@ the loadgenerator. The same report, any time: Actions > cluster-status > `boutiq
 3. Within about a minute the AnalysisRun's `success-rate` is ~0.7, below 0.99: two failed
    measurements and the Rollout is **aborted**. Traffic is 100% stable again; the Rollout and
    `boutique-dev` are Degraded. The deploy run that the merge started fails at "Wait for Argo CD"
-   ("Degraded ... aborted") and reverts its tag commit.
+   ("canary failed ...: aborted" or the failed AnalysisRun) and reverts its tag commit.
 4. **Clean up:** revert the PR. Argo CD syncs the stable template back and the Rollout is Healthy.
 
 | Symptom | Cause | Fix |
@@ -283,6 +287,7 @@ the loadgenerator. The same report, any time: Actions > cluster-status > `boutiq
 
 | Incident | Root cause | Fix |
 |---|---|---|
+| First dev canary (PR #30) rolled back while healthy: Rollout Paused at step 1/4, AnalysisRun Running, canary pod Ready | `argocd-wait.sh` failed on the Application being Degraded for two polls during a normal pause (the Degraded resource was not the Rollout) | The wait judges the Rollout and its AnalysisRuns while a canary runs; the canary report lists the Application's non-Healthy resources |
 | argocd-install: "boutique-dev is not Synced and Healthy at <sha> after 600s" while the log shows `sync=Synced health=Healthy` | `argocd-wait.sh` compared the last sync **operation** revision; the newest commit (the prod tag commit) did not change dev's manifests, so Argo CD ran no sync and that revision never moved | Wait on `status.sync.revision` (the commit Argo CD compared) with Synced, Healthy and no operation running; hard refresh first (also fixes a prod promotion with the same tag) |
 | Grafana crash at start ("unlinkat ... read-only file system") | Adding `plugins: [prometheus]` made Grafana try to reinstall a bundled plugin | Removed; `preinstall_disabled: true` |
 | Grafana and db-migrate `Pending` | 17 pods per t3.medium, cluster full | 4 nodes, then VPC CNI prefix delegation (110 pods/node) |
