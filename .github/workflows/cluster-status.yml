@@ -47,6 +47,32 @@ jobs:
           kubectl get pods -A --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort | uniq -c | sed 's/^/  pods running on /'
           kubectl top nodes 2>/dev/null || true
 
+      # Read-only (list-addons, describe-addon). The EKS add-ons and the exact versions they
+      # run, for pinning them in terraform-aws/eks.tf (addon_version, never most_recent:
+      # RUNBOOK "Upgrade an EKS add-on"). Add-ons running but not in eks.tf are flagged.
+      - name: EKS add-ons
+        run: |
+          cluster=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
+          cluster="${cluster##*/}"
+          managed=$(sed -n '/cluster_addons = {/,/^  }$/p' terraform-aws/eks.tf | sed -n 's/^    \([a-z0-9-]*\) = {$/\1/p')
+          {
+            echo "### EKS add-ons (${cluster})"
+            echo '```'
+            printf '%-34s %-28s %-9s %s\n' NAME VERSION STATUS "IN eks.tf"
+            snippet=""
+            for addon in $(aws eks list-addons --cluster-name "$cluster" --region "$AWS_REGION" --query 'addons[]' --output text); do
+              read -r name version status < <(aws eks describe-addon --cluster-name "$cluster" --addon-name "$addon" --region "$AWS_REGION" \
+                --query 'addon.[addonName,addonVersion,status]' --output text)
+              if grep -qx "$name" <<<"$managed"; then in_tf=yes; else in_tf="NO (not managed by Terraform)"; fi
+              printf '%-34s %-28s %-9s %s\n' "$name" "$version" "$status" "$in_tf"
+              snippet+="    ${name}: addon_version = \"${version}\""$'\n'
+            done
+            echo
+            echo "For terraform-aws/eks.tf (with most_recent = false):"
+            printf '%s' "$snippet"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Helm releases
         run: helm list -A 2>/dev/null || true
 

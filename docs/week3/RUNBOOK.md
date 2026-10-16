@@ -283,6 +283,32 @@ the loadgenerator. The same report, any time: Actions > cluster-status > `boutiq
 | "Wait for Argo CD" times out while the Rollout is Progressing | Canary pods not becoming ready (image pull, crash) | `cluster-status`; `progressDeadlineAbort` aborts it after 10 min |
 | Argo CD shows the Ingress or Services OutOfSync during a canary | `ignoreDifferences` missing (the Applications were not re-applied) | Run argocd-install (it re-applies both Applications) |
 
+## 11. Upgrade an EKS add-on (on purpose)
+
+Every EKS add-on in `terraform-aws/eks.tf` is pinned: `addon_version = "<exact version>"` with
+`most_recent = false` (DESIGN D-16). An add-on never changes by itself; a new release is a
+reviewed change. Lesson from the metrics-server incident (section 7): a floating add-on broke
+`/openapi/v2` on a new cluster.
+
+1. **See what runs:** Actions > cluster-status (any namespace) > section **EKS add-ons**: name,
+   version, status, and the `addon_version` lines to copy. "NO (not managed by Terraform)" marks
+   an add-on someone installed outside `eks.tf`.
+2. **Pick the new version:** AWS console > EKS > the cluster > Add-ons > the add-on > Edit (only
+   to read the version list; do not save), or the add-on's release notes. Check it supports the
+   cluster's Kubernetes version (`var.cluster_version`).
+3. **One add-on per PR:** change its `addon_version` in `terraform-aws/eks.tf`. The PR's `infra`
+   plan must show exactly one change: `module.eks.aws_eks_addon.this["<name>"]` (or
+   `.before_compute["<name>"]` for vpc-cni and eks-pod-identity-agent) updated in place,
+   `addon_version` old -> new. Anything else in the plan: stop and find out why.
+4. **Merge:** `infra` applies it (push to `main`). EKS rolls the add-on's pods.
+5. **Check:** cluster-status > **EKS add-ons** shows the new version and `ACTIVE`;
+   `kube-system` > API services all `Available=True`; eks-openapi-fix `check` shows protobuf 10/10
+   (section 7); one deploy passes (dev, then prod after approval).
+6. **Roll back:** revert the PR; `infra` applies the previous version.
+
+Never `most_recent = true`, also not "just for a test": the next `infra` apply, or a new cluster
+after `destroy`, would pick up whatever AWS released last.
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |
