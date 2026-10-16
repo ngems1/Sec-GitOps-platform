@@ -4,6 +4,7 @@
 # - every Rollout: phase, abort / status message, step, stable and canary pod-template hash
 # - every AnalysisRun (newest first): phase, message, and per metric its phase, counts and
 #   last measured values (what the analysis actually saw)
+# - the Prometheus address each AnalysisTemplate queries, and the Prometheus Services that exist
 # - the Argo CD Application's health and every resource that is not Healthy
 # - the frontend pods with their pod-template hash (which is canary, which is stable)
 # - Rollout / AnalysisRun events
@@ -50,6 +51,16 @@ else
       ) | join(""))
     end' <<<"$runs"
 fi
+
+echo
+echo "=== Prometheus: the analysis address and the Prometheus Services in the cluster ==="
+kubectl -n "$ns" get analysistemplates -o json 2>/dev/null \
+  | jq -r '.items[] | .metadata.name as $t | .spec.metrics[] | select(.provider.prometheus)
+      | "\($t)/\(.name): \(.provider.prometheus.address)"' | sort -u
+kubectl get svc -A -o json 2>/dev/null | jq -r '
+  [.items[] | select(.metadata.name | test("prometheus"))
+    | "\(.metadata.namespace)/\(.metadata.name) ports \([.spec.ports[] | "\(.port)/\(.name // "-")"] | join(","))"]
+  | if length == 0 then "no Service named *prometheus* in any namespace (is monitoring installed?)" else .[] end'
 
 echo
 # The Application has the namespace's name (boutique-dev, boutique-prod). Which of its

@@ -197,6 +197,33 @@ jobs:
               || { echo "::error::${env}: no boutique-${env} PriorityClass for deploy-env.yml"; exit 1; }
           done
 
+      # The frontend canary analysis and Grafana query Prometheus by its in-cluster address.
+      # Render kube-prometheus-stack exactly as deploy/monitoring.sh installs it (release
+      # "monitoring", namespace "monitoring", same values, the chart version from deploy.yml)
+      # and check both addresses name the Prometheus Service it really creates.
+      - name: Prometheus address matches the monitoring chart
+        run: |
+          kps=$(sed -n 's/^ *KPS_VERSION: "\([^"]*\)".*/\1/p' .github/workflows/deploy.yml)
+          [ -n "$kps" ] || { echo "::error::KPS_VERSION not found in deploy.yml"; exit 1; }
+          helm template monitoring kube-prometheus-stack \
+            --repo https://prometheus-community.github.io/helm-charts --version "$kps" \
+            --namespace monitoring -f monitoring/kube-prometheus-stack.values.yaml > kps.yaml
+          svc=$(yq ea -N 'select(.kind == "Service" and (.metadata.name | test("-prometheus$")) and ([.spec.ports[].port] | contains([9090])))
+                | "http://" + .metadata.name + "." + (.metadata.namespace // "monitoring") + ".svc:9090"' kps.yaml)
+          [ "$(wc -l <<<"$svc")" = 1 ] && [ -n "$svc" ] \
+            || { echo "::error::expected one Prometheus Service on port 9090 in the rendered chart, found: ${svc:-none}"; exit 1; }
+          echo "kube-prometheus-stack ${kps}: Prometheus Service ${svc}"
+          canary=$(yq '.frontend.canary.analysis.prometheusAddress' helm-chart/values.yaml)
+          grafana=$(yq '.grafana.additionalDataSources[] | select(.uid == "prometheus") | .url' monitoring/kube-prometheus-stack.values.yaml)
+          for pair in "canary analysis (helm-chart/values.yaml)=${canary}" "Grafana data source (monitoring values)=${grafana}"; do
+            [ "${pair#*=}" = "$svc" ] \
+              || { echo "::error::${pair%%=*} is ${pair#*=}, but the monitoring chart's Prometheus is ${svc}"; exit 1; }
+          done
+          for f in helm-chart/values-aws.yaml helm-chart/values-dev.yaml helm-chart/values-prod.yaml; do
+            [ "$(yq '.frontend.canary.analysis.prometheusAddress // ""' "$f")" = "" ] \
+              || { echo "::error::${f} overrides prometheusAddress: keep it in helm-chart/values.yaml only"; exit 1; }
+          done
+
   build:
     name: build ${{ matrix.service }}
     needs: changes

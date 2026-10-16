@@ -198,9 +198,12 @@ jobs:
           fi
 
   deploy-dev:
-    needs: [setup, build]
+    # After monitoring: the frontend canary analysis queries its Prometheus, and deploy-env
+    # checks that Prometheus answers before any canary. A failed monitoring job does not block
+    # dev (that check decides whether a canary can run).
+    needs: [setup, build, monitoring]
     # Runs after a successful build, or straight away when redeploying an existing tag.
-    if: always() && needs.setup.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    if: always() && needs.setup.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.monitoring.result != 'cancelled'
     uses: ./.github/workflows/deploy-env.yml
     secrets: inherit # SLACK_ORDERS_WEBHOOK_URL (optional) for the order notifications
     with:
@@ -216,12 +219,14 @@ jobs:
       environment: prod
       image_tag: ${{ needs.setup.outputs.tag }}
 
-  # Prometheus + Grafana (namespace "monitoring", shared by dev and prod): installed
-  # or updated after dev, while prod waits for its approval. Skipped with a notice
+  # Prometheus + Grafana (namespace "monitoring", shared by dev and prod): installed or
+  # updated BEFORE dev, in parallel with the build, because the frontend canary analysis
+  # (ADR 0008) needs Prometheus. On a brand-new cluster the Grafana ALB appears once the
+  # Load Balancer Controller exists (after the first dev deploy). Skipped with a notice
   # until the GRAFANA_ADMIN_PASSWORD secret is set (docs/week3/MONITORING.md).
   monitoring:
-    needs: deploy-dev
-    if: always() && needs.deploy-dev.result == 'success'
+    needs: setup
+    if: needs.setup.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     outputs:

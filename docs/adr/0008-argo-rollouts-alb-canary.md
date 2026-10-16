@@ -72,7 +72,9 @@ Option 1, with the frontend instrumented for Prometheus (user decision, 2026-10-
 - A bad frontend reaches 20% of users for at most a minute or two, then traffic goes back to
   stable by itself.
 - Deploys take about 6 minutes longer when the frontend changes.
-- The analysis depends on Prometheus (deploy workflow, job "monitoring"): without it every
+- The analysis depends on Prometheus (deploy workflow, job "monitoring", now before dev) at
+  `monitoring-kube-prometheus-prometheus.monitoring.svc:9090` (CI checks the address against the
+  rendered monitoring chart; deploy-env queries it before any canary): without it every
   canary errors and aborts.
 - The loadgenerator is permanent traffic on both shops (read-only); it shows in the ALB and
   Grafana numbers. Without it (or without the domain) every frontend canary aborts for lack of data.

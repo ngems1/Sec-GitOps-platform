@@ -123,9 +123,11 @@ grafana:
       uid: prometheus
       type: prometheus
       access: proxy
-      # "prometheus-operated" is the Service the Prometheus Operator creates for every
-      # Prometheus in this namespace: its name does not depend on the chart version.
-      url: http://prometheus-operated.monitoring.svc:9090
+      # The chart's own Prometheus Service: <fullname>-prometheus, and the fullname of
+      # release "monitoring" is "monitoring-kube-prometheus" (deploy/monitoring.sh). The same
+      # address as the frontend canary analysis (helm-chart/values.yaml, prometheusAddress);
+      # CI renders this chart and checks both against the Service it really creates.
+      url: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
       isDefault: true
       jsonData:
         timeInterval: 30s          # = scrapeInterval

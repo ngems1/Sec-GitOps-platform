@@ -190,7 +190,11 @@ frontend:
     # traffic goes back to stable.
     analysis:
       enabled: true
-      prometheusAddress: http://prometheus-operated.monitoring.svc:9090
+      # The Prometheus Service of kube-prometheus-stack (release "monitoring", namespace
+      # "monitoring", deploy/monitoring.sh): <fullname>-prometheus, port 9090. Must equal
+      # Grafana's Prometheus data source (monitoring/kube-prometheus-stack.values.yaml); CI
+      # renders the monitoring chart and checks both against its Service.
+      prometheusAddress: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
       minSuccessRate: 0.99   # share of non-5xx answers
       maxP95Seconds: 1       # p95 latency (the shop's latency SLO)
       interval: 30s
