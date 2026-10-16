@@ -44,10 +44,10 @@ reached() {
   git -C "$repo" merge-base --is-ancestor "$want" "$1" 2>/dev/null
 }
 
-# The Application's resources that are not Healthy (kind/name: health, message).
+# Why the Application is not Healthy: its health message, every resource that is not Healthy,
+# and direct checks of HPAs, Deployments and Rollouts (deploy/argocd-unhealthy.sh).
 unhealthy() {
-  jq -r '.status.resources // [] | .[] | select(.health.status != null and .health.status != "Healthy")
-    | "  \(.kind)/\(.name): \(.health.status) \(.health.message // "")"' <<<"$status"
+  bash "$(dirname "$0")/argocd-unhealthy.sh" "$app" || true
 }
 
 # State of the Rollouts in namespace $1, as "<state> <detail>": none (no Rollout or no

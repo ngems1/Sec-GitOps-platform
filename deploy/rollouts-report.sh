@@ -72,15 +72,7 @@ echo
 # The Application has the namespace's name (boutique-dev, boutique-prod). Which of its
 # resources make it not Healthy (e.g. Degraded during a normal canary pause).
 echo "=== Argo CD Application ${ns}: health and the resources that are not Healthy ==="
-if ! appjson=$(kubectl -n argocd get application "$ns" -o json 2>&1); then
-  echo "no Application ${ns} (deployed by Helm?)"
-else
-  jq -r '
-    "health=\(.status.health.status // "?") \(.status.health.message // "") sync=\(.status.sync.status // "?") at \(.status.sync.revision // "-" | .[0:12])",
-    ([.status.resources // [] | .[] | select(.health.status != null and .health.status != "Healthy")]
-      | if length == 0 then "  every resource with a health status is Healthy"
-        else .[] | "  \(.kind)/\(.name): \(.health.status) \(.health.message // "")" end)' <<<"$appjson"
-fi
+bash "$(dirname "$0")/argocd-unhealthy.sh" "$ns"
 
 echo
 echo "=== ${ns}: frontend pods (rollouts-pod-template-hash = canary or stable) ==="

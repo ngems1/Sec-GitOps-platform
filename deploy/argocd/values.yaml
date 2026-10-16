@@ -7,7 +7,39 @@ configs:
     # boutique-dev (redis-auth, emailservice-slack, db-migrate...) are never touched.
     application.resourceTrackingMethod: annotation
     exec.enabled: false # no shell into pods from the UI
+    # HorizontalPodAutoscaler health. Argo CD's built-in check marks an HPA Degraded when
+    # ScalingActive=False, which happens for a minute after the pods change (a canary, a
+    # promotion: metrics-server has no CPU numbers for the new pods yet). That made
+    # boutique-prod Degraded right after a successful canary, and the deploy rolled back.
+    # Here: Degraded only for real misconfigurations (no scale target, bad selector or metric
+    # source); "no metrics yet" is Progressing, which the deploy waits out (and reports at
+    # its timeout if it never clears).
+    resource.customizations.health.autoscaling_HorizontalPodAutoscaler: |
+      hs = {}
+      local broken = { FailedGetScale = true, FailedUpdateScale = true, InvalidSelector = true, InvalidMetricSourceType = true }
+      if obj.status ~= nil and obj.status.conditions ~= nil then
+        for _, c in ipairs(obj.status.conditions) do
+          if c.status == "False" and broken[c.reason] then
+            hs.status = "Degraded"
+            hs.message = c.reason .. ": " .. (c.message or "")
+            return hs
+          end
+        end
+        for _, c in ipairs(obj.status.conditions) do
+          if c.type == "ScalingActive" and c.status == "False" then
+            hs.status = "Progressing"
+            hs.message = "No metrics for the current pods yet: " .. (c.message or "")
+            return hs
+          end
+        end
+      end
+      hs.status = "Healthy"
+      hs.message = "Scaling on current metrics"
+      return hs
   params:
+    # Argo CD 3 no longer keeps each resource's health in the Application status: the deploy
+    # wait and the canary report could see "Degraded" but not which resource. Keep it.
+    controller.resource.health.persist: "true"
     # TLS ends at the ALB (deploy/argocd/ingress.yaml, ACM certificate); argocd-server
     # speaks plain HTTP inside the VPC, so the ALB health check and requests don't loop
     # through its own redirect to HTTPS.
