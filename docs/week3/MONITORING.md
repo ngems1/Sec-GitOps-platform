@@ -16,7 +16,7 @@ Installed and updated by the **deploy** workflow (job `monitoring`, after dev), 
 | Kind | Name | Value |
 |---|---|---|
 | Secret | `GRAFANA_ADMIN_PASSWORD` | A strong password for the Grafana `admin` user |
-| Variable | `MONITORING_ALLOWED_CIDR` | Your public IP + `/32`, e.g. `203.0.113.7/32` (search "what is my ip"). Several: comma separated. `0.0.0.0/0` is refused. |
+| Variable | `MONITORING_ALLOWED_CIDR` | Your public IP + `/32`, e.g. `203.0.113.7/32` (search "what is my ip"). Several: comma separated, spaces allowed (`203.0.113.7/32, 198.51.100.4/32`); /8 to /32 only, so `0.0.0.0/0` is refused. Masked in the logs. |
 
 Without the secret, the `monitoring` job is skipped. Without the variable, Grafana runs but has no address.
 If your IP changes (home / office), update the variable and re-run **deploy** (or the next deploy picks it up).

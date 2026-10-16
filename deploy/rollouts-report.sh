@@ -61,6 +61,12 @@ kubectl get svc -A -o json 2>/dev/null | jq -r '
   [.items[] | select(.metadata.name | test("prometheus"))
     | "\(.metadata.namespace)/\(.metadata.name) ports \([.spec.ports[] | "\(.port)/\(.name // "-")"] | join(","))"]
   | if length == 0 then "no Service named *prometheus* in any namespace (is monitoring installed?)" else .[] end'
+# The analysis path is pod to pod: Argo Rollouts controller -> Prometheus. Any NetworkPolicy
+# on either side could block it (the repo creates none in these namespaces).
+echo "NetworkPolicies in monitoring and argo-rollouts (none = nothing blocks the analysis path):"
+for pns in monitoring argo-rollouts; do
+  kubectl -n "$pns" get networkpolicy -o name 2>/dev/null | sed "s|^|  ${pns}/|"
+done
 
 echo
 # The Application has the namespace's name (boutique-dev, boutique-prod). Which of its

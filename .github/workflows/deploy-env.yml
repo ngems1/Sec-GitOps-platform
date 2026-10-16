@@ -233,9 +233,12 @@ jobs:
           echo "Argo Rollouts: $(kubectl -n argo-rollouts get deploy -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || echo 'controller not found')"
 
       # Before any canary: the Prometheus the AnalysisTemplate queries (the address the chart
-      # renders for this environment) must exist and answer. Otherwise every measurement is an
-      # Error and the canary aborts minutes later. Read-only: the Service, then one "up" query
-      # through the API server's service proxy (no pod, no image).
+      # renders for this environment) must exist and answer, from where the analysis runs.
+      # Otherwise every measurement is an Error and the canary aborts minutes later.
+      # The Service must exist, then a one-off AnalysisRun with the same Prometheus provider and
+      # address runs a trivial query (vector(1)): the Argo Rollouts controller makes the request,
+      # pod to pod, exactly like a canary analysis. No image, no new pod; the run is deleted.
+      # (Not the API server's service proxy: the EKS control plane may not reach pods on 9090.)
       - name: Prometheus for the canary analysis
         run: |
           merged=$(yq ea '. as $f ireduce ({}; . * $f)' helm-chart/values.yaml helm-chart/values-aws.yaml "helm-chart/values-${ENVIRONMENT}.yaml")
@@ -256,12 +259,44 @@ jobs:
             echo "Is monitoring installed? It needs the GRAFANA_ADMIN_PASSWORD secret (deploy workflow, job \"monitoring\")."
             exit 1
           fi
-          if ! answer=$(kubectl get --raw "/api/v1/namespaces/${pns}/services/http:${svc}:${port}/proxy/api/v1/query?query=up" 2>&1) \
-             || [ "$(jq -r '.status // ""' <<<"$answer" 2>/dev/null)" != success ]; then
-            echo "::error::Prometheus at ${addr} does not answer a query, so every canary would abort: $(head -c 300 <<<"$answer")"
+          # In the app namespace (where canary analyses run), or argo-rollouts before the first deploy.
+          ans="$NS"
+          [ -n "$(kubectl get namespace "$NS" --ignore-not-found -o name)" ] || ans=argo-rollouts
+          run=$(kubectl -n "$ans" create -o jsonpath='{.metadata.name}' -f - <<YAML
+          apiVersion: argoproj.io/v1alpha1
+          kind: AnalysisRun
+          metadata:
+            generateName: prometheus-check-
+            labels:
+              app.kubernetes.io/managed-by: deploy-env
+          spec:
+            metrics:
+            - name: prometheus-reachable
+              count: 1
+              successCondition: result[0] >= 1
+              provider:
+                prometheus:
+                  address: ${addr}
+                  query: vector(1)
+          YAML
+          )
+          trap 'kubectl -n "$ans" delete analysisrun "$run" --ignore-not-found --wait=false >/dev/null 2>&1' EXIT
+          phase=""
+          for _ in $(seq 1 12); do
+            sleep 5
+            phase=$(kubectl -n "$ans" get analysisrun "$run" -o jsonpath='{.status.phase}')
+            case "$phase" in Successful|Failed|Error|Inconclusive) break ;; esac
+          done
+          if [ "$phase" != Successful ]; then
+            echo "::error::Prometheus at ${addr} does not answer the Argo Rollouts controller (check AnalysisRun ${ans}/${run}: ${phase:-not run within 60 s}), so every canary would abort."
+            kubectl -n "$ans" get analysisrun "$run" -o json | jq -r '
+              "message: \(.status.message // "-")",
+              (.status.metricResults // [] | .[] | "metric \(.name): \(.phase // "?") \(.message // "")",
+                (.measurements // [] | .[] | "  \(.phase // "?") value=\(.value // "-") \(.message // "")"))'
+            [ -n "$phase" ] || echo "Not run at all: is the Argo Rollouts controller running? kubectl -n argo-rollouts get pods"
             exit 1
           fi
-          echo "Prometheus at ${addr} answers ($(jq '.data.result | length' <<<"$answer") targets up/down known)."
+          echo "Prometheus at ${addr} answers the Argo Rollouts controller (AnalysisRun ${ans}/${run} Successful)."
 
       # Read-only evidence: how the frontend Deployment was last written. "helm Apply" means
       # Helm used server-side apply, "helm Update" client-side apply. kubectl leaves

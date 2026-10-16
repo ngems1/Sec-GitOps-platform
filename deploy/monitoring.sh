@@ -11,6 +11,11 @@ set -euo pipefail
 : "${GRAFANA_ADMIN_PASSWORD:?}" "${KPS_VERSION:?}"
 NS=monitoring
 MONITORING_ALLOWED_CIDR=${MONITORING_ALLOWED_CIDR:-}
+# People's IPs, and the Actions logs are public: masked, never printed.
+if [ -n "$MONITORING_ALLOWED_CIDR" ]; then
+  echo "::add-mask::${MONITORING_ALLOWED_CIDR}"
+  for c in ${MONITORING_ALLOWED_CIDR//,/ }; do echo "::add-mask::${c}"; done
+fi
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
@@ -44,18 +49,15 @@ kubectl -n "$NS" rollout restart deployment -l app.kubernetes.io/name=grafana
 kubectl -n "$NS" rollout status deployment -l app.kubernetes.io/name=grafana --timeout=5m
 kubectl -n "$NS" get pods -o wide
 
-# Grafana's ALB: only from the allowed address range, never from everywhere.
+# Grafana's ALB: only from the allowed addresses (one or more CIDRs, comma-separated,
+# deploy/cidrs.sh), never from everywhere.
 if [ -z "$MONITORING_ALLOWED_CIDR" ]; then
   kubectl -n "$NS" delete ingress grafana --ignore-not-found
   echo "::notice::Grafana is not exposed: set the repository variable MONITORING_ALLOWED_CIDR (e.g. your-ip/32)."
   exit 0
 fi
-if ! [[ "$MONITORING_ALLOWED_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}(,([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2})*$ ]]; then
-  echo "::error::MONITORING_ALLOWED_CIDR must be one or more IPv4 CIDRs, e.g. 203.0.113.7/32"; exit 1
-fi
-if [[ ",$MONITORING_ALLOWED_CIDR," == *",0.0.0.0/0,"* ]]; then
-  echo "::error::MONITORING_ALLOWED_CIDR may not be 0.0.0.0/0: Grafana must not be open to the whole internet"; exit 1
-fi
+source deploy/cidrs.sh
+MONITORING_ALLOWED_CIDR=$(allowed_cidrs MONITORING_ALLOWED_CIDR "$MONITORING_ALLOWED_CIDR") || exit 1
 export MONITORING_ALLOWED_CIDR
 envsubst '${MONITORING_ALLOWED_CIDR}' < monitoring/grafana-ingress.yaml | kubectl apply -f -
 # HTTPS with our domain (terraform-aws/dns.tf), when set: same settings as the shop.
@@ -86,6 +88,6 @@ echo "GRAFANA_URL=${grafana_url}" >> "${GITHUB_OUTPUT:-/dev/null}"
 {
   echo "### Monitoring"
   echo "- Grafana: ${grafana_url} (user \`admin\`, password = the GRAFANA_ADMIN_PASSWORD secret)"
-  echo "- Reachable only from \`${MONITORING_ALLOWED_CIDR}\`. A new ALB needs 2-3 minutes before it answers."
+  echo "- Reachable only from the addresses in MONITORING_ALLOWED_CIDR. A new ALB needs 2-3 minutes before it answers."
   echo "- Dashboard: **Boutique: platform overview** (Dashboards > Browse)"
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"

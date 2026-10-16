@@ -8,7 +8,7 @@
 # The repository is public, so its Actions logs are too: the password, its hash and the
 # allowed address are masked and never printed.
 # Optional (empty = that part is skipped, and without both the UI is not exposed):
-#   ARGOCD_ADMIN_PASSWORD  ARGOCD_ALLOWED_CIDR (e.g. 203.0.113.7/32)
+#   ARGOCD_ADMIN_PASSWORD  ARGOCD_ALLOWED_CIDR (e.g. 203.0.113.7/32, or several, comma-separated)
 # From the Terraform outputs (tls): ARGOCD_HOST, CERT_ARN, DNS_ZONE_ID.
 set -euo pipefail
 NS=argocd
@@ -16,6 +16,7 @@ ARGOCD_ADMIN_PASSWORD=${ARGOCD_ADMIN_PASSWORD:-}
 ARGOCD_ALLOWED_CIDR=${ARGOCD_ALLOWED_CIDR:-}
 [ -z "$ARGOCD_ADMIN_PASSWORD" ] || echo "::add-mask::${ARGOCD_ADMIN_PASSWORD}"
 [ -z "$ARGOCD_ALLOWED_CIDR" ] || echo "::add-mask::${ARGOCD_ALLOWED_CIDR}"
+for c in ${ARGOCD_ALLOWED_CIDR//,/ }; do echo "::add-mask::${c}"; done
 
 # 1) Admin password ---------------------------------------------------------------------
 if [ -z "$ARGOCD_ADMIN_PASSWORD" ]; then
@@ -67,12 +68,9 @@ if [ -z "${ARGOCD_HOST:-}" ] || [ -z "${CERT_ARN:-}" ] || [ -z "${DNS_ZONE_ID:-}
   echo "::notice::Argo CD UI not exposed: it needs the domain (GitHub variable DOMAIN_NAME, then infra apply) for HTTPS."
   exit 0
 fi
-if ! [[ "$ARGOCD_ALLOWED_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}(,([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2})*$ ]]; then
-  echo "::error::ARGOCD_ALLOWED_CIDR must be one or more IPv4 CIDRs, e.g. 203.0.113.7/32"; exit 1
-fi
-if [[ ",$ARGOCD_ALLOWED_CIDR," == *",0.0.0.0/0,"* ]]; then
-  echo "::error::ARGOCD_ALLOWED_CIDR may not be 0.0.0.0/0: the Argo CD UI must not be open to the whole internet"; exit 1
-fi
+# One or more CIDRs, comma-separated (spaces ignored), /8 to /32 only: deploy/cidrs.sh.
+source deploy/cidrs.sh
+ARGOCD_ALLOWED_CIDR=$(allowed_cidrs ARGOCD_ALLOWED_CIDR "$ARGOCD_ALLOWED_CIDR") || exit 1
 
 export ARGOCD_ALLOWED_CIDR ARGOCD_HOST CERT_ARN
 envsubst '${ARGOCD_ALLOWED_CIDR} ${ARGOCD_HOST} ${CERT_ARN}' < deploy/argocd/ingress.yaml | kubectl apply -f - >/dev/null
