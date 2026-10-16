@@ -4,6 +4,7 @@
 # - every Rollout: phase, abort / status message, step, stable and canary pod-template hash
 # - every AnalysisRun (newest first): phase, message, and per metric its phase, counts and
 #   last measured values (what the analysis actually saw)
+# - the Argo CD Application's health and every resource that is not Healthy
 # - the frontend pods with their pod-template hash (which is canary, which is stable)
 # - Rollout / AnalysisRun events
 # - the last 30 lines of the loadgenerator (the canary's traffic)
@@ -48,6 +49,20 @@ else
         ((.measurements // [])[-5:] | map("\n    \(.startedAt // "-") \(.phase // "?") value=\(.value // "-")" + (if .message then " (\(.message))" else "" end)) | join(""))
       ) | join(""))
     end' <<<"$runs"
+fi
+
+echo
+# The Application has the namespace's name (boutique-dev, boutique-prod). Which of its
+# resources make it not Healthy (e.g. Degraded during a normal canary pause).
+echo "=== Argo CD Application ${ns}: health and the resources that are not Healthy ==="
+if ! appjson=$(kubectl -n argocd get application "$ns" -o json 2>&1); then
+  echo "no Application ${ns} (deployed by Helm?)"
+else
+  jq -r '
+    "health=\(.status.health.status // "?") \(.status.health.message // "") sync=\(.status.sync.status // "?") at \(.status.sync.revision // "-" | .[0:12])",
+    ([.status.resources // [] | .[] | select(.health.status != null and .health.status != "Healthy")]
+      | if length == 0 then "  every resource with a health status is Healthy"
+        else .[] | "  \(.kind)/\(.name): \(.health.status) \(.health.message // "")" end)' <<<"$appjson"
 fi
 
 echo

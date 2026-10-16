@@ -61,8 +61,10 @@ Option 1, with the frontend instrumented for Prometheus (user decision, 2026-10-
   canary is measured. At least 10 requests in 2 min, success rate >= 99% and p95 <= 1 s, every
   30 s; no data is a failure, a second failure aborts.
 - **Promotion and rollback:** unchanged. dev changes on `main`, prod only through the approved
-  `env/prod` promotion. An aborted canary makes the Application Degraded; `argocd-wait.sh`
-  fails on Degraded and `deploy-env.yml` rolls back (dev: revert the tag commit; prod: move
+  `env/prod` promotion. While a canary runs, `argocd-wait.sh` judges the Rollout and its
+  AnalysisRuns, not the Application health (other resources can be Degraded during a normal
+  pause: the first canary after PR #30 was rolled back that way). Aborted, Degraded or a
+  Failed/Error AnalysisRun = failure, and `deploy-env.yml` rolls back (dev: revert the tag commit; prod: move
   `env/prod` back).
 
 ## Consequences
