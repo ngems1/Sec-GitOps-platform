@@ -42,6 +42,9 @@
       "redisAddr": "master.week3-boutique-dev-redis.m25p71.use1.cache.amazonaws.com:6379"
     }
   },
+  "loadGenerator": {
+    "frontendUrl": "https://dev.sebngembou-cloud.click"
+  },
   "emailService": {
     "notifications": {
       "awsRegion": "us-east-1",
