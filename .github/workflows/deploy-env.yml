@@ -232,6 +232,37 @@ jobs:
           fi
           echo "Argo Rollouts: $(kubectl -n argo-rollouts get deploy -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || echo 'controller not found')"
 
+      # Before any canary: the Prometheus the AnalysisTemplate queries (the address the chart
+      # renders for this environment) must exist and answer. Otherwise every measurement is an
+      # Error and the canary aborts minutes later. Read-only: the Service, then one "up" query
+      # through the API server's service proxy (no pod, no image).
+      - name: Prometheus for the canary analysis
+        run: |
+          merged=$(yq ea '. as $f ireduce ({}; . * $f)' helm-chart/values.yaml helm-chart/values-aws.yaml "helm-chart/values-${ENVIRONMENT}.yaml")
+          if [ "$(yq '.frontend.canary.enabled and .frontend.canary.analysis.enabled' <<<"$merged")" != true ]; then
+            echo "No frontend canary analysis for ${ENVIRONMENT}: nothing to check."
+            exit 0
+          fi
+          addr=$(yq '.frontend.canary.analysis.prometheusAddress' <<<"$merged")
+          # http://<service>.<namespace>.svc[.cluster.local]:<port>
+          if ! [[ "$addr" =~ ^http://([a-z0-9-]+)\.([a-z0-9-]+)\.svc(\.cluster\.local)?:([0-9]+)/?$ ]]; then
+            echo "::error::prometheusAddress ${addr} is not http://<service>.<namespace>.svc:<port>"; exit 1
+          fi
+          svc=${BASH_REMATCH[1]} pns=${BASH_REMATCH[2]} port=${BASH_REMATCH[4]}
+          if ! kubectl -n "$pns" get svc "$svc" >/dev/null 2>&1; then
+            echo "::error::The canary analysis queries ${addr}, but Service ${pns}/${svc} does not exist, so every canary would abort."
+            echo "Prometheus Services in the cluster:"
+            kubectl get svc -A -o json | jq -r '.items[] | select(.metadata.name | test("prometheus")) | "  \(.metadata.namespace)/\(.metadata.name) ports \([.spec.ports[].port] | map(tostring) | join(","))"'
+            echo "Is monitoring installed? It needs the GRAFANA_ADMIN_PASSWORD secret (deploy workflow, job \"monitoring\")."
+            exit 1
+          fi
+          if ! answer=$(kubectl get --raw "/api/v1/namespaces/${pns}/services/http:${svc}:${port}/proxy/api/v1/query?query=up" 2>&1) \
+             || [ "$(jq -r '.status // ""' <<<"$answer" 2>/dev/null)" != success ]; then
+            echo "::error::Prometheus at ${addr} does not answer a query, so every canary would abort: $(head -c 300 <<<"$answer")"
+            exit 1
+          fi
+          echo "Prometheus at ${addr} answers ($(jq '.data.result | length' <<<"$answer") targets up/down known)."
+
       # Read-only evidence: how the frontend Deployment was last written. "helm Apply" means
       # Helm used server-side apply, "helm Update" client-side apply. kubectl leaves
       # managedFields out of its output unless --show-managed-fields is given.
