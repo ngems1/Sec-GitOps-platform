@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Waits until an Argo CD Application is Synced and Healthy at a Git revision (or a later
-# commit of main). Fails on a failed sync or after the timeout (default 10 min).
+# commit of main). Fails on a failed sync, on Degraded health at that revision (an aborted
+# Argo Rollouts canary), or after the timeout (ARGOCD_WAIT_SECONDS, default 10 min).
 #   argocd-wait.sh <application> <revision> [checkout of the repo, default gitops-repo]
 # ARGOCD_WAIT_EXACT=1: only <revision> itself counts (a prod rollback moves the promotion
 # branch back, so a later commit of main must not count as reached).
@@ -57,6 +58,19 @@ while :; do
   if reached "$synced" && { [ "$phase" = Failed ] || [ "$phase" = Error ]; }; then
     echo "::error::${app}: sync ${phase} at ${synced:0:12}: $(jq -r '.status.operationState.message // ""' <<<"$status")"
     exit 1
+  fi
+  # Degraded at the wanted revision, twice in a row (not a passing blip): e.g. an Argo
+  # Rollouts canary aborted by its analysis (traffic is already back on stable). A running
+  # canary is Progressing or Suspended (a timed pause), so the wait simply goes on.
+  if reached "$compared" && [ "$sync" = Synced ] && [ "$health" = Degraded ] && [ "$phase" != Running ]; then
+    degraded=$(( ${degraded:-0} + 1 ))
+    if [ "$degraded" -ge 2 ]; then
+      echo "::error::${app} is Degraded at ${compared:0:12} (for an Argo Rollouts canary: aborted, traffic back on stable)."
+      jq -r '.status.resources // [] | .[] | select(.health.status == "Degraded") | "\(.kind)/\(.name): \(.health.message // "")"' <<<"$status"
+      exit 1
+    fi
+  else
+    degraded=0
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "::error::${app} is not Synced and Healthy at ${want:0:12} after ${timeout}s (Argo CD compared ${compared:0:12})."

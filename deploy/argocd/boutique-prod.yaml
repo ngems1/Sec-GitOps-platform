@@ -33,6 +33,33 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: boutique-prod
+  # Argo Rollouts canary of the frontend (ADR 0008): during a rollout the Rollouts controller
+  # sets the traffic weights in the Ingress action annotation and adds the pod-template hash
+  # to the stable and canary Service selectors. Those fields are the controller's, so Argo CD
+  # neither shows them as drift nor puts them back (RespectIgnoreDifferences below). The
+  # frontend Deployment only holds the Rollout's template (workloadRef): the Rollouts
+  # controller scales it to 0, and its replicas are not Argo CD's to restore.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: frontend
+      jsonPointers:
+        - /spec/replicas
+    - group: networking.k8s.io
+      kind: Ingress
+      name: frontend
+      jqPathExpressions:
+        - '.metadata.annotations["alb.ingress.kubernetes.io/actions.frontend"]'
+    - group: ""
+      kind: Service
+      name: frontend
+      jqPathExpressions:
+        - '.spec.selector["rollouts-pod-template-hash"]'
+    - group: ""
+      kind: Service
+      name: frontend-canary
+      jqPathExpressions:
+        - '.spec.selector["rollouts-pod-template-hash"]'
   syncPolicy:
     automated:
       prune: false
@@ -40,3 +67,4 @@ spec:
     syncOptions:
       # The namespace, its labels and the Secrets in it belong to the deploy workflow.
       - CreateNamespace=false
+      - RespectIgnoreDifferences=true

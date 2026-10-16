@@ -2,7 +2,7 @@
 
 | Piece | Where | What it does |
 |---|---|---|
-| **Prometheus** | namespace `monitoring` (kube-prometheus-stack) | Scrapes pods (CPU, memory, restarts, readiness), nodes, and the services that expose `/metrics`: inventoryservice (orders reserved / failed / duplicate, processing time) and productcatalogservice (cache hits / misses, MySQL and Redis errors). 24 h of history. |
+| **Prometheus** | namespace `monitoring` (kube-prometheus-stack) | Scrapes pods (CPU, memory, restarts, readiness), nodes, and the services that expose `/metrics`: inventoryservice (orders reserved / failed / duplicate, processing time) productcatalogservice (cache hits / misses, MySQL and Redis errors) and the frontend (HTTP requests by status code, latency histogram: the Argo Rollouts canary analysis, ADR 0008). 24 h of history. |
 | **Grafana** | same namespace, its own ALB | Dashboards. Data sources: Prometheus, and **CloudWatch** (ALB, SQS, RDS) through a read-only Pod Identity role (`terraform-aws/monitoring.tf`). |
 | **Alerts** | CloudWatch alarms → SNS → Slack `#boutique-alerts` | Unchanged (docs/week3/SLACK.md). Alertmanager is not used. |
 
@@ -72,5 +72,5 @@ Extra cost while running: the 4th node (~$1/day) and Grafana's ALB (~$0.55/day).
 | CloudWatch panels empty | ALB metrics only appear once the shop gets traffic; use a time range of 30 min or more. Re-running deploy restarts Grafana (fresh AWS credentials). |
 | "Datasource prometheus was not found" | The data sources are created by `monitoring/kube-prometheus-stack.values.yaml` (`additionalDataSources`); re-run deploy, it restarts Grafana to load them |
 | Prometheus data source has an empty settings page, "Alerting: Not supported", "Datasource was not found" | Grafana tried to update its bundled plugins at startup and failed on the read-only disk, leaving them stopped. `grafana.ini` > `plugins` > `preinstall_disabled: true` prevents this; check with Actions → cluster-status → `monitoring` (section "plugin / error messages": no "Failed to install plugin") |
-| Application panels empty | Prometheus → Status → Targets: job `kubernetes-pods` should list inventoryservice and productcatalogservice as UP |
+| Application panels empty | Prometheus → Status → Targets: job `kubernetes-pods` should list inventoryservice, productcatalogservice and frontend as UP |
 | Pods `Pending` | Not enough pod slots: the cluster needs its 4th node (see above) |

@@ -1,0 +1,19 @@
+# argo-rollouts Helm chart values (installed by deploy/argocd.sh, namespace argo-rollouts).
+# The controller only: the frontend Rollout and its AnalysisTemplate are in the shop's chart
+# and deployed by Argo CD (ADR 0008). Argo CD shows a Rollout's health and steps natively.
+
+installCRDs: true
+keepCRDs: true # removing the chart must never delete the Rollouts (and the shop with them)
+
+controller:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+dashboard:
+  enabled: false # the Argo CD UI shows the Rollout, its steps and its AnalysisRuns
+
+notifications:
+  secret:
+    create: false # no notification services configured

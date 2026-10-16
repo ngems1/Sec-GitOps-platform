@@ -150,10 +150,27 @@ func main() {
 	r.HandleFunc("/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
 	r.HandleFunc("/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
 
+	// Demo of a failing canary only (metrics.go); 0 = off.
+	fault := faultPercent(os.Getenv("FAULT_INJECT_500_PERCENT"))
+	if fault > 0 {
+		log.Warnf("FAULT_INJECT_500_PERCENT=%d: %d%% of requests are answered with a 500", fault, fault)
+	}
+	metrics := newHTTPMetrics()
+
 	var handler http.Handler = r
+	handler = faultInjection(fault, handler)           // demo: injected 500s
 	handler = &logHandler{log: log, next: handler}     // add logging
 	handler = ensureSessionID(handler)                 // add session ID
+	handler = metrics.middleware(handler)              // add Prometheus metrics (canary analysis)
 	handler = otelhttp.NewHandler(handler, "frontend") // add OTel tracing
+
+	// Metrics on their own port: not behind the Service or the ALB, only Prometheus.
+	if metricsPort := os.Getenv("METRICS_PORT"); metricsPort != "" {
+		go func() {
+			log.Info("serving metrics on " + addr + ":" + metricsPort + "/metrics")
+			log.Fatal(http.ListenAndServe(addr+":"+metricsPort, metrics))
+		}()
+	}
 
 	log.Infof("starting server on " + addr + ":" + srvPort)
 	log.Fatal(http.ListenAndServe(addr+":"+srvPort, handler))

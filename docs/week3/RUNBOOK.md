@@ -219,6 +219,60 @@ change, sessions stay valid. Don't change it in the UI: the next run puts the se
 **Better next step: GitHub SSO (Dex).** Personal GitHub logins instead of one shared password,
 read-only access for viewers, and the local `admin` user turned off (ARGOCD.md, UI).
 
+## 10. Frontend canary (Argo Rollouts) and its demo
+
+The frontend is an Argo Rollout (ADR 0008): a new version gets **20%** of the ALB's traffic, then
+**50%** after 2 minutes, then **100%** after 2 more. A background analysis checks the canary pods
+only (Prometheus): **at least 10 requests in 2 min**, **success rate >= 99%** and **p95 <= 1 s**,
+every 30 s; no data counts as a failure. A second failed
+measurement aborts: traffic goes back to stable at once, the Rollout and the Application turn
+**Degraded**, and the deploy rolls back (dev: tag commit reverted; prod: `env/prod` moved back).
+
+**Needs:** argocd-install has run (it installs the Rollouts controller, namespace `argo-rollouts`),
+and Prometheus runs (deploy workflow, job "monitoring"). Without Prometheus every canary aborts.
+Traffic: a browse-only **loadgenerator** in each namespace (no orders, no cart writes) shops
+through the ALB name (`dev.` / `shop.<domain>`) all the time, ~1.5 requests/s in dev and ~0.8 in
+prod, so the canary always gets its share. Without a domain it cannot reach the ALB, and every
+frontend canary aborts for lack of traffic (the deploy log warns).
+
+### Demo: a good canary
+
+1. Nothing to start: the loadgenerator already sends steady traffic through the ALB. (For a
+   busier demo, Actions > **load-test** adds shoppers, but it calls the in-cluster Service, so
+   its requests reach stable pods only.)
+2. Actions > **deploy** > Run workflow: `image_tag` = another existing tag (the previous one, from
+   the shop footer or Helm/Argo CD history), `target = dev-only`. Any frontend change does it.
+3. Watch it in the Argo CD UI (https://argocd.&lt;domain&gt;, section 9) > `boutique-dev` > the
+   **Rollout `frontend`**: its two ReplicaSets (stable, canary), the **AnalysisRun** (each
+   measurement, green or red), and the step in progress (the Rollout shows Suspended during a pause).
+   The weights are in the Ingress `frontend`, annotation `alb.ingress.kubernetes.io/actions.frontend`.
+4. After ~6 minutes: Rollout Healthy, the deploy's "Wait for Argo CD" passes, then the smoke test.
+
+### Demo: a failing canary, rolled back by itself
+
+1. On a branch, set in `helm-chart/values-dev.yaml`:
+   ```yaml
+   frontend:
+     faultInject500Percent: 30   # 30% of requests answered with a 500 (health checks never)
+   ```
+   Open the PR, merge it (prod never gets it: the prod promotion needs dev Synced and Healthy).
+2. The loadgenerator keeps shopping through the ALB. Argo CD syncs `main`: the canary pods start, pass
+   their readiness probes (health checks are not faulted) and get 20% of the traffic.
+3. Within about a minute the AnalysisRun's `success-rate` is ~0.7, below 0.99: two failed
+   measurements and the Rollout is **aborted**. Traffic is 100% stable again; the Rollout and
+   `boutique-dev` are Degraded. The deploy run that the merge started fails at "Wait for Argo CD"
+   ("Degraded ... aborted") and reverts its tag commit.
+4. **Clean up:** revert the PR. Argo CD syncs the stable template back and the Rollout is Healthy.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "The Argo Rollouts CRDs are missing" (deploy-env) | argocd-install has not run since Rollouts were added | Run argocd-install, re-run the deploy |
+| AnalysisRun "Error", canary aborted every time | Prometheus is not reachable (`prometheus-operated.monitoring`) | Install monitoring (deploy workflow, GRAFANA_ADMIN_PASSWORD), then deploy again |
+| Canary aborted, AnalysisRun red on `request-volume` | The canary got fewer than 10 requests in 2 min: loadgenerator not running, or no domain (it then shops in-cluster, stable only) | `cluster-status`: is `loadgenerator` running? Check `gitops/<env>/values.yaml` has `loadGenerator.frontendUrl` |
+| Canary aborted, AnalysisRun red on `p95-latency` | The new version is slower than 1 s at p95 under load | Look at the frontend's dependencies (Grafana); `frontend.canary.analysis.maxP95Seconds` is the threshold |
+| "Wait for Argo CD" times out while the Rollout is Progressing | Canary pods not becoming ready (image pull, crash) | `cluster-status`; `progressDeadlineAbort` aborts it after 10 min |
+| Argo CD shows the Ingress or Services OutOfSync during a canary | `ignoreDifferences` missing (the Applications were not re-applied) | Run argocd-install (it re-applies both Applications) |
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |

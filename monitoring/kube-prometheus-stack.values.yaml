@@ -4,7 +4,8 @@
 #   Prometheus  scrapes the cluster: pods (CPU, memory, restarts, readiness through
 #               kube-state-metrics and the kubelet), nodes (node-exporter) and the
 #               services that expose /metrics (prometheus.io/* pod annotations:
-#               inventoryservice, productcatalogservice).
+#               inventoryservice, productcatalogservice, frontend: frontend_http_*, used
+#               by the Argo Rollouts canary analysis, ADR 0008).
 #   Grafana     dashboards: the "Boutique" dashboard (monitoring/dashboards) plus the
 #               chart's Kubernetes dashboards. Data sources: Prometheus, and CloudWatch
 #               (ALB, SQS, RDS) through a read-only Pod Identity role (terraform-aws/monitoring.tf).
@@ -63,6 +64,10 @@ prometheus:
             target_label: namespace
           - source_labels: [__meta_kubernetes_pod_label_app]
             target_label: app
+          # Argo Rollouts: which ReplicaSet (stable or canary) a pod belongs to, so the
+          # frontend canary analysis can measure the canary pods alone.
+          - source_labels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash]
+            target_label: rollouts_pod_template_hash
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
 

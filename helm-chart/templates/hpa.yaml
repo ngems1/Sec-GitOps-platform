@@ -14,8 +14,15 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   scaleTargetRef:
+    {{- if and (eq $name $.Values.frontend.name) $.Values.frontend.canary.enabled }}
+    # The frontend runs as an Argo Rollout (frontend-rollout.yaml): scale the Rollout, not
+    # the Deployment it takes its template from (that one is kept at 0).
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    {{- else }}
     apiVersion: apps/v1
     kind: Deployment
+    {{- end }}
     name: {{ $name }}
   minReplicas: {{ $range.min }}
   maxReplicas: {{ $range.max }}

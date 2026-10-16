@@ -1,4 +1,5 @@
 {{- if and .Values.frontend.create .Values.frontend.ingress.enabled }}
+{{- $canaryAlb := and .Values.frontend.canary.enabled (eq .Values.frontend.canary.trafficRouter "alb") }}
 # Week 3: public entry point on AWS. The AWS Load Balancer Controller (kube-system)
 # sees this Ingress and creates one internet-facing ALB for this namespace,
 # named after the namespace (boutique-dev / boutique-prod).
@@ -22,6 +23,12 @@ metadata:
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
     {{- end }}
+    {{- if $canaryAlb }}
+    # Argo Rollouts canary (frontend-rollout.yaml): the backend below is this forward action,
+    # whose weights the Rollouts controller sets (stable / canary target groups). The value
+    # here is only the start: 100% stable. Argo CD ignores later changes to it.
+    alb.ingress.kubernetes.io/actions.{{ .Values.frontend.name }}: {{ printf "{\"type\":\"forward\",\"forwardConfig\":{\"targetGroups\":[{\"serviceName\":\"%s\",\"servicePort\":\"80\",\"weight\":100}]}}" .Values.frontend.name | squote }}
+    {{- end }}
     {{- with .Values.frontend.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -36,5 +43,9 @@ spec:
           service:
             name: {{ .Values.frontend.name }}
             port:
+              {{- if $canaryAlb }}
+              name: use-annotation
+              {{- else }}
               number: 80
+              {{- end }}
 {{- end }}

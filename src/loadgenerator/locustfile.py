@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import random
 from locust import HttpUser, TaskSet, between
 
@@ -69,12 +70,20 @@ class UserBehavior(TaskSet):
     def on_start(self):
         index(self)
 
-    tasks = {index: 1,
-        setCurrency: 2,
-        browseProduct: 10,
-        addToCart: 2,
-        viewCart: 3,
-        checkout: 1}
+    # LOADGEN_BROWSE_ONLY=true: read-only shoppers (no cart writes, no orders), for the
+    # steady traffic the frontend canary analysis needs in dev and prod (ADR 0008).
+    if os.environ.get("LOADGEN_BROWSE_ONLY", "").lower() == "true":
+        tasks = {index: 1,
+            setCurrency: 2,
+            browseProduct: 10,
+            viewCart: 3}
+    else:
+        tasks = {index: 1,
+            setCurrency: 2,
+            browseProduct: 10,
+            addToCart: 2,
+            viewCart: 3,
+            checkout: 1}
 
 class WebsiteUser(HttpUser):
     tasks = [UserBehavior]

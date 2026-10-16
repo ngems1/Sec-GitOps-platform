@@ -33,4 +33,6 @@ COPY locustfile.py .
 # enable gevent support in debugger
 ENV GEVENT_SUPPORT=True
 
-ENTRYPOINT locust --host="http://${FRONTEND_ADDR}" --headless -u "${USERS:-10}" 2>&1
+# FRONTEND_URL (full URL, e.g. https://dev.example.com through the ALB) wins over
+# FRONTEND_ADDR (host:port, plain http inside the cluster).
+ENTRYPOINT locust --host="${FRONTEND_URL:-http://${FRONTEND_ADDR}}" --headless -u "${USERS:-10}" 2>&1

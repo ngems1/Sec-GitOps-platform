@@ -17,6 +17,7 @@ merge to main ──► deploy: build, scan, DB migrations
 | `.github/workflows/argocd-install.yml` | Manual. Installs or updates Argo CD, the repository credential, the project and the Applications (each once Git describes its environment) |
 | `deploy/argocd.sh` | The install steps (called by the workflow) |
 | `deploy/argocd-ui.sh`, `deploy/argocd/ingress.yaml` | The UI: admin password from `ARGOCD_ADMIN_PASSWORD`, HTTPS Ingress at `argocd.<domain>` limited to `ARGOCD_ALLOWED_CIDR` |
+| `deploy/argo-rollouts/values.yaml` | Argo Rollouts controller (namespace `argo-rollouts`, chart pinned in `argocd-install.yml`), installed before the Applications. The frontend Rollout itself is in the chart (`helm-chart/templates/frontend-rollout.yaml`, ADR 0008); both Applications ignore the fields the Rollouts controller sets during a canary |
 | `deploy/argocd/values.yaml` | Argo CD settings: no Dex, no notifications, server in plain HTTP behind the ALB (`server.insecure`), no Service of type LoadBalancer |
 | `deploy/argocd/project.yaml` | Project `boutique`: only this repository, only `boutique-dev` and `boutique-prod`, no cluster-wide objects (the namespace's PriorityClass is applied by `deploy-env.yml`, like the namespace itself; ADR 0006) |
 | `deploy/argocd/boutique-dev.yaml` | Application `boutique-dev`: `helm-chart/` with `values-aws.yaml`, `values-dev.yaml`, `gitops/dev/values.yaml`; automated sync with prune and self-heal |

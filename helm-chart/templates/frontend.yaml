@@ -13,6 +13,10 @@ metadata:
   {{- end }}
 ---
 {{- end }}
+# With frontend.canary.enabled this Deployment only holds the pod template: the Rollout
+# "frontend" (frontend-rollout.yaml) points at it (workloadRef), runs the pods and scales
+# this Deployment down to 0 (Argo CD ignores its replicas). Its pods, labels and guardrails
+# stay exactly the same.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -28,6 +32,10 @@ spec:
         app: {{ .Values.frontend.name }}
       annotations:
         sidecar.istio.io/rewriteAppHTTPProbers: "true"
+        # HTTP metrics for Prometheus (namespace "monitoring"), used by the canary analysis.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.frontend.metrics.port | quote }}
+        prometheus.io/path: "/metrics"
     spec:
       {{- if .Values.serviceAccounts.create }}
       serviceAccountName: {{ .Values.frontend.name }}
@@ -56,6 +64,8 @@ spec:
           image: {{ .Values.images.repository }}/{{ .Values.frontend.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
           ports:
           - containerPort: 8080
+          - name: metrics
+            containerPort: {{ .Values.frontend.metrics.port }}
           readinessProbe:
             timeoutSeconds: 3
             initialDelaySeconds: 10
@@ -86,6 +96,13 @@ spec:
           env:
           - name: PORT
             value: "8080"
+          - name: METRICS_PORT
+            value: {{ .Values.frontend.metrics.port | quote }}
+          {{- if gt (int .Values.frontend.faultInject500Percent) 0 }}
+          # Demo of a failing canary only (docs/week3/RUNBOOK.md section 10).
+          - name: FAULT_INJECT_500_PERCENT
+            value: {{ .Values.frontend.faultInject500Percent | quote }}
+          {{- end }}
           - name: PRODUCT_CATALOG_SERVICE_ADDR
             value: "{{ .Values.productCatalogService.name }}:3550"
           - name: CURRENCY_SERVICE_ADDR
@@ -192,6 +209,14 @@ spec:
      - port: 8080
        protocol: TCP
   {{- end }}
+  # Metrics: Prometheus in the monitoring namespace only.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+    ports:
+    - port: {{ .Values.frontend.metrics.port }}
+      protocol: TCP
   egress:
   - {}
 {{- end }}
