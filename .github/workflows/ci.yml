@@ -60,6 +60,16 @@ jobs:
         run: |
           pip install --quiet pymysql==1.1.1
           python -m unittest -v
+      # Same Python as the image, with the pinned runtime installed: the generated gRPC code
+      # (demo_pb2*.py) must load with protobuf and grpcio from requirements.txt.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: shoppingassistantservice (fake Bedrock and catalog, pinned runtime)
+        working-directory: src/shoppingassistantservice
+        run: |
+          python -m pip install --quiet -r requirements.txt
+          python -m unittest -v
 
   # The Go and C# unit tests (they existed but never ran in CI).
   go-tests:
