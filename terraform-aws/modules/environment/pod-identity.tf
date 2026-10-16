@@ -2,6 +2,7 @@
 # Each role is linked to ONE service account in THIS environment's namespace, and
 # every statement also requires the caller's namespace tag to match (ABAC), so a
 # dev pod can never act on prod resources. Services not listed get no AWS access.
+# shoppingassistantservice: Bedrock, one model (ADR 0009).
 
 data "aws_iam_policy_document" "pod_trust" {
   statement {
@@ -77,6 +78,10 @@ locals {
     # Notification service: consumes notification-q, logs every message sent, and
     # sends real emails through SES when a sender is configured (ses.tf).
     emailservice = var.ses_from_address == "" ? jsonencode(local.emailservice_base) : jsonencode(concat(local.emailservice_base, local.emailservice_ses))
+
+    # AI shopping assistant (ADR 0009): invoke exactly one Bedrock model (Converse is
+    # authorized by bedrock:InvokeModel; no streaming, no listing, no Marketplace).
+    shoppingassistantservice = local.sa.use_inference_profile ? jsonencode(local.shopping_assistant_profile) : jsonencode(local.shopping_assistant_direct)
   }
 }
 
@@ -140,6 +145,49 @@ locals {
         StringEquals = {
           "aws:PrincipalTag/kubernetes-namespace" = var.namespace
           "ses:FromAddress"                       = var.ses_from_address
+        }
+      }
+    },
+  ]
+}
+
+# shoppingassistantservice statements. On-demand: the foundation model in this region only.
+# Through the US inference profile: the profile, plus the model in each region the profile
+# routes to, usable only through that profile. Each variant is encoded on its own (they
+# have different shapes), like the emailservice SES part.
+locals {
+  sa                       = var.shopping_assistant
+  sa_model_arn             = "arn:aws:bedrock:${local.sa.region}::foundation-model/${local.sa.model_id}"
+  sa_profile_arn           = "arn:aws:bedrock:${local.sa.region}:${local.sa.account_id}:inference-profile/us.${local.sa.model_id}"
+  sa_profile_route_regions = ["us-east-1", "us-east-2", "us-west-2"]
+
+  shopping_assistant_direct = [
+    {
+      Sid       = "InvokeShoppingModel"
+      Effect    = "Allow"
+      Action    = "bedrock:InvokeModel"
+      Resource  = local.sa_model_arn
+      Condition = local.this_namespace_only
+    },
+  ]
+
+  shopping_assistant_profile = [
+    {
+      Sid       = "InvokeShoppingModelProfile"
+      Effect    = "Allow"
+      Action    = "bedrock:InvokeModel"
+      Resource  = local.sa_profile_arn
+      Condition = local.this_namespace_only
+    },
+    {
+      Sid      = "InvokeShoppingModelThroughProfile"
+      Effect   = "Allow"
+      Action   = "bedrock:InvokeModel"
+      Resource = [for r in local.sa_profile_route_regions : "arn:aws:bedrock:${r}::foundation-model/${local.sa.model_id}"]
+      Condition = {
+        StringEquals = {
+          "aws:PrincipalTag/kubernetes-namespace" = var.namespace
+          "bedrock:InferenceProfileArn"           = local.sa_profile_arn
         }
       }
     },

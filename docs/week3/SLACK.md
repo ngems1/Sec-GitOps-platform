@@ -5,7 +5,7 @@ Two kinds of messages, in **two separate channels**, each with its own incoming 
 | Channel | What | From | GitHub secret |
 |---|---|---|---|
 | `#boutique-deploys` | **Pipeline:** build, dev deployed, prod waiting for approval, prod deployed, isolation test, infra apply/destroy | GitHub Actions, `deploy/notify-slack.sh` | `SLACK_WEBHOOK_URL` |
-| `#boutique-alerts` | **AWS alarms** (dev and prod): a dead-letter queue has messages, a queue is backing up, the order-status Lambda fails; **GuardDuty findings** with severity >= 7 | CloudWatch → SNS → `slack-alerts` Lambda (`terraform-aws/slack.tf`); GuardDuty → EventBridge → the same Lambda (`terraform-aws/security-alerts.tf`) | `SLACK_ALERTS_WEBHOOK_URL` |
+| `#boutique-alerts` | **AWS alarms** (dev and prod): a dead-letter queue has messages, a queue is backing up, the order-status Lambda fails; **GuardDuty findings** with severity >= 7; the **Bedrock daily budget** of the shopping assistant (50% and 100%) | CloudWatch → SNS → `slack-alerts` Lambda (`terraform-aws/slack.tf`); GuardDuty → EventBridge → the same Lambda (`terraform-aws/security-alerts.tf`) | `SLACK_ALERTS_WEBHOOK_URL` |
 
 Both are optional. Until a secret is set, its messages aren't sent and nothing fails.
 

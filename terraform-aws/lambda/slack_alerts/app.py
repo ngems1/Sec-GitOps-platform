@@ -95,6 +95,16 @@ def guardduty_message(event):
     }
 
 
+def budget_alarm(text):
+    """AWS Budgets notifications are plain text ("AWS Budget Notification ..."): show them as
+    a red alarm (the Bedrock daily budget of the shopping assistant, ADR 0009). None otherwise."""
+    if not text.startswith("AWS Budget Notification"):
+        return None
+    return {"AlarmName": "AWS Budget (Bedrock daily)", "NewStateValue": "ALARM", "OldStateValue": "OK",
+            "AlarmDescription": "The shopping assistant's Bedrock cost passed a budget threshold today.",
+            "NewStateReason": text[:1500]}
+
+
 def payloads(event):
     """One Slack payload per alarm (SNS records) or for the GuardDuty finding (EventBridge)."""
     if event.get("source") == "aws.guardduty":
@@ -105,7 +115,7 @@ def payloads(event):
         try:
             alarm = json.loads(raw)
         except json.JSONDecodeError:
-            alarm = {"AlarmName": "SNS message", "NewStateValue": "INSUFFICIENT_DATA", "NewStateReason": raw}
+            alarm = budget_alarm(raw) or {"AlarmName": "SNS message", "NewStateValue": "INSUFFICIENT_DATA", "NewStateReason": raw}
         out.append(slack_message(alarm))
     return out
 

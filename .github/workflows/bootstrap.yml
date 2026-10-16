@@ -9,6 +9,7 @@ name: bootstrap
 #   - this project's audit baseline: its CloudTrail trail (Object Lock bucket, KMS key) and
 #     AWS Config rules. GuardDuty, the Config recorder and Security Hub are shared with
 #     another project in this account: never imported or changed here (ADR 0003).
+#   - the Bedrock daily budget of the AI shopping assistant and its SNS topic (ADR 0009)
 #
 # It signs in with a "bootstrap" role you create once by hand (docs/week3/BOOTSTRAP.md),
 # because the roles it creates don't exist yet. The job runs in the protected "prod"
@@ -179,7 +180,7 @@ jobs:
             echo
             echo "| Variable | Value |"
             echo "|---|---|"
-            for name in AWS_REGION AWS_PLAN_ROLE_ARN AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET; do
+            for name in AWS_REGION AWS_PLAN_ROLE_ARN AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET BUDGET_ALERTS_TOPIC_ARN; do
               echo "| \`${name}\` | \`$(jq -r ".${name}.value" <<<"$out")\` |"
             done
           } >> "$GITHUB_STEP_SUMMARY"

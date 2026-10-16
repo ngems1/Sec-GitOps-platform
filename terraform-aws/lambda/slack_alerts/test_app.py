@@ -65,6 +65,18 @@ class SlackAlertsTest(unittest.TestCase):
                     get_url=lambda: "https://hooks.slack.com/services/x", send=lambda u, p: sent.append(p))
         self.assertIn("plain text", sent[0]["attachments"][0]["text"])
 
+    def test_budget_notification(self):
+        sent = []
+        text = ("AWS Budget Notification October 16, 2026\nAWS Account 111122223333\n\n"
+                "You requested that we alert you when the ACTUAL Cost associated with your "
+                "week3-boutique-bedrock-daily budget is greater than $0.50 for the current day.")
+        app.handler(sns_event(text), None,
+                    get_url=lambda: "https://hooks.slack.com/services/x", send=lambda u, p: sent.append(p))
+        self.assertIn("ALARM: AWS Budget (Bedrock daily)", sent[0]["text"])
+        self.assertEqual(sent[0]["attachments"][0]["color"], app.COLORS["ALARM"])
+        self.assertIn("week3-boutique-bedrock-daily", sent[0]["attachments"][0]["text"])
+        self.assertIsNone(app.budget_alarm("something else"))
+
     def test_guardduty_message(self):
         msg = app.guardduty_message(GUARDDUTY)
         self.assertIn("GuardDuty HIGH: Credentials for an EC2 instance role", msg["text"])

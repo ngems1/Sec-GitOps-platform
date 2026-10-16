@@ -85,6 +85,7 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 
 | Symptom | Fix |
 |---|---|
+| `#boutique-alerts`: "ALARM: AWS Budget (Bedrock daily)" | The shopping assistant's Bedrock cost passed 50% or 100% of `bedrock_daily_budget_usd` (terraform-bootstrap) today. AWS updates budget costs a few times a day, so it can be hours late; the assistant's own daily question cap stops it, not the budget | Check the assistant's request and token metrics (Grafana). Expected (a demo): ignore or raise `bedrock_daily_budget_usd` and run bootstrap. Unexpected: lower the daily cap or turn the assistant off in the values (`shoppingAssistant.create: false`) |
 | Grafana URL times out | Your IP isn't in `MONITORING_ALLOWED_CIDR` (a comma-separated list: add it, re-run deploy), or the ALB is still starting |
 | Grafana 503 / restarts | cluster-status → `monitoring`. It was `OOMKilled` at 384Mi; the limit is 768Mi |
 | "Datasource prometheus was not found", empty Prometheus settings | Bundled plugins broke on the read-only disk; `preinstall_disabled: true` in `grafana.ini` must stay |

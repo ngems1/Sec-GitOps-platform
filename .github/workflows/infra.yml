@@ -35,6 +35,7 @@ env:
   TF_VAR_admin_principal_arn: ${{ vars.ADMIN_PRINCIPAL_ARN }}
   TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }} # HTTPS: empty = plain http ALB addresses
   TF_VAR_ses_recipients: ${{ vars.SES_RECIPIENTS }} # order emails: verified recipients (SES sandbox)
+  TF_VAR_budget_alerts_topic_arn: ${{ vars.BUDGET_ALERTS_TOPIC_ARN }} # Bedrock daily budget alerts to Slack (bootstrap output; empty = off)
   TF_IN_AUTOMATION: "true"
 
 jobs:

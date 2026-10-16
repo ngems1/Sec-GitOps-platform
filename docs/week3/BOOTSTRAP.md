@@ -83,7 +83,7 @@ If it already exists, skip this step: only one is allowed per account.
 1. **Actions > bootstrap > Run workflow**, with **apply unchecked**. If `prod` has a reviewer, approve the run. Open the run's **Summary** and read the plan: it should create the bucket and 2 roles.
 2. **Run workflow** again, with **apply checked**. Approve the run.
 3. The run's **Summary** ends with a table. Add each line as a **repository variable**:
-   `AWS_PLAN_ROLE_ARN`, `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`. `AWS_REGION` is already set.
+   `AWS_PLAN_ROLE_ARN`, `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `BUDGET_ALERTS_TOPIC_ARN` (the Bedrock daily budget topic: once set, the next `infra` apply sends its alerts to Slack). `AWS_REGION` is already set.
 
 Then continue with SETUP.md step 5 (`infra` > `apply`).
 

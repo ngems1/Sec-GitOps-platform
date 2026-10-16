@@ -64,3 +64,13 @@ variable "ses_identity_arns" {
   type        = list(string)
   default     = []
 }
+
+variable "shopping_assistant" {
+  description = "AI shopping assistant (ADR 0009): the one Bedrock model its Pod Identity role may invoke, and whether through the US cross-region inference profile."
+  type = object({
+    model_id              = string
+    use_inference_profile = bool
+    region                = string
+    account_id            = string
+  })
+}

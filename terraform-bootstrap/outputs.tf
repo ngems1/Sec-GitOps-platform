@@ -25,3 +25,8 @@ output "audit_bucket" {
 output "cloudtrail_trail" {
   value = aws_cloudtrail.main.name
 }
+
+# GitHub repository variable: terraform-aws subscribes the slack-alerts Lambda to it.
+output "BUDGET_ALERTS_TOPIC_ARN" {
+  value = aws_sns_topic.budget_alerts.arn
+}

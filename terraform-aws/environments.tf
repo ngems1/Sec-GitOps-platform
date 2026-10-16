@@ -36,4 +36,12 @@ module "env" {
   # Order emails (ses.tf): emailservice may send as this address only.
   ses_from_address  = local.ses_from
   ses_identity_arns = concat(aws_sesv2_email_identity.domain[*].arn, [for r in aws_sesv2_email_identity.recipient : r.arn])
+
+  # AI shopping assistant (ADR 0009): its role may invoke this one Bedrock model only.
+  shopping_assistant = {
+    model_id              = var.shopping_assistant_model_id
+    use_inference_profile = var.shopping_assistant_use_inference_profile
+    region                = var.region
+    account_id            = data.aws_caller_identity.current.account_id
+  }
 }
