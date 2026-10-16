@@ -46,7 +46,8 @@ spec:
         seccompProfile:
           type: {{ .Values.seccompProfile.type }}
         {{- end }}
-      {{- if .Values.loadGenerator.checkFrontendInitContainer }}
+      {{- /* The in-cluster check only makes sense for the in-cluster address. */}}
+      {{- if and .Values.loadGenerator.checkFrontendInitContainer (not .Values.loadGenerator.frontendUrl) }}
       initContainers:
       - command:
         - /bin/sh
@@ -84,8 +85,19 @@ spec:
         env:
         - name: FRONTEND_ADDR
           value: "{{ .Values.frontend.name }}:80"
+        {{- with .Values.loadGenerator.frontendUrl }}
+        # Through the ALB (dev.<domain> / shop.<domain>): the only path where a canary gets its
+        # share of the traffic (ADR 0008). Set by deploy-env.yml from the Terraform outputs.
+        - name: FRONTEND_URL
+          value: {{ . | quote }}
+        {{- end }}
         - name: USERS
-          value: "10"
+          value: {{ .Values.loadGenerator.users | quote }}
+        {{- if .Values.loadGenerator.browseOnly }}
+        # Read-only shoppers: no cart writes, no orders, no stock or Slack side effects.
+        - name: LOADGEN_BROWSE_ONLY
+          value: "true"
+        {{- end }}
         resources:
           {{- toYaml .Values.loadGenerator.resources | nindent 10 }}
 {{- if .Values.networkPolicies.create }}

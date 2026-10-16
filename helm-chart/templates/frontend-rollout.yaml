@@ -1,0 +1,131 @@
+{{- /*
+Argo Rollouts canary for the frontend (ADR 0008). The Rollout takes its pod template from
+the frontend Deployment (workloadRef), so pods, labels and guardrails (PriorityClass,
+resources, spread, preStop, securityContext) are the same object, and scales that
+Deployment down progressively while its own pods become ready: the migration replaces
+each pod once, without a gap.
+
+Traffic: the ALB of the frontend Ingress (AWS Load Balancer Controller) forwards to two
+weighted target groups, "frontend" (stable) and "frontend-canary"; the Rollouts controller
+sets the weights in the Ingress action annotation. Only trafficRouter "alb" exists today;
+Istio (D-05) would replace the "alb" block with "istio" and a VirtualService.
+
+Every step is time-limited (never an indefinite pause), and a background analysis on the
+canary pods aborts the rollout when the success rate or p95 latency is off: traffic goes
+back to stable and the Rollout (and the Argo CD Application) turns Degraded.
+*/ -}}
+{{- if and .Values.frontend.create .Values.frontend.canary.enabled }}
+{{- if and (eq .Values.frontend.canary.trafficRouter "alb") (not .Values.frontend.ingress.enabled) }}
+{{- fail "frontend.canary.trafficRouter=alb needs frontend.ingress.enabled" }}
+{{- end }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # No replicas: the frontend HorizontalPodAutoscaler scales this Rollout (templates/hpa.yaml).
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: {{ .Values.frontend.name }}
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.frontend.name }}
+    scaleDown: progressively
+  # A canary that cannot become ready is aborted after 10 min instead of waiting forever.
+  progressDeadlineSeconds: 600
+  progressDeadlineAbort: true
+  strategy:
+    canary:
+      stableService: {{ .Values.frontend.name }}
+      canaryService: {{ .Values.frontend.name }}-canary
+      {{- if eq .Values.frontend.canary.trafficRouter "alb" }}
+      trafficRouting:
+        alb:
+          ingress: {{ .Values.frontend.name }}
+          servicePort: 80
+      {{- end }}
+      {{- if .Values.frontend.canary.analysis.enabled }}
+      analysis:
+        templates:
+        - templateName: {{ .Values.frontend.name }}-canary
+        startingStep: 1 # once the canary has its first share of traffic
+        args:
+        - name: canary-hash
+          valueFrom:
+            podTemplateHashValue: Latest
+        - name: namespace
+          value: {{ .Release.Namespace }}
+      {{- end }}
+      steps:
+        {{- toYaml .Values.frontend.canary.steps | nindent 8 }}
+---
+# The canary half of the traffic split. The Rollouts controller adds
+# rollouts-pod-template-hash to this selector (and to the stable Service's) during a rollout.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.frontend.name }}-canary
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.frontend.name }}
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+{{- if .Values.frontend.canary.analysis.enabled }}
+---
+# Measured on the canary pods only (rollouts_pod_template_hash label, added by the
+# Prometheus scrape config in monitoring/kube-prometheus-stack.values.yaml). No data is a
+# failure, never a pass: "request-volume" fails when the canary saw fewer than minRequests
+# requests in the window, and the other two fail when they have nothing to measure. Steady
+# traffic through the ALB comes from the loadgenerator (values-aws.yaml, browse only).
+# initialDelay covers the first scrapes (30 s) and the 1-minute rate window.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Values.frontend.name }}-canary
+  namespace: {{ .Release.Namespace }}
+spec:
+  args:
+  - name: canary-hash
+  - name: namespace
+  metrics:
+  - name: request-volume
+    interval: {{ .Values.frontend.canary.analysis.interval }}
+    initialDelay: {{ .Values.frontend.canary.analysis.initialDelay }}
+    failureLimit: {{ .Values.frontend.canary.analysis.failureLimit }}
+    successCondition: len(result) > 0 && !isNaN(result[0]) && result[0] >= {{ .Values.frontend.canary.analysis.minRequests }}
+    provider:
+      prometheus:
+        address: {{ .Values.frontend.canary.analysis.prometheusAddress }}
+        query: |
+          sum(increase(frontend_http_requests_total{namespace="{{ "{{" }}args.namespace{{ "}}" }}",rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}"}[{{ .Values.frontend.canary.analysis.volumeWindow }}]))
+  - name: success-rate
+    interval: {{ .Values.frontend.canary.analysis.interval }}
+    initialDelay: {{ .Values.frontend.canary.analysis.initialDelay }}
+    failureLimit: {{ .Values.frontend.canary.analysis.failureLimit }}
+    successCondition: len(result) > 0 && !isNaN(result[0]) && result[0] >= {{ .Values.frontend.canary.analysis.minSuccessRate }}
+    provider:
+      prometheus:
+        address: {{ .Values.frontend.canary.analysis.prometheusAddress }}
+        query: |
+          sum(rate(frontend_http_requests_total{namespace="{{ "{{" }}args.namespace{{ "}}" }}",rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}",code!~"5.."}[1m]))
+          /
+          sum(rate(frontend_http_requests_total{namespace="{{ "{{" }}args.namespace{{ "}}" }}",rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}"}[1m]))
+  - name: p95-latency
+    interval: {{ .Values.frontend.canary.analysis.interval }}
+    initialDelay: {{ .Values.frontend.canary.analysis.initialDelay }}
+    failureLimit: {{ .Values.frontend.canary.analysis.failureLimit }}
+    successCondition: len(result) > 0 && !isNaN(result[0]) && result[0] <= {{ .Values.frontend.canary.analysis.maxP95Seconds }}
+    provider:
+      prometheus:
+        address: {{ .Values.frontend.canary.analysis.prometheusAddress }}
+        query: |
+          histogram_quantile(0.95, sum by (le) (rate(frontend_http_request_duration_seconds_bucket{namespace="{{ "{{" }}args.namespace{{ "}}" }}",rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}"}[1m])))
+{{- end }}
+{{- end }}

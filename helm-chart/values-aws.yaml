@@ -27,6 +27,8 @@ frontend:
   platform: aws
   ingress:
     enabled: true          # ...an ALB from the Ingress instead (templates/ingress.yaml)
+  canary:
+    enabled: true          # Argo Rollouts canary through the ALB (ADR 0008), dev and prod
 
 redisAuth:
   tls: true                # ElastiCache requires TLS (transit_encryption_mode = required)
@@ -41,7 +43,15 @@ inventoryService:
   create: true             # table, queue and bus names set by the workflow
 
 loadGenerator:
-  create: false            # set true in a values file to simulate shoppers
+  # Steady, read-only shoppers through the ALB (frontendUrl, written by deploy-env.yml into
+  # gitops/<env>/values.yaml), so the frontend canary analysis always has traffic to judge
+  # (ADR 0008). No orders, no cart writes. ~1.5 requests/s in dev; prod: values-prod.yaml.
+  create: true
+  browseOnly: true
+  users: 10
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
 
 # Week 3: autoscaling (templates/hpa.yaml). The stress test showed single pods capped by
 # their CPU limit while the nodes were only ~40% busy: these services get more replicas

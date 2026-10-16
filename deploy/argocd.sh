@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Installs or updates Argo CD in namespace "argocd" and points it at this repository:
 #   1. the argo-cd Helm chart (deploy/argocd/values.yaml): no Dex, no notifications;
+#      the argo-rollouts controller (deploy/argo-rollouts/values.yaml, namespace argo-rollouts);
 #      then the UI (deploy/argocd-ui.sh): admin password, HTTPS Ingress at argocd.<domain>
 #      limited to ARGOCD_ALLOWED_CIDR (docs/week3/ARGOCD.md)
 #   2. the repository credential: a read-only GitHub deploy key, copied from AWS Secrets
@@ -11,10 +12,11 @@
 #      gitops/prod/values.yaml holds an image tag (written by an approved prod deploy)
 # Needs kubectl + helm on the cluster, a full checkout of main, and:
 #   ARGOCD_CHART_VERSION   argo-cd chart version
+#   ARGO_ROLLOUTS_CHART_VERSION  argo-rollouts chart version (pinned in argocd-install.yml)
 #   REPO_URL               SSH URL of this repository (git@github.com:<owner>/<repo>.git)
 #   REPO_KEY_SECRET_ARN    Secrets Manager secret with the deploy key's private half
 set -euo pipefail
-: "${ARGOCD_CHART_VERSION:?}" "${REPO_URL:?}" "${REPO_KEY_SECRET_ARN:?}"
+: "${ARGOCD_CHART_VERSION:?}" "${ARGO_ROLLOUTS_CHART_VERSION:?}" "${REPO_URL:?}" "${REPO_KEY_SECRET_ARN:?}"
 NS=argocd
 export REPO_URL
 
@@ -26,6 +28,14 @@ helm upgrade --install argo-cd argo-cd \
   --namespace "$NS" -f deploy/argocd/values.yaml \
   --rollback-on-failure --timeout 10m
 echo "argo-cd: $(helm -n "$NS" list -f '^argo-cd$' -o json | jq -r '.[0].chart + " (Argo CD " + .[0].app_version + ")"')"
+
+# 1a) Argo Rollouts controller and CRDs (frontend canary, ADR 0008), before any Application
+#     that contains a Rollout is synced.
+helm upgrade --install argo-rollouts argo-rollouts \
+  --repo https://argoproj.github.io/argo-helm --version "$ARGO_ROLLOUTS_CHART_VERSION" \
+  --namespace argo-rollouts --create-namespace -f deploy/argo-rollouts/values.yaml \
+  --rollback-on-failure --timeout 10m
+echo "argo-rollouts: $(helm -n argo-rollouts list -f '^argo-rollouts$' -o json | jq -r '.[0].chart + " (Argo Rollouts " + .[0].app_version + ")"')"
 
 # 1b) The UI: admin password and the HTTPS Ingress at argocd.<domain> (both optional).
 #     Before the Applications, so the UI works even if a wait below fails.

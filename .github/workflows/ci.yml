@@ -177,6 +177,19 @@ jobs:
             fi
             grep -q "priorityClassName: boutique-${env}" "rendered-${env}.yaml" \
               || { echo "::error::${env}: pods do not use the boutique-${env} PriorityClass"; exit 1; }
+            # Frontend canary (ADR 0008): the Rollout, its analysis and canary Service, the
+            # Ingress backend on the Rollouts-managed action, and the HPA on the Rollout.
+            for kind in Rollout AnalysisTemplate; do
+              grep -q "^kind: ${kind}$" "rendered-${env}.yaml" \
+                || { echo "::error::${env}: no ${kind} rendered"; exit 1; }
+            done
+            for want in "name: frontend-canary" "name: use-annotation" "alb.ingress.kubernetes.io/actions.frontend:" "kind: Rollout" "scaleDown: progressively"; do
+              grep -q "$want" "rendered-${env}.yaml" \
+                || { echo "::error::${env}: frontend canary: '${want}' not rendered"; exit 1; }
+            done
+            if grep -q "pause: {}" "rendered-${env}.yaml"; then
+              echo "::error::${env}: a canary pause without a duration would hang the deploy"; exit 1
+            fi
             # As the PriorityClass step in deploy-env.yml does it.
             helm template "${chart[@]}" --set guardrails.priority.render=true \
               --show-only templates/priorityclass.yaml > "priorityclass-${env}.yaml"

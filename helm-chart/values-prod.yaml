@@ -1,6 +1,11 @@
 # prod (namespace boutique-prod): same images as dev, deployed after a reviewer
 # approves the "prod" environment in GitHub.
 
+# Low steady traffic for the frontend canary analysis (values-aws.yaml: browse only, no
+# orders): ~0.8 requests/s, about 20 requests in the canary's first 2 minutes at 20%.
+loadGenerator:
+  users: 5
+
 inventoryService:
   # Two consumers on the inventory queue. Safe because reservations are
   # idempotent (DynamoDB transaction keyed by order ID).

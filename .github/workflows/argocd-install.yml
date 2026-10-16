@@ -24,6 +24,7 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ARGOCD_CHART_VERSION: 10.9.2 # Argo CD v3.5.3
+  ARGO_ROLLOUTS_CHART_VERSION: 2.41.1 # Argo Rollouts (frontend canary, ADR 0008); pinned, never "latest"
 
 jobs:
   install:

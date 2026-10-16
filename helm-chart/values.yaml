@@ -164,6 +164,40 @@ frontend:
       namespace: asm-ingress
       labelKey: asm
       labelValue: ingressgateway
+  # Prometheus metrics of the HTTP traffic (frontend_http_*, src/frontend/metrics.go) on
+  # their own port: scraped from the "monitoring" namespace, never behind the Service or ALB.
+  metrics:
+    port: 9090
+  # Demo only: share (0-100) of requests answered with a 500, to show a failing canary
+  # being rolled back (docs/week3/RUNBOOK.md section 10). Health checks are never faulted.
+  faultInject500Percent: 0
+  # Argo Rollouts canary (templates/frontend-rollout.yaml, ADR 0008). Needs the Argo Rollouts
+  # controller (argocd-install) and Prometheus (deploy workflow, job "monitoring").
+  canary:
+    enabled: false
+    # How traffic is split: "alb" = weighted target groups of the AWS Load Balancer
+    # Controller (needs ingress.enabled). Istio (ambient + waypoints, D-05) can replace it later.
+    trafficRouter: alb
+    # Time-limited pauses only (an indefinite pause would hang the deploy). After the last
+    # step the canary goes to 100%. Total ~5-6 min, inside the deploy-env Argo CD wait.
+    steps:
+      - setWeight: 20
+      - pause: { duration: 2m }
+      - setWeight: 50
+      - pause: { duration: 2m }
+    # Background analysis on the canary pods only (Prometheus): a failure aborts the canary,
+    # no data is a failure too (the loadgenerator keeps steady traffic through the ALB);
+    # traffic goes back to stable.
+    analysis:
+      enabled: true
+      prometheusAddress: http://prometheus-operated.monitoring.svc:9090
+      minSuccessRate: 0.99   # share of non-5xx answers
+      maxP95Seconds: 1       # p95 latency (the shop's latency SLO)
+      interval: 30s
+      initialDelay: 90s      # first scrapes + the 1-minute rate window
+      minRequests: 10        # requests the canary must have served in volumeWindow, else fail
+      volumeWindow: 2m
+      failureLimit: 1        # a second failed measurement aborts
   resources:
     requests:
       cpu: 100m
@@ -176,6 +210,11 @@ loadGenerator:
   create: true
   name: loadgenerator
   checkFrontendInitContainer: true
+  users: 10                # simulated shoppers (each ~1 request every 1-10 s)
+  browseOnly: false        # true = no cart writes and no orders (LOADGEN_BROWSE_ONLY)
+  # Full URL to shop through (e.g. https://dev.example.com, the ALB). Empty = the in-cluster
+  # frontend Service, which never reaches an Argo Rollouts canary.
+  frontendUrl: ""
   resources:
     requests:
       cpu: 300m

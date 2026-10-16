@@ -35,6 +35,9 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ inputs.environment }}
   TAG: ${{ inputs.image_tag }}
+  # Argo CD waits: a frontend canary (20% -> 2 min -> 50% -> 2 min -> 100%, ADR 0008) takes
+  # about 6 min on top of the sync and pod start; 15 min leaves room without hiding a hang.
+  ARGOCD_WAIT_SECONDS: "900"
   RELEASE: boutique
   HELM_VERSION: v4.3.0
   LBC_CHART_VERSION: 1.13.0 # AWS Load Balancer Controller v2.13.0, matches lbc_version in Terraform
@@ -44,7 +47,7 @@ jobs:
   deploy:
     name: deploy (${{ inputs.environment }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60 # two 15-min Argo CD waits (deploy + rollback) fit
     environment:
       name: ${{ inputs.environment }}
       url: ${{ steps.smoke.outputs.url }}
@@ -114,6 +117,9 @@ jobs:
                 dbSecretArn: $e.db_secret_arn,
                 redisAddr:   $e.redis_endpoint
               } },
+              # Steady read-only shoppers through the ALB name of this environment (frontend canary
+              # analysis, ADR 0008). Empty without a domain: the loadgenerator stays in-cluster.
+              loadGenerator:    { frontendUrl: (($o.tls.value.hosts[$env] // "") | if . == "" then "" else "https://" + . end) },
               emailService:     { notifications: {
                 awsRegion: $region,
                 queueUrl:  $e.notification_queue_url,
@@ -212,6 +218,19 @@ jobs:
           fi
           echo "argocd=${argocd}" >> "$GITHUB_OUTPUT"
           echo "${ENVIRONMENT} is deployed by: $([ "$argocd" = true ] && echo "Argo CD (boutique-${ENVIRONMENT})" || echo Helm)"
+
+      # The frontend runs as an Argo Rollout (ADR 0008): without the Rollouts CRDs, Argo CD
+      # (or Helm) cannot apply it. Fail here, before anything is committed or upgraded.
+      - name: Argo Rollouts installed
+        run: |
+          if [ -z "$(kubectl get crd rollouts.argoproj.io --ignore-not-found -o name)" ]; then
+            echo "::error::The Argo Rollouts CRDs are missing. Run Actions > argocd-install (it installs the Argo Rollouts controller), then re-run this deploy."
+            exit 1
+          fi
+          if [ -z "$TLS_HOST" ]; then
+            echo "::warning::No domain (DOMAIN_NAME): the loadgenerator cannot reach the frontend canary through the ALB, so its analysis will see no traffic and abort every frontend canary (ADR 0008)."
+          fi
+          echo "Argo Rollouts: $(kubectl -n argo-rollouts get deploy -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || echo 'controller not found')"
 
       # Read-only evidence: how the frontend Deployment was last written. "helm Apply" means
       # Helm used server-side apply, "helm Update" client-side apply. kubectl leaves
