@@ -118,6 +118,7 @@ jobs:
           - { service: productcatalogservice, context: src/productcatalogservice }
           - { service: recommendationservice, context: src/recommendationservice }
           - { service: shippingservice,       context: src/shippingservice }
+          - { service: shoppingassistantservice, context: src/shoppingassistantservice }
     env:
       IMAGE: ${{ needs.setup.outputs.registry }}/${{ matrix.service }}:${{ needs.setup.outputs.tag }}
       REPO: ${{ matrix.service }}
