@@ -146,6 +146,10 @@ func main() {
 	r.HandleFunc("/setCurrency", svc.setCurrencyHandler).Methods(http.MethodPost)
 	r.HandleFunc("/logout", svc.logoutHandler).Methods(http.MethodGet)
 	r.HandleFunc("/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
+	if assistantEnabled() { // AI shopping assistant (assistant.go): off while ASSISTANT_URL is empty
+		r.HandleFunc("/assistant", svc.assistantHandler).Methods(http.MethodGet, http.MethodHead, http.MethodPost)
+		log.Info("shopping assistant enabled: " + assistantURL)
+	}
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 	r.HandleFunc("/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
 	r.HandleFunc("/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })

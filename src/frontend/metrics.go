@@ -9,6 +9,8 @@ package main
 // Written in the Prometheus text format by hand, so the frontend needs no new Go module.
 // Served on METRICS_PORT (its own listener: not behind the Service or the ALB). Health
 // checks and robots.txt are not counted, so ALB and kubelet probes cannot hide errors.
+// A question to the AI shopping assistant (POST /assistant) is counted by status code but
+// not timed: it waits seconds for the model, which is not the frontend's latency.
 //
 // FAULT_INJECT_500_PERCENT (0-100, default 0) answers that share of requests with a 500,
 // for the failing-canary demo (docs/week3/RUNBOOK.md section 10). Health checks are never
@@ -45,11 +47,22 @@ func countedPath(path string) bool {
 	return path != "/_healthz" && path != "/robots.txt"
 }
 
-func (m *httpMetrics) observe(code int, d time.Duration) {
+// timedRequest reports whether the request's duration goes into the latency histogram.
+// A question to the shopping assistant (POST /assistant) waits seconds for the AI model:
+// that is the model's time (assistant_request_duration_seconds), not the frontend's, so it
+// is counted by status code but kept out of the p95 the canary judges against 1 s.
+func timedRequest(r *http.Request) bool {
+	return !(r.Method == http.MethodPost && r.URL.Path == "/assistant")
+}
+
+func (m *httpMetrics) observe(code int, d time.Duration, timed bool) {
 	s := d.Seconds()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requests[code]++
+	if !timed {
+		return
+	}
 	m.count++
 	m.sum += s
 	for i, le := range latencyBuckets {
@@ -89,7 +102,7 @@ func (m *httpMetrics) middleware(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		m.observe(rec.status, time.Since(start))
+		m.observe(rec.status, time.Since(start), timedRequest(r))
 	})
 }
 

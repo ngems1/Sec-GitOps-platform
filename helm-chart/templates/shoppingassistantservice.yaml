@@ -1,0 +1,188 @@
+{{- /*
+AI shopping assistant (ADR 0009, src/shoppingassistantservice). Off by default and in prod
+(values-prod.yaml); on in dev (values-dev.yaml). The frontend shows its /assistant page only
+when this is on (ASSISTANT_URL in frontend.yaml).
+*/ -}}
+{{- if .Values.shoppingAssistantService.create }}
+{{- with .Values.shoppingAssistantService }}
+{{- if $.Values.serviceAccounts.create }}
+# AWS access comes from EKS Pod Identity: Terraform links this service account (in this
+# namespace) to the environment's shoppingassistantservice role, which may only call
+# bedrock:InvokeModel on the one model below. No annotation needed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: {{ .name }}
+spec:
+  replicas: {{ .replicas }}
+  selector:
+    matchLabels:
+      app: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      {{- if $.Values.serviceAccounts.create }}
+      serviceAccountName: {{ .name }}
+      {{- else }}
+      serviceAccountName: default
+      {{- end }}
+      {{- include "boutique.podGuardrails" (dict "root" $ "app" .name) | nindent 6 }}
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        {{- if $.Values.seccompProfile.enable }}
+        seccompProfile:
+          type: {{ $.Values.seccompProfile.type }}
+        {{- end }}
+      containers:
+      - name: server
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+        image: {{ $.Values.images.repository }}/{{ .name }}:{{ $.Values.images.tag | default $.Chart.AppVersion }}
+        {{- if $.Values.guardrails.enabled }}
+        # Keep serving a few seconds after removal from the Service endpoints,
+        # so in-flight questions finish during a rollout.
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: {{ $.Values.guardrails.preStopSeconds }}
+        {{- end }}
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: AWS_REGION
+          value: {{ .awsRegion | quote }}
+        # Must match the model the Pod Identity role allows (terraform-aws/variables.tf,
+        # shopping_assistant_*): checked in CI.
+        - name: BEDROCK_MODEL_ID
+          value: {{ .modelId | quote }}
+        - name: BEDROCK_USE_INFERENCE_PROFILE
+          value: {{ .useInferenceProfile | quote }}
+        - name: PRODUCT_CATALOG_SERVICE_ADDR
+          value: "{{ $.Values.productCatalogService.name }}:3550"
+        - name: MAX_TOKENS
+          value: {{ .maxTokens | quote }}
+        - name: REQUEST_TIMEOUT_SECONDS
+          value: {{ .requestTimeoutSeconds | quote }}
+        - name: RATE_PER_MINUTE
+          value: {{ .ratePerMinute | quote }}
+        # The kill switch: 0 = every question gets "paused for today", no model call.
+        - name: DAILY_QUESTION_CAP
+          value: {{ .dailyQuestionCap | quote }}
+        # Ready only after a one-token Bedrock call worked (role, model ID, network).
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          {{- toYaml .resources | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: {{ .name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .name }}
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+{{- if $.Values.networkPolicies.create }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .name }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # /ask: the frontend only.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $.Values.frontend.name }}
+    ports:
+    - port: 8080
+      protocol: TCP
+  # /metrics (same port): Prometheus in the monitoring namespace.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+    ports:
+    - port: 8080
+      protocol: TCP
+  egress:
+  # DNS
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # The catalog tools (gRPC)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: {{ $.Values.productCatalogService.name }}
+    ports:
+    - port: 3550
+      protocol: TCP
+  # Amazon Bedrock (HTTPS)
+  - ports:
+    - port: 443
+      protocol: TCP
+  # EKS Pod Identity Agent on the node (link-local, HTTP): where the AWS SDK gets the pod
+  # role's credentials. Without it no Bedrock call can be signed.
+  - to:
+    - ipBlock:
+        cidr: 169.254.170.23/32
+    ports:
+    - port: 80
+      protocol: TCP
+{{- end }}
+{{- end }}
+{{- end }}

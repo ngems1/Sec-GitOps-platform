@@ -35,7 +35,7 @@ spec:
     max:
       {{- toYaml .containerMax | nindent 6 }}
 {{- end }}
-{{- range $key := list "adService" "cartService" "checkoutService" "currencyService" "emailService" "frontend" "inventoryService" "paymentService" "productCatalogService" "recommendationService" "shippingService" }}
+{{- range $key := list "adService" "cartService" "checkoutService" "currencyService" "emailService" "frontend" "inventoryService" "paymentService" "shoppingAssistantService" "productCatalogService" "recommendationService" "shippingService" }}
 {{- $svc := index $.Values $key }}
 {{- if $svc.create }}
 ---

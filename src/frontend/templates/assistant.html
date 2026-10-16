@@ -1,0 +1,44 @@
+{{ define "assistant" }}
+    {{ template "header" . }}
+    <div {{ with $.platform_css }} class="{{.}}" {{ end }}>
+        <span class="platform-flag">
+          {{$.platform_name}}
+        </span>
+      </div>
+    <main role="main" class="assistant">
+        <div class="py-5">
+            <div class="container bg-light py-3 px-lg-5 py-lg-5">
+                <h1>Shopping assistant</h1>
+                <p>Ask about our products: what to buy, what something is, what it costs.
+                   Answers come from our catalog only, written by an AI model (Amazon Bedrock),
+                   and can be wrong. Don't type personal details.</p>
+
+                <form method="POST" action="/assistant">
+                    <div class="form-group">
+                        <label for="assistant-question">Your question</label>
+                        <textarea id="assistant-question" name="question" class="form-control" rows="3"
+                                  maxlength="{{ $.max_question }}" required
+                                  placeholder="e.g. Do you have something for the kitchen under 20 dollars?">{{ $.question }}</textarea>
+                    </div>
+                    <button type="submit" class="cymbal-button-primary">Ask</button>
+                </form>
+
+                {{ if $.answer }}
+                <div class="mt-4 p-3 border rounded bg-white" aria-live="polite">
+                    <p style="white-space: pre-wrap;">{{ $.answer }}</p>
+                    {{ if $.products }}
+                    <p class="mb-1"><strong>Products mentioned:</strong></p>
+                    <ul>
+                        {{ range $.products }}
+                        <li><a href="/product/{{ .ID }}">{{ .Name }}</a></li>
+                        {{ end }}
+                    </ul>
+                    {{ end }}
+                </div>
+                {{ end }}
+            </div>
+        </div>
+    </main>
+
+    {{ template "footer" . }}
+    {{ end }}

@@ -117,6 +117,12 @@ spec:
             value: "{{ .Values.checkoutService.name }}:5050"
           - name: AD_SERVICE_ADDR
             value: "{{ .Values.adService.name }}:9555"
+          {{- if .Values.shoppingAssistantService.create }}
+          # AI shopping assistant (ADR 0009): the /assistant page and header link appear only
+          # when this is set.
+          - name: ASSISTANT_URL
+            value: "http://{{ .Values.shoppingAssistantService.name }}"
+          {{- end }}
           - name: ENV_PLATFORM
             value: {{ .Values.frontend.platform | quote }}
           {{- if .Values.opentelemetryCollector.create }}

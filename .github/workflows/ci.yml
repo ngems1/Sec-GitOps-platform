@@ -207,6 +207,38 @@ jobs:
               || { echo "::error::${env}: no boutique-${env} PriorityClass for deploy-env.yml"; exit 1; }
           done
 
+      # AI shopping assistant (ADR 0009): on in dev only, and it must call exactly the model its
+      # Pod Identity role allows (terraform-aws/variables.tf), or every question is denied.
+      - name: Shopping assistant (dev only, model matches Terraform)
+        run: |
+          tf_default() {
+            awk -v v="variable \"$1\"" 'index($0, v) == 1 {f = 1} f && $1 == "default" {gsub(/[" ]/, ""); sub(/^default=/, ""); print; exit}' terraform-aws/variables.tf
+          }
+          deployed() { # env, variable -> the value rendered into the assistant's Deployment
+            yq ea -N "select(.kind == \"Deployment\" and .metadata.name == \"shoppingassistantservice\")
+              | .spec.template.spec.containers[0].env[] | select(.name == \"$2\") | .value" "rendered-$1.yaml"
+          }
+          tf_model=$(tf_default shopping_assistant_model_id)
+          tf_profile=$(tf_default shopping_assistant_use_inference_profile)
+          [ -n "$tf_model" ] && [ -n "$tf_profile" ] \
+            || { echo "::error::shopping_assistant_* defaults not found in terraform-aws/variables.tf"; exit 1; }
+          # The Terraform defaults are the values applied: nothing may override them.
+          if grep -rnE "TF_VAR_shopping_assistant_|shopping_assistant_(model_id|use_inference_profile) *=" .github terraform-aws --include=*.yml --include=*.tfvars --exclude=ci.yml; then
+            echo "::error::the shopping_assistant_* Terraform variables are overridden: update this check and helm-chart/values.yaml together"; exit 1
+          fi
+          for pair in "BEDROCK_MODEL_ID=${tf_model}" "BEDROCK_USE_INFERENCE_PROFILE=${tf_profile}"; do
+            got=$(deployed dev "${pair%%=*}")
+            [ "$got" = "${pair#*=}" ] \
+              || { echo "::error::dev ${pair%%=*} is '${got}', Terraform allows '${pair#*=}' (helm-chart/values.yaml shoppingAssistantService)"; exit 1; }
+          done
+          grep -q 'name: ASSISTANT_URL' rendered-dev.yaml \
+            || { echo "::error::dev: the frontend has no ASSISTANT_URL"; exit 1; }
+          # prod stays off until the assistant is tested in dev.
+          if grep -qE 'name: (shoppingassistantservice|ASSISTANT_URL)$' rendered-prod.yaml; then
+            echo "::error::prod renders the shopping assistant: it stays off (values-prod.yaml)"; exit 1
+          fi
+          echo "dev: ${tf_model} (inference profile: ${tf_profile}); prod: off"
+
       # The frontend canary analysis and Grafana query Prometheus by its in-cluster address.
       # Render kube-prometheus-stack exactly as deploy/monitoring.sh installs it (release
       # "monitoring", namespace "monitoring", same values, the chart version from deploy.yml)

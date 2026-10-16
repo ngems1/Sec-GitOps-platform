@@ -173,6 +173,12 @@ spec:
     - podSelector:
         matchLabels:
           app: {{ .Values.recommendationService.name }}
+    {{- if .Values.shoppingAssistantService.create }}
+    # the AI shopping assistant's read-only catalog tools (ADR 0009)
+    - podSelector:
+        matchLabels:
+          app: {{ .Values.shoppingAssistantService.name }}
+    {{- end }}
     ports:
      - port: 3550
        protocol: TCP
