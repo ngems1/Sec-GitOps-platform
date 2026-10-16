@@ -89,6 +89,21 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Read-only (get, logs). The frontend canary (Argo Rollouts, ADR 0008): Rollout status
+      # and abort message, AnalysisRuns with their measured values, which pods are canary or
+      # stable, Rollout events, and the loadgenerator that feeds the canary its traffic.
+      - name: Rollouts
+        if: startsWith(inputs.namespace, 'boutique-')
+        env:
+          NS: ${{ inputs.namespace }}
+        run: |
+          {
+            echo "### Rollouts in ${NS}"
+            echo '```'
+            bash deploy/rollouts-report.sh "$NS"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Read-only (get). An aggregated API that is down makes kubectl's discovery fail with
       # "the server is currently unable to handle the request" (seen in deploy-env's Load
       # Balancer Controller step). Lists every APIService, then the conditions of each one

@@ -584,6 +584,20 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Argo CD deploys: why the canary stopped, captured BEFORE the rollback below resets the
+      # Rollout, removes the canary pods and replaces the loadgenerator (events expire too).
+      # Rollout status, AnalysisRuns with their measured values, canary pods, loadgenerator log.
+      # Read-only, no Secret is read.
+      - name: Canary report (before rollback)
+        if: failure() && steps.mode.outputs.argocd == 'true' && env.NS != ''
+        run: |
+          {
+            echo "### Canary report: ${NS}"
+            echo '```'
+            bash deploy/rollouts-report.sh "$NS"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Pods were ready but the shop doesn't work: put the previous release back.
       - name: Roll back
         if: failure() && steps.helm.outcome == 'success' && steps.before.outputs.revision != '0'
