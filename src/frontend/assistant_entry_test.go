@@ -4,8 +4,10 @@ package main
 // product page's "Ask about this product" link and its prefilled question.
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -101,5 +103,65 @@ func TestPrefillIsCapped(t *testing.T) {
 	}
 	if prefill("  Tell me more about Mug ") != "Tell me more about Mug" {
 		t.Error("prefill is not trimmed")
+	}
+}
+
+func TestHeaderButton(t *testing.T) {
+	withAssistant(t, "")
+	if strings.Contains(renderTemplate(t, "header", map[string]interface{}{}), "assistant-link") {
+		t.Error("header button shown while ASSISTANT_URL is empty")
+	}
+	withAssistant(t, "http://shoppingassistantservice")
+	header := renderTemplate(t, "header", map[string]interface{}{})
+	// the shop's primary button (red #CE0631, like Ask), icon + label
+	want := `<a href="/assistant" class="cymbal-button-primary assistant-link"><svg class="assistant-icon"`
+	if !strings.Contains(header, want) || !strings.Contains(header, "<span>Shopping assistant</span></a>") {
+		t.Errorf("no primary header button with icon and label:\n%s", header)
+	}
+}
+
+func TestFloatingButtonLeavesRoom(t *testing.T) {
+	withAssistant(t, "")
+	if strings.Contains(renderTemplate(t, "footer", map[string]interface{}{}), "assistant-fab-spacer") {
+		t.Error("spacer rendered without the floating button")
+	}
+	withAssistant(t, "http://shoppingassistantservice")
+	footer := renderTemplate(t, "footer", map[string]interface{}{})
+	if !strings.Contains(footer, `<div class="assistant-fab-spacer" aria-hidden="true"></div>`) {
+		t.Error("no room at the end of the page for the floating button")
+	}
+}
+
+var chipHref = regexp.MustCompile(`class="assistant-chip" href="([^"]+)">([^<]+)</a>`)
+
+func TestExampleChipsOnlyPrefill(t *testing.T) {
+	withAssistant(t, "")
+	if strings.Contains(renderTemplate(t, "assistant", map[string]interface{}{"examples": assistantExamples}), "assistant-chip") {
+		t.Error("chips shown while ASSISTANT_URL is empty")
+	}
+
+	srv, f := fakeAssistant(t, http.StatusOK, `{"outcome":"answered","answer":"ok","products":[]}`)
+	withAssistant(t, srv.URL)
+	rec := httptest.NewRecorder()
+	serveAssistant(rec, withLog(httptest.NewRequest(http.MethodGet, "/assistant", nil)), platformDetails{}, nil)
+	chips := chipHref.FindAllStringSubmatch(rec.Body.String(), -1)
+	if len(chips) != len(assistantExamples) || len(chips) < 3 {
+		t.Fatalf("%d chips rendered, want %d", len(chips), len(assistantExamples))
+	}
+	for i, c := range chips {
+		href, label := html.UnescapeString(c[1]), html.UnescapeString(c[2])
+		if label != assistantExamples[i] || !strings.HasPrefix(href, "/assistant?q=") {
+			t.Errorf("chip %d: %q -> %q", i, label, href)
+			continue
+		}
+		// Following the chip only fills the text box with the question.
+		page := httptest.NewRecorder()
+		serveAssistant(page, withLog(httptest.NewRequest(http.MethodGet, href, nil)), platformDetails{}, nil)
+		if !strings.Contains(html.UnescapeString(page.Body.String()), ">"+label+"</textarea>") {
+			t.Errorf("chip %q does not prefill the text box", label)
+		}
+	}
+	if calls, _, _ := f.last(); calls != 0 {
+		t.Error("a chip sent a question to the assistant")
 	}
 }

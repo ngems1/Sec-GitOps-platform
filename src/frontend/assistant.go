@@ -40,6 +40,13 @@ const (
 var (
 	assistantURL    = strings.TrimRight(strings.TrimSpace(os.Getenv("ASSISTANT_URL")), "/")
 	assistantClient = &http.Client{Timeout: assistantTimeout}
+	// Example questions on /assistant (chips): they only fill the text box, through ?q=.
+	assistantExamples = []string{
+		"What is the cheapest item?",
+		"Gift ideas under $20",
+		"Something for the kitchen?",
+		"Compare the sunglasses and the watch",
+	}
 	productIDFormat = regexp.MustCompile(`^[A-Z0-9]{6,20}$`)
 	citedIDPattern  = regexp.MustCompile(`\s*\[([A-Z0-9]{6,20})\]`)
 )
@@ -117,6 +124,7 @@ func serveAssistant(w http.ResponseWriter, r *http.Request, p platformDetails, d
 		"frontendMessage":    frontendMessage,
 		"max_question":       assistantMaxQuestion,
 		"hide_assistant_fab": true, // no floating "Ask AI" button on the assistant page itself
+		"examples":           assistantExamples,
 	}
 	status := http.StatusOK
 	if r.Method != http.MethodPost {
