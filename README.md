@@ -456,6 +456,8 @@ Details: [docs/week3/MONITORING.md](docs/week3/MONITORING.md), [docs/week3/SLACK
 | [docs/week3/SLACK.md](docs/week3/SLACK.md) | Slack channels and webhooks |
 | [docs/week3/SECURITY.md](docs/week3/SECURITY.md) | Security controls, scan results, known gaps |
 | [docs/week3/RUNBOOK.md](docs/week3/RUNBOOK.md) | Failed deploys, unhealthy pods, database, stuck queues, incident log |
+| [docs/roadmap.md](docs/roadmap.md) | What comes next, phase by phase (Phase 2: AI shopping assistant) |
+| [docs/adr/](docs/adr/) | Architecture decision records (Argo CD, single-account hardening, prod promotion, canary, shopping assistant) |
 
 ---
 
