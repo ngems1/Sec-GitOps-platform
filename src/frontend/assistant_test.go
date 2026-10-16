@@ -84,8 +84,11 @@ func TestAssistantAnswerEscapedAndLinked(t *testing.T) {
 	if strings.Contains(body, "<script>alert(1)</script>") || !strings.Contains(body, "&lt;script&gt;") {
 		t.Error("the answer must be HTML-escaped")
 	}
-	if !strings.Contains(body, `href="/product/6E92ZMYYFZ"`) {
-		t.Error("no link for the product the service returned")
+	if !strings.Contains(body, `Try the <a href="/product/6E92ZMYYFZ">Mug</a> &lt;script&gt;`) {
+		t.Error("the citation is not a link named after the product")
+	}
+	if strings.Contains(body, "[6E92ZMYYFZ]") {
+		t.Error("a raw product ID is shown")
 	}
 	if strings.Contains(body, "../../cart") {
 		t.Error("a malformed product ID was linked")
@@ -209,6 +212,35 @@ func TestAssistantPostNotInLatency(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics output misses %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAnswerParts(t *testing.T) {
+	products := []assistantProduct{{ID: "0PUK6V6EV0", Name: "Candle Holder"}, {ID: "9SIQT8TOJO", Name: "Bamboo Glass Jar"}}
+	render := func(parts []answerPart) string {
+		var b strings.Builder
+		for _, p := range parts {
+			if p.Link != "" {
+				b.WriteString("<" + p.Link + "|" + p.Text + ">")
+			} else {
+				b.WriteString(p.Text)
+			}
+		}
+		return b.String()
+	}
+	for answer, want := range map[string]string{
+		// the name is just before the ID: it becomes the link
+		"The cheapest is the candle holder [0PUK6V6EV0], at 18.99 USD.": "The cheapest is the </product/0PUK6V6EV0|candle holder>, at 18.99 USD.",
+		// no name before the ID: the product's name is the link
+		"Try this one: [9SIQT8TOJO].": "Try this one: </product/9SIQT8TOJO|Bamboo Glass Jar>.",
+		"[9SIQT8TOJO] is cheap.":      "</product/9SIQT8TOJO|Bamboo Glass Jar> is cheap.",
+		// an ID the service did not return is dropped, never shown or linked
+		"See the Mug [6E92ZMYYFZ] and the Jar [9SIQT8TOJO].": "See the Mug and the Jar </product/9SIQT8TOJO|Bamboo Glass Jar>.",
+		"No product here.": "No product here.",
+	} {
+		if got := render(answerParts(answer, products)); got != want {
+			t.Errorf("answerParts(%q)\n got  %q\n want %q", answer, got, want)
 		}
 	}
 }

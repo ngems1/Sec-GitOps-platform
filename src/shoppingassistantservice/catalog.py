@@ -42,6 +42,10 @@ class Catalog:
                 self.loaded_at = time.monotonic()
             return self.products
 
+    def list_products(self):
+        """The whole catalog (small: the list_products tool sends it to the model)."""
+        return list(self._all().values())
+
     def search(self, query):
         resp = self.stub.SearchProducts(demo_pb2.SearchProductsRequest(query=query), timeout=self.timeout)
         return [to_dict(p) for p in resp.results]

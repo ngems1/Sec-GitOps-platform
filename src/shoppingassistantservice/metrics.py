@@ -11,7 +11,7 @@ READY = Gauge("assistant_ready", "1 when the startup Bedrock check passed")
 DAILY_USED = Gauge("assistant_daily_questions_used", "Questions used today in this pod")
 DAILY_CAP = Gauge("assistant_daily_question_cap", "Daily question cap of this pod")
 
-KNOWN_TOOLS = {"search_products", "get_product"}
+KNOWN_TOOLS = {"list_products", "search_products", "get_product"}
 
 
 class PrometheusMetrics:
