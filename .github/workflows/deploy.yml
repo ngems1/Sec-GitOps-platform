@@ -220,20 +220,26 @@ jobs:
       environment: prod
       image_tag: ${{ needs.setup.outputs.tag }}
 
-  # Prometheus + Grafana (namespace "monitoring", shared by dev and prod): installed or
-  # updated BEFORE dev, in parallel with the build, because the frontend canary analysis
-  # (ADR 0008) needs Prometheus. On a brand-new cluster the Grafana ALB appears once the
-  # Load Balancer Controller exists (after the first dev deploy). Skipped with a notice
-  # until the GRAFANA_ADMIN_PASSWORD secret is set (docs/week3/MONITORING.md).
+  # Prometheus + Grafana and the tracing backend (Tempo + OTel Collector, ADR 0010), in namespace
+  # "monitoring", shared by dev and prod: installed or updated BEFORE dev, in parallel with the
+  # build, because the frontend canary analysis (ADR 0008) needs Prometheus. On a brand-new
+  # cluster the Grafana ALB appears once the Load Balancer Controller exists (after the first
+  # dev deploy). Skipped with a notice until the GRAFANA_ADMIN_PASSWORD secret is set (docs/week3/MONITORING.md).
   monitoring:
     needs: setup
     if: needs.setup.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     outputs:
       grafana_url: ${{ steps.install.outputs.GRAFANA_URL }}
     env:
       KPS_VERSION: ">= 75.0.0, < 90.0.0" # kube-prometheus-stack; the installed version is printed in the log
+      # Tracing backend (ADR 0010): exact versions, upgraded by hand.
+      TEMPO_CHART_VERSION: "2.4.0"              # grafana-community/tempo, Tempo 2.10.8 (single binary)
+      OTEL_COLLECTOR_CHART_VERSION: "0.174.2"   # open-telemetry/opentelemetry-collector, Collector 0.161.0
+      # Smoke test images (deploy/tracing-smoke.sh)
+      TELEMETRYGEN_IMAGE: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.161.0
+      CURL_IMAGE: docker.io/curlimages/curl:8.22.0
     steps:
       - uses: actions/checkout@v5
 
@@ -255,11 +261,12 @@ jobs:
             echo "GRAFANA_HOST=$(jq -r '.outputs.tls.value.hosts.monitoring // empty' state.json)"
             echo "CERT_ARN=$(jq -r '.outputs.tls.value.certificate_arn // empty' state.json)"
             echo "DNS_ZONE_ID=$(jq -r '.outputs.tls.value.zone_id // empty' state.json)"
+            echo "VPC_CIDR=$(jq -r '.outputs.vpc_cidr.value // "10.0.0.0/16"' state.json)"
           } >> "$GITHUB_ENV"
           rm -f state.json
           aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
 
-      - name: Install Prometheus + Grafana
+      - name: Install Prometheus + Grafana + tracing backend
         id: install
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
@@ -270,6 +277,19 @@ jobs:
             exit 0
           fi
           bash deploy/monitoring.sh
+
+      # ADR 0010: test traces from boutique-dev, one with an error, must be found in Tempo
+      # through Grafana's data source. Same condition as the install (it needs Grafana).
+      - name: Tracing smoke test
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          if [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+            echo "::notice::Tracing smoke test skipped: the monitoring stack was not installed."
+            exit 0
+          fi
+          unset GRAFANA_ADMIN_PASSWORD   # only used to decide; the Job reads the login from its Secret
+          bash deploy/tracing-smoke.sh
 
   # Proves dev can't reach prod (network + IAM), once both are on the new version.
   isolation-test:
