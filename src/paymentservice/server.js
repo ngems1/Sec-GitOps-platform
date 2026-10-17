@@ -48,12 +48,14 @@ class HipsterShopServer {
    * @param {*} callback  fn(err, ChargeResponse)
    */
   static ChargeServiceHandler(call, callback) {
+    // Never the request: it holds the card number, CVV and expiry. The amount only.
     try {
-      logger.info(`PaymentService#Charge invoked with request ${JSON.stringify(call.request)}`);
+      const amount = (call.request && call.request.amount) || {};
+      logger.info(`PaymentService#Charge invoked (currency ${amount.currency_code})`);
       const response = charge(call.request);
       callback(null, response);
     } catch (err) {
-      console.warn(err);
+      logger.warn(`PaymentService#Charge failed: ${err.message}`); // the messages hold no card data (charge.js)
       callback(err);
     }
   }

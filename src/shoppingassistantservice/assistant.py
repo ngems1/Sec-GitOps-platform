@@ -239,8 +239,11 @@ class Assistant:
         try:
             return self._answer(mask_personal_data(question), currency)
         except Exception as err:  # the model or the network failed: never a stack trace to the shopper
-            self.metrics.count("bedrock_error", type=getattr(err, "kind", "other"))
-            return self._result("error", ERROR_ANSWER, error=str(err)[:300])
+            kind = getattr(err, "kind", "other")
+            self.metrics.count("bedrock_error", type=kind)
+            # The kind and class only: an error message can quote the request, i.e. the
+            # question (ADR 0011: no question or answer text in the logs).
+            return self._result("error", ERROR_ANSWER, error=f"{kind} ({type(err).__name__})")
         finally:
             self.calls.release()
 

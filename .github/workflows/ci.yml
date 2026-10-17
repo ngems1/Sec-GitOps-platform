@@ -62,6 +62,15 @@ jobs:
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications
+      # No personal data in log calls (ADR 0011). The fixture proves the guard still catches the
+      # patterns it is meant for.
+      - name: no personal data in logs (grep guard)
+        run: |
+          bash deploy/tests/no-pii-in-logs.sh
+          if bash deploy/tests/no-pii-in-logs.sh deploy/tests/no-pii-in-logs > "$RUNNER_TEMP/pii.txt"; then
+            echo "::error::the guard missed the known-bad lines in deploy/tests/no-pii-in-logs"; exit 1
+          fi
+          test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 11
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |
@@ -92,8 +101,9 @@ jobs:
             "$RUNNER_TEMP/venv-$s/bin/pip" install --quiet -r "$RUNNER_TEMP/req-$s.txt"
             (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing)
           done
-          # emailservice's message spans (messagetrace.py, ADR 0010 step 5)
-          (cd src/emailservice && "$RUNNER_TEMP/venv-emailservice/bin/python" -m unittest -v test_messagetrace)
+          # emailservice's message spans (messagetrace.py, ADR 0010 step 5) and its gRPC log line
+          # (no address, ADR 0011)
+          (cd src/emailservice && "$RUNNER_TEMP/venv-emailservice/bin/python" -m unittest -v test_messagetrace test_logs)
 
   # The Go and C# unit tests (they existed but never ran in CI).
   go-tests:

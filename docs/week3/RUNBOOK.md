@@ -579,6 +579,40 @@ Flags, worth a look before changing a row:
 - After the change, run the report again a day later. Check the flags, restarts
   (cluster-status > Namespace snapshot) and the canary's p95.
 
+## 14. What we never log (ADR 0011)
+
+The container logs of every namespace end up in one CloudWatch log group, which Grafana can
+search. So no application log line, at any level, holds:
+
+- the shopper's **email address**, not even masked (the DynamoDB notification row keeps a
+  masked one), nor their name or postal **address**;
+- **card data**: number, last digits, CVV, expiry. The brand ("visa") and the amount are fine.
+  Error messages count too: payment's errors travel to checkout and the frontend, which log
+  them;
+- the **session ID**, or the cart/checkout **user ID** (it is the session ID), or its hash (the
+  assistant's `X-Session-Id`);
+- the client **IP**, the **user agent**, **headers**, **cookies** or the **query string**: the
+  frontend logs the path, the method and a random request ID;
+- the whole **request** object of a call (it can hold all of the above);
+- the assistant's **question** or **answer**, or a model error's message text (it can quote
+  the question): the outcome and the error kind only.
+
+**What to log instead:** the **order ID**, product IDs, the transaction ID, outcomes, counts
+and durations.
+
+**Enforced by:**
+
+- one test per service that writes such data, run by CI. Each test feeds personal data in
+  and checks the log output.
+- the CI step **no personal data in logs (grep guard)** (`deploy/tests/no-pii-in-logs.sh`).
+  It catches obvious single-line cases, such as a log call that names `email`, `userId`,
+  `session`, card fields or the request.
+  - A line that is fine despite a match ends with a `pii-ok` comment saying why.
+  - It doesn't see fields added on another line, which is why the tests exist too.
+
+**Old lines:** lines written before the fix stay in CloudWatch until the log group's
+retention removes them (14 days once ADR 0011's PR 2 is merged; no expiry before that).
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |

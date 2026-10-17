@@ -32,7 +32,7 @@ namespace cartservice.cartstore
 
         public async Task AddItemAsync(string userId, string productId, int quantity)
         {
-            Console.WriteLine($"AddItemAsync called with userId={userId}, productId={productId}, quantity={quantity}");
+            Console.WriteLine($"AddItemAsync called with productId={productId}, quantity={quantity}");
 
             try
             {
@@ -67,7 +67,7 @@ namespace cartservice.cartstore
 
         public async Task EmptyCartAsync(string userId)
         {
-            Console.WriteLine($"EmptyCartAsync called with userId={userId}");
+            Console.WriteLine("EmptyCartAsync called");
 
             try
             {
@@ -82,7 +82,7 @@ namespace cartservice.cartstore
 
         public async Task<Hipstershop.Cart> GetCartAsync(string userId)
         {
-            Console.WriteLine($"GetCartAsync called with userId={userId}");
+            Console.WriteLine("GetCartAsync called");
 
             try
             {

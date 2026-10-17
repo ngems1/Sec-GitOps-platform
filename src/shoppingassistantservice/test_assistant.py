@@ -281,6 +281,14 @@ class ErrorsTest(unittest.TestCase):
         self.assertEqual(out["answer"], core.ERROR_ANSWER)
         self.assertIn(("bedrock_error", {"type": "throttled"}), metrics.counts)
 
+    def test_logged_error_never_quotes_the_question(self):
+        # "error" goes to the server log only: the kind and class, never the message text
+        err = bedrock.BedrockError("validation", "ValidationException: messages.0: 'my secret question'")
+        out = make(FakeModel(err)).ask("my secret question")
+        self.assertEqual(out["error"], "validation (BedrockError)")
+        out = make(FakeModel(RuntimeError("echo: my secret question"))).ask("my secret question")
+        self.assertEqual(out["error"], "other (RuntimeError)")
+
     def test_semaphore_released_after_error(self):
         bot = make(FakeModel(RuntimeError("boom"), RuntimeError("boom"), RuntimeError("boom")), max_concurrent_calls=1)
         for _ in range(3):

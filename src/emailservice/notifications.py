@@ -90,7 +90,8 @@ def parse_message(body):
 
 
 def mask_email(address):
-    """someone@example.com -> s*****e@example.com (the log never holds full addresses)."""
+    """someone@example.com -> s*****e@example.com, for the DynamoDB notification row only. The
+    service log holds no address at all, not even masked: the order ID identifies the email."""
     if "@" not in address:
         return ""
     user, domain = address.split("@", 1)
@@ -228,7 +229,7 @@ class SlackNotifier:
 def send(logger, order, subject, body):
     """Log-mode delivery: the rendered email goes to the service log."""
     logger.info("email sent", extra={
-        "orderId": order.order_id, "status": order.status, "to": mask_email(order.email),
+        "orderId": order.order_id, "status": order.status,
         "subject": subject, "delivery": DELIVERY_MODE, "body": body})
 
 
@@ -255,7 +256,7 @@ def handle(body, log_table, logger, slack=None, ses=None, span=None):
             log_table.release(order)  # so the retried message can send it
             raise
         logger.info("email sent", extra={
-            "orderId": order.order_id, "status": order.status, "to": mask_email(order.email),
+            "orderId": order.order_id, "status": order.status,
             "subject": subject, "delivery": "ses", "sesMessageId": message_id})
     else:
         send(logger, order, subject, text)
