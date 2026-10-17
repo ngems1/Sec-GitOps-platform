@@ -85,7 +85,7 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 
 | Symptom | Fix |
 |---|---|
-| `#boutique-alerts`: "ALARM: AWS Budget (Bedrock daily)" | The shopping assistant's Bedrock cost passed 50% or 100% of `bedrock_daily_budget_usd` (terraform-bootstrap) today. AWS updates budget costs a few times a day, so it can be hours late; the assistant's own daily question cap stops it, not the budget | Check the assistant's request and token metrics (Grafana). Expected (a demo): ignore or raise `bedrock_daily_budget_usd` and run bootstrap. Unexpected: lower the daily cap or turn the assistant off in the values (`shoppingAssistant.create: false`) |
+| `#boutique-alerts`: "ALARM: AWS Budget (Bedrock daily)" | The shopping assistant's Bedrock cost passed 50% or 100% of `bedrock_daily_budget_usd` (terraform-bootstrap) today. AWS updates budget costs a few times a day, so it can be hours late; the assistant's own daily question cap stops it, not the budget | Check the assistant's request and token metrics (Grafana). Expected (a demo): ignore or raise `bedrock_daily_budget_usd` and run bootstrap. Unexpected: lower the daily cap or turn the assistant off (RUNBOOK section 15: `dailyQuestionCap: 0` or `shoppingAssistantService.create: false`) |
 | Grafana URL times out | Your IP isn't in `MONITORING_ALLOWED_CIDR` (a comma-separated list: add it, re-run deploy), or the ALB is still starting |
 | Grafana 503 / restarts | cluster-status → `monitoring`. It was `OOMKilled` at 384Mi; the limit is 768Mi |
 | "Datasource prometheus was not found", empty Prometheus settings | Bundled plugins broke on the read-only disk; `preinstall_disabled: true` in `grafana.ini` must stay |
@@ -652,6 +652,64 @@ retention removes them.
   purge them. CloudWatch deletes expired lines, usually within 72 hours of the apply.
 - **After the follow-up PR:** **14 days**.
 - **Before PR 2:** no expiry at all.
+
+## 15. The AI shopping assistant in prod (ADR 0009)
+
+**What runs.** In dev and prod:
+
+- **The pod:** `shoppingassistantservice`, one pod, with the same model (Nova Lite,
+  on-demand) and limits in both: 600 output tokens per call, 3 tool steps, 15 s per call,
+  500 characters per question, 10 questions per minute per shopper.
+- **Daily caps** per pod and UTC day: dev 300, prod 100 (`values-prod.yaml`, with the cost math).
+- **The shop's page:** the frontend shows `/assistant` because `ASSISTANT_URL` is set.
+- **AWS access:** the pod role (`modules/environment/pod-identity.tf`) may only call
+  `bedrock:InvokeModel` on that one model, and only from its own namespace.
+- **The loadgenerator never asks it.** CI step "Loadgenerator never calls the assistant".
+
+**After turning it on (or any prod deploy that restarts it):**
+
+1. cluster-status (boutique-prod): `shoppingassistantservice` is Ready. Ready means its
+   start-up one-token Bedrock call worked, so the role, model ID and network are fine.
+2. Actions > **assistant-smoke** > Run workflow (prod). It asks one question through
+   `https://shop.<domain>/assistant`, which costs about USD 0.0004 and uses one of the day's
+   100 questions.
+   - The answer must link catalog products.
+   - The question text must not be in the frontend or assistant logs.
+   - It prints only the outcome and product IDs.
+3. Grafana: `assistant_requests_total{outcome}`, `assistant_tokens_total{direction}`,
+   `assistant_daily_questions_used` against `assistant_daily_question_cap`, and
+   `assistant_bedrock_errors_total`. Use `namespace="boutique-prod"`.
+
+**Cost alert path.** The AWS Budget `week3-boutique-bedrock-daily` (`terraform-bootstrap/budgets.tf`)
+is account-wide: Service = Amazon Bedrock, so it covers dev and prod together, USD 1/day.
+
+- **The path:** it alerts at 50% and 100% to SNS `week3-boutique-budget-alerts`, then the
+  slack-alerts Lambda, then `#boutique-alerts` (row in section 5).
+- **Delay:** AWS updates budget costs a few times a day, so an alert can come hours late.
+- **The caps are the real limit.** Dev and prod together allow 400 questions, about USD
+  0.49 in the worst case, which is under the 50% alert.
+- **What an alert means:** more pods than expected (each pod start resets its counter), a
+  price change, or Bedrock use outside the assistant.
+
+**Turn it off fast.** Prefer the kill switch: it changes only the assistant's Deployment, so
+there is no frontend rollout and no canary.
+
+| How | Effect | Speed |
+|---|---|---|
+| `dailyQuestionCap: 0` in `values-prod.yaml` (the kill switch), merged to `main` | Every question gets "paused for today"; no Bedrock call. The page stays | One deploy: dev, the prod approval, the promotion to `env/prod` (ADR 0007) |
+| `shoppingAssistantService.create: false` in `values-prod.yaml` | No pod, no `/assistant` page: the frontend loses `ASSISTANT_URL` and rolls out through its canary | One deploy, plus the canary |
+| `kubectl -n boutique-prod set env deploy/shoppingassistantservice DAILY_QUESTION_CAP=0` (admin access) | The same as the kill switch, at once | Immediate, but temporary: Argo CD self-heal puts it back within minutes, so only as a bridge until the values change is promoted |
+
+Dev works the same way, with `values-dev.yaml`. Revert the values change to turn it back on.
+
+**Known limits.**
+
+- **The cap lives in memory.** A pod restart or a rollout's new pod starts from 0, so the
+  bound is cap x pods started that day.
+- **Bedrock at pod start.** The pod is Ready only after its first Bedrock call. If Bedrock is
+  down when a deploy restarts it, the Application isn't Healthy and the deploy fails after
+  `argocd-wait`'s timeout (10 min), even though the shop works. The frontend handles an
+  unreachable assistant with a friendly message, and the frontend canary never calls Bedrock.
 
 ## Incident log (things that actually happened)
 
