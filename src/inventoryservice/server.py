@@ -26,6 +26,7 @@ import boto3
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 import inventory as inv
+import tracing
 
 # ------------------------------------------------------------------ config
 PORT = int(os.environ.get("PORT", "8080"))
@@ -86,8 +87,9 @@ def consume(store, sqs, events):
     while not stop.is_set():
         last_poll["t"] = time.time()
         try:
-            resp = sqs.receive_message(QueueUrl=QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=20,
-                                       AttributeNames=["ApproximateReceiveCount"])
+            with tracing.quiet():  # the 20 s long poll is not a span (tracing.py)
+                resp = sqs.receive_message(QueueUrl=QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=20,
+                                           AttributeNames=["ApproximateReceiveCount"])
         except Exception:  # noqa: BLE001 - keep polling, AWS hiccups are transient
             MESSAGE_ERRORS.labels("receive").inc()
             log.exception("receive_message failed")
@@ -95,8 +97,10 @@ def consume(store, sqs, events):
             continue
         for msg in resp.get("Messages", []):
             try:
-                handle_message(store, events, msg)
-                sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
+                with tracing.consumer_span("process OrderCreated",
+                                           {"messaging.system": "aws_sqs", "messaging.operation": "process"}):
+                    handle_message(store, events, msg)
+                    sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
             except inv.InvalidEvent as exc:
                 MESSAGE_ERRORS.labels("invalid").inc()
                 log.error("invalid message, will retry then go to DLQ: %s", exc)
@@ -110,6 +114,7 @@ def consume(store, sqs, events):
 def make_handler(store, consumer_thread):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
+            self.last_code = code  # for the request's span (tracing.py)
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
@@ -127,6 +132,13 @@ def make_handler(store, consumer_thread):
                 return self._send(200 if alive else 503, {"ready": alive})
             if path == "/metrics":
                 return self._send(200, generate_latest(), CONTENT_TYPE_LATEST)
+            # The API, traced: one span per request named after its route (no product ID in the name).
+            route = "/stock" if path == "/stock" else "/stock/{productId}" if path.startswith("/stock/") else "/{unknown}"
+            with tracing.server_span("GET", route, path, self.headers) as span:
+                self._api(path)
+                tracing.set_status_code(span, getattr(self, "last_code", 200))
+
+        def _api(self, path):
             try:
                 if path == "/stock":
                     return self._send(200, store.list_stock())
@@ -154,6 +166,9 @@ def main():
     if missing:
         log.error("missing configuration: %s", ", ".join(missing))
         sys.exit(1)
+
+    # Tracing before any AWS client exists (botocore instrumentation, tracing.py).
+    tracing.start_tracing("inventoryservice", log)
 
     session = boto3.session.Session(region_name=REGION)
     store = inv.InventoryStore(session.client("dynamodb"), TABLE)

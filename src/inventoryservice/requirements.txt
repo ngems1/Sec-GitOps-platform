@@ -1,2 +1,31 @@
+# All pinned, transitive included (uv pip compile, Python 3.12 like the image).
+# OpenTelemetry 1.19.0 / 0.40b0, the same as the other Python services (ADR 0010, tracing.py).
+# setuptools: opentelemetry-instrumentation 0.40b0 imports pkg_resources, and python:3.12-slim has
+# no setuptools.
+backoff==2.2.1
 boto3==1.35.99
+botocore==1.35.99
+deprecated==3.0.0
+googleapis-common-protos==1.75.0
+grpcio==1.84.0
+importlib-metadata==6.11.0
+jmespath==1.1.0
+opentelemetry-api==1.19.0
+opentelemetry-exporter-otlp-proto-common==1.19.0
+opentelemetry-exporter-otlp-proto-grpc==1.19.0
+opentelemetry-instrumentation==0.40b0
+opentelemetry-instrumentation-botocore==0.40b0
+opentelemetry-propagator-aws-xray==1.0.1
+opentelemetry-proto==1.19.0
+opentelemetry-sdk==1.19.0
+opentelemetry-semantic-conventions==0.40b0
 prometheus-client==0.21.1
+protobuf==4.25.9
+python-dateutil==2.9.0.post0
+s3transfer==0.10.4
+setuptools==80.10.2
+six==1.17.0
+typing-extensions==4.16.0
+urllib3==2.8.0
+wrapt==1.17.3
+zipp==4.1.1
