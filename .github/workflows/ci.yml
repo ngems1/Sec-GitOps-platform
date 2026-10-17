@@ -105,6 +105,25 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
 
+  # The Node services' tracing tests (tracing.test.js, node --test; ADR 0010).
+  node-tests:
+    name: node tests ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [currencyservice, paymentservice]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24" # same as the Dockerfiles
+      - name: npm ci + npm test
+        working-directory: src/${{ matrix.service }}
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
   dotnet-tests:
     name: cartservice tests
     runs-on: ubuntu-latest
@@ -370,7 +389,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, tests, go-tests, dotnet-tests, secrets, helm, build]
+    needs: [changes, tests, go-tests, node-tests, dotnet-tests, secrets, helm, build]
     runs-on: ubuntu-latest
     steps:
       - name: All checks passed
