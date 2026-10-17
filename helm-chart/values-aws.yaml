@@ -29,6 +29,8 @@ frontend:
     enabled: true          # ...an ALB from the Ingress instead (templates/ingress.yaml)
   canary:
     enabled: true          # Argo Rollouts canary through the ALB (ADR 0008), dev and prod
+  resources:
+    requests: { cpu: 55m } # right-sized (RUNBOOK section 13); memory and limits: values.yaml
 
 redisAuth:
   tls: true                # ElastiCache requires TLS (transit_encryption_mode = required)
@@ -41,6 +43,38 @@ cartDatabase:
 
 inventoryService:
   create: true             # table, queue and bus names set by the workflow
+  resources:
+    requests: { cpu: 25m } # right-sized (RUNBOOK section 13)
+
+# Right-sized requests for dev and prod (RUNBOOK section 13), from cluster-status "Resource
+# usage" (about 6 h at 15 users). Requests only: Helm merges them over values.yaml, so limits
+# and any memory request not listed here stay as they are. HPA services (frontend above,
+# currency, catalog, cart, recommendation): about 2.5 x their CPU p95. The others: 25m floor.
+# Memory: above the measured maximum. Unchanged: adservice, loadgenerator, shoppingassistantservice.
+currencyService:
+  resources:
+    requests: { cpu: 45m, memory: 112Mi }
+productCatalogService:
+  resources:
+    requests: { cpu: 60m }
+cartService:
+  resources:
+    requests: { cpu: 60m, memory: 96Mi }
+recommendationService:
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+checkoutService:
+  resources:
+    requests: { cpu: 25m }
+shippingService:
+  resources:
+    requests: { cpu: 25m }
+emailService:
+  resources:
+    requests: { cpu: 25m, memory: 112Mi }
+paymentService:
+  resources:
+    requests: { cpu: 25m, memory: 80Mi }
 
 loadGenerator:
   # Steady, read-only shoppers through the ALB (frontendUrl, written by deploy-env.yml into
