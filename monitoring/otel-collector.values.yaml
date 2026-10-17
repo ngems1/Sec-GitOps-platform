@@ -5,7 +5,8 @@
 # of a trace on the same instance. Scaling out needs a loadbalancing exporter tier keyed on the
 # trace ID in front, never more replicas behind this Service (ADR 0010).
 #
-# Pipeline (traces only): otlp -> memory_limiter -> k8s_attributes -> tail_sampling -> batch -> Tempo.
+# Pipeline (traces only): otlp -> memory_limiter -> filter (OTLP export spans) -> k8s_attributes ->
+# tail_sampling -> batch -> Tempo.
 # Who may send: pods in boutique-dev and boutique-prod (monitoring/tracing-networkpolicies.yaml).
 
 mode: deployment
@@ -70,6 +71,15 @@ config:
       limit_mib: 400
       spike_limit_mib: 100
 
+    # Defence against self-tracing: spans of an OTLP export itself (a service whose exporter
+    # connection is traced) are dropped before they cost anything. The services no longer make
+    # them (ADR 0010, step 3); this keeps one bad image from filling Tempo.
+    filter/otlp-export:
+      error_mode: ignore
+      traces:
+        span:
+          - 'span.attributes["rpc.service"] == "opentelemetry.proto.collector.trace.v1.TraceService"'
+
     # Who sent the span: matched by the sender pod's IP (the services send straight here).
     k8s_attributes:
       passthrough: false
@@ -108,6 +118,7 @@ config:
                     - 'span.attributes["rpc.service"] == "grpc.health.v1.Health"'
                     - 'span.attributes["http.target"] == "/_healthz"'
                     - 'span.attributes["url.path"] == "/_healthz"'
+                    - 'span.attributes["http.route"] == "/_healthz"'   # frontend (route-named spans)
         - name: keep-errors
           type: status_code
           status_code: { status_codes: [ERROR] }
@@ -150,5 +161,5 @@ config:
       metrics: null
       traces:
         receivers: [otlp]
-        processors: [memory_limiter, k8s_attributes, tail_sampling, batch]
+        processors: [memory_limiter, filter/otlp-export, k8s_attributes, tail_sampling, batch]
         exporters: [otlp_grpc/tempo]
