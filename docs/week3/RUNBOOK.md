@@ -594,6 +594,19 @@ and prod, in `helm-chart/values-aws.yaml`, requests only; the limits are in `val
 - **Not changed:** adservice (the JVM's start-up needs), loadgenerator (it drives the
   canary's traffic), shoppingassistantservice.
 
+Measured on 2026-10-17 (about 6 h at 15 users; the higher of dev and prod), against the new
+requests:
+
+| HPA service | CPU p95 | CPU max | New request | p95 % of request | max % of request |
+|---|---|---|---|---|---|
+| frontend | 20m | 20m | 55m | 36% | 36% |
+| currencyservice | 17m | 22m | 45m | 38% | 49% |
+| productcatalogservice | 22m | 22m | 60m | 37% | 37% |
+| cartservice | 23m | 27m | 60m | 38% | 45% |
+| recommendationservice | 7m | 9m | 25m | 28% | 36% |
+
+All are under the 70% HPA target, even at their max.
+
 To check them, run the report again (Actions > cluster-status), ideally after a day that
 includes a `load-test` run:
 
