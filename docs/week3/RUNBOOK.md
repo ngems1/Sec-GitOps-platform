@@ -479,8 +479,9 @@ Only kept traces are there: health checks are dropped, and in prod only 10% of n
 past Tempo's 24 h, or a Tempo restart.
 
 **Trace IDs in the logs (ADR 0011, step 6).** The Go services (frontend, checkout, catalog,
-shipping) add `trace_id`, `span_id` (lower-case hex, as in `traceparent`) and `trace_sampled`
-to every log line written during a traced request.
+shipping) add `trace_id`, `span_id` (lower-case hex, as in `traceparent`) and `trace_flags`
+(`"01"` sampled, `"00"` not) to every log line written during a traced request. These are the
+names in all languages (ADR 0011).
 
 - **When the fields are absent:** while tracing is off (prod today), whatever `traceparent` a
   request carries, and on lines written outside a request.
