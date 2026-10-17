@@ -1,10 +1,12 @@
 # prod (namespace boutique-prod): same images as dev, deployed after a reviewer
 # approves the "prod" environment in GitHub.
 
-# Low steady traffic for the frontend canary analysis (values-aws.yaml: browse only, no
-# orders): ~0.8 requests/s, about 20 requests in the canary's first 2 minutes at 20%.
+# Steady traffic for the frontend canary analysis (values-aws.yaml: browse only, no orders).
+# Same as dev: 15 users, about 2.1 requests/s. At 20% weight the canary gets about 0.42/s, so the
+# first request-volume check (90 s of canary traffic) expects about 38 requests for a gate of 10
+# (5 users gave about 12.6 and aborted a healthy canary). Math: RUNBOOK section 10.
 loadGenerator:
-  users: 5
+  users: 15
 
 # OpenTelemetry tracing (ADR 0010): off in prod until it is proven in dev (ADR 0010, step 7).
 tracing:

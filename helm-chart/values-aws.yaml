@@ -45,10 +45,14 @@ inventoryService:
 loadGenerator:
   # Steady, read-only shoppers through the ALB (frontendUrl, written by deploy-env.yml into
   # gitops/<env>/values.yaml), so the frontend canary analysis always has traffic to judge
-  # (ADR 0008). No orders, no cart writes. ~1.5 requests/s in dev; prod: values-prod.yaml.
+  # (ADR 0008). No orders, no cart writes.
+  # 15 users = about 2.1 requests/s (about 0.14 per user, measured: Locust waits 1-10 s between
+  # tasks). The canary's request-volume gate needs it: at 20% weight the first check sees about
+  # 0.42/s x 90 s = 38 requests, 3.8x the minimum of 10. CI checks this (helm job). The CPU
+  # request below is unchanged; Locust uses far less than its 250m limit at this rate.
   create: true
   browseOnly: true
-  users: 10
+  users: 15
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 250m, memory: 256Mi }

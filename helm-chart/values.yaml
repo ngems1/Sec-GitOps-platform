@@ -225,7 +225,9 @@ frontend:
       maxP95Seconds: 1       # p95 latency (the shop's latency SLO)
       interval: 30s
       initialDelay: 90s      # first scrapes + the 1-minute rate window
-      minRequests: 10        # requests the canary must have served in volumeWindow, else fail
+      minRequests: 10        # requests the canary must have served in volumeWindow, else fail.
+                             # The first check sees only initialDelay of canary traffic: CI checks
+                             # the loadgenerator gives 3x this at the first canary weight.
       volumeWindow: 2m
       failureLimit: 1        # a second failed measurement aborts
   resources:
