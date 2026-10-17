@@ -239,6 +239,33 @@ jobs:
           fi
           echo "dev: ${tf_model} (inference profile: ${tf_profile}); prod: off"
 
+      # Tracing switch (ADR 0010, step 2): on in dev for exactly the 7 services with tracing code,
+      # off in prod (no tracing env, no 4317 egress). Uses the rendered files of the step above.
+      - name: Tracing on in dev only
+        run: |
+          want="checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice"
+          addr=$(yq '.tracing.collectorAddr' helm-chart/values.yaml)
+          traced() { # rendered file -> workloads (Deployment, StatefulSet, Job, Rollout) with any tracing env var
+            yq ea -N '[select(.spec.template.spec.containers) | select([.spec.template.spec.containers[].env[]?.name] | any_c(test("^(ENABLE_TRACING|COLLECTOR_SERVICE_ADDR|OTEL_.*)$"))) | .metadata.name] | unique | sort | join(" ")' "$1"
+          }
+          egress4317() { # rendered file -> NetworkPolicies with an egress rule on port 4317
+            yq ea -N '[select(.kind == "NetworkPolicy") | select([.spec.egress[]?.ports[]?.port] | any_c(. == 4317)) | .metadata.name] | join(" ")' "$1"
+          }
+          # prod: tracing stays off (ADR 0010, step 7).
+          [ -z "$(traced rendered-prod.yaml)" ] || { echo "::error::prod renders tracing env on: $(traced rendered-prod.yaml)"; exit 1; }
+          [ -z "$(egress4317 rendered-prod.yaml)" ] || { echo "::error::prod renders a 4317 egress rule in: $(egress4317 rendered-prod.yaml)"; exit 1; }
+          # dev: exactly the 7 instrumented services, each with all four variables and its own name.
+          [ "$(traced rendered-dev.yaml)" = "$want" ] || { echo "::error::dev tracing env on '$(traced rendered-dev.yaml)', want '${want}'"; exit 1; }
+          for svc in $want; do
+            envval() { yq ea -N "select(.kind == \"Deployment\" and .metadata.name == \"${svc}\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" rendered-dev.yaml; }
+            [ "$(envval ENABLE_TRACING)" = 1 ] && [ "$(envval COLLECTOR_SERVICE_ADDR)" = "$addr" ] && [ "$(envval OTEL_SERVICE_NAME)" = "$svc" ] \
+              && [ "$(envval OTEL_RESOURCE_ATTRIBUTES)" = "deployment.environment=dev,service.namespace=boutique" ] \
+              || { echo "::error::dev ${svc}: tracing env incomplete or wrong"; exit 1; }
+          done
+          [ "$(egress4317 rendered-dev.yaml)" = shoppingassistantservice ] \
+            || { echo "::error::dev: the 4317 egress rule must be on shoppingassistantservice only, found '$(egress4317 rendered-dev.yaml)'"; exit 1; }
+          echo "tracing: dev on for ${want} (collector ${addr}); prod off"
+
       # The frontend canary analysis and Grafana query Prometheus by its in-cluster address.
       # Render kube-prometheus-stack exactly as deploy/monitoring.sh installs it (release
       # "monitoring", namespace "monitoring", same values, the chart version from deploy.yml)
