@@ -1,0 +1,51 @@
+name: assistant-smoke
+
+# One-off smoke test of the AI shopping assistant after a deploy (ADR 0009, RUNBOOK section 15):
+# Actions > assistant-smoke > Run workflow. One question through the shop's /assistant page
+# (about USD 0.0004, one of the day's capped questions); the answer must link catalog products,
+# and the question text must not appear in the frontend or assistant logs. Prints no answer and
+# no log line (public logs). Read-only on the cluster (kubectl logs).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Where to ask"
+        type: choice
+        options: [prod, dev]
+        default: prod
+
+permissions:
+  id-token: write # GitHub OIDC -> AWS
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Connect kubectl to the cluster
+        run: |
+          aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/week3/terraform.tfstate" state.json --only-show-errors
+          aws eks update-kubeconfig --name "$(jq -r '.outputs.cluster_name.value' state.json)" --region "$AWS_REGION"
+          rm -f state.json
+
+      - name: Ask one question
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+        run: |
+          # The shop's URL, as deploy-env.yml wrote it for the loadgenerator.
+          url=$(grep -oE '"frontendUrl": *"[^"]+"' "gitops/${ENV_NAME}/values.yaml" | sed -E 's/.*"(https?:[^"]+)"/\1/')
+          [ -n "$url" ] || { echo "::error::no frontendUrl in gitops/${ENV_NAME}/values.yaml"; exit 1; }
+          bash deploy/assistant-smoke.sh "$url" "boutique-${ENV_NAME}" | tee -a "$GITHUB_STEP_SUMMARY"

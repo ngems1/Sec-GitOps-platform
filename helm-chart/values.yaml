@@ -137,7 +137,7 @@ inventoryService:
       memory: 192Mi
 
 shoppingAssistantService:
-  # AI shopping assistant (ADR 0009). Off by default and in prod; on in dev (values-dev.yaml).
+  # AI shopping assistant (ADR 0009). Off by default; on in dev and prod (values-<env>.yaml).
   # When on, the frontend shows its /assistant page (ASSISTANT_URL).
   create: false
   name: shoppingassistantservice
