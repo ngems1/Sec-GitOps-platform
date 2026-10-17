@@ -1159,7 +1159,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no orders"
         },
         "overrides": []
       },
@@ -1569,7 +1570,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "0"
         },
         "overrides": []
       },
