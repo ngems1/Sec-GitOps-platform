@@ -183,6 +183,21 @@ spec:
     ports:
     - port: 80
       protocol: TCP
+  {{- if $.Values.tracing.enabled }}
+  # OTLP gRPC to the OTel Collector in "monitoring" (ADR 0010). The service has no tracing code
+  # yet (step 4): the rule is ready for it. The other services already allow all egress.
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: opentelemetry-collector
+          app.kubernetes.io/instance: otel-collector
+    ports:
+    - port: 4317
+      protocol: TCP
+  {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

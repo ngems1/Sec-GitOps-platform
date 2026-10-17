@@ -313,8 +313,17 @@ after `destroy`, would pick up whatever AWS released last.
 ## 12. Tracing backend (Tempo + OTel Collector, ADR 0010)
 
 **What runs.** In `monitoring`, installed by the deploy workflow's `monitoring` job
-(`deploy/monitoring.sh`, exact chart versions in `deploy.yml`). The shop does not send traces yet:
-that is step 2 of ADR 0010.
+(`deploy/monitoring.sh`, exact chart versions in `deploy.yml`).
+
+**Who sends.** Only dev (`tracing.enabled: true` in `helm-chart/values-dev.yaml`; prod is
+`false`).
+- The 7 services with tracing code send traces: frontend, checkoutservice, productcatalogservice,
+  currencyservice, paymentservice, recommendationservice and emailservice.
+- Each gets `ENABLE_TRACING=1`, `COLLECTOR_SERVICE_ADDR` (`tracing.collectorAddr`),
+  `OTEL_SERVICE_NAME` (its own name) and `OTEL_RESOURCE_ATTRIBUTES`
+  (`deployment.environment=dev,service.namespace=boutique`).
+- The other services send nothing yet (ADR 0010, step 4). shoppingassistantservice already has
+  its NetworkPolicy rule to the collector (4317).
 
 - `otel-collector`: a Deployment with 1 replica. It receives OTLP on 4317 (gRPC) and 4318 (HTTP)
   from `boutique-dev` and `boutique-prod` only. Pipeline: memory_limiter, k8s_attributes,
@@ -351,6 +360,24 @@ that is step 2 of ADR 0010.
 | Collector logs "Could not initialize kube client" or 403 on pods | The ClusterRole `otel-collector` (pods, namespaces, ReplicaSets) or its API egress rule (Kubernetes Service IP and the VPC range on 443) |
 | Tempo `OOMKilled`, or evicted for ephemeral storage | Memory limit 1Gi (`GOMEMLIMIT` 900MiB); the trace disk is capped at 2Gi. Lower retention, or plan the S3 backend (ADR 0010, Storage) |
 | Traces gone after a Tempo restart | Expected: local storage (ADR 0010) |
+| Dev traces missing for one service | cluster-status > `boutique-dev`: its pod env must have the four tracing variables, and its start log must not say "Tracing disabled." (frontend, checkout, currency and payment also log "Tracing enabled.") |
+
+**Turn tracing off for dev** (for example if a dev deploy misbehaves after this switch):
+
+1. Set `tracing.enabled: false` in `helm-chart/values-dev.yaml` and merge. Argo CD rolls the 7
+   Deployments without the tracing variables.
+   - The frontend change goes through its canary, like any frontend change.
+   - The collector and Tempo keep running, so turning tracing back on is the same one-line change.
+2. What to expect:
+   - **Services:** they start and serve whether tracing is on or off, and whether the collector
+     answers or not (checked for the 7 services in ADR 0010, step 2). The gRPC dial to the
+     collector does not block, and spans are exported in the background.
+   - **Collector down while tracing is on:** spans are dropped, never sent again. Spans not yet
+     exported when a pod stops are lost too.
+   - **Old traces:** they stay in Tempo until its 24 h retention or a Tempo restart.
+3. Faster but temporary: `kubectl -n boutique-dev set env deploy/<service> ENABLE_TRACING-`
+   (not on the frontend: that starts a canary). Argo CD self-heal puts it back within minutes,
+   so use it only to test.
 
 **Remove** (for example to free capacity). Then delete the Tempo entry from
 `additionalDataSources` in `monitoring/kube-prometheus-stack.values.yaml`, and remove the

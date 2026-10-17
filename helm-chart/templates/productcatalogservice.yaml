@@ -77,14 +77,7 @@ spec:
         env:
         - name: PORT
           value: "3550"
-        {{- if .Values.opentelemetryCollector.create }}
-        - name: COLLECTOR_SERVICE_ADDR
-          value: "{{ .Values.opentelemetryCollector.name }}:4317"
-        {{- end }}
-        {{- if .Values.googleCloudOperations.tracing }}
-        - name: ENABLE_TRACING
-          value: "1"
-        {{- end }}
+        {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.productCatalogService.name)) }}{{ . | nindent 8 }}{{ end }}
         {{- if not .Values.googleCloudOperations.profiler }}
         - name: DISABLE_PROFILER
           value: "1"
@@ -209,9 +202,6 @@ spec:
   egress:
   - hosts:
     - istio-system/*
-    {{- if .Values.opentelemetryCollector.create }}
-    - ./{{ .Values.opentelemetryCollector.name }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- end }}
 {{- end }}
 {{- if .Values.authorizationPolicies.create }}
 ---
