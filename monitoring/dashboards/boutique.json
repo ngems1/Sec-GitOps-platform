@@ -835,7 +835,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no 5xx errors"
         },
         "overrides": []
       },
@@ -1212,7 +1213,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no orders"
         },
         "overrides": []
       },
@@ -1264,7 +1266,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no errors"
         },
         "overrides": []
       },
