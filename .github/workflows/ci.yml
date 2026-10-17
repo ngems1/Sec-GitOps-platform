@@ -70,6 +70,16 @@ jobs:
         run: |
           python -m pip install --quiet -r requirements.txt
           python -m unittest -v
+      # Tracing (tracing.py, ADR 0010) with each service's pinned OpenTelemetry and gRPC, one venv
+      # per service. google-cloud-profiler is left out: it compiles C++ and the tests don't use it.
+      - name: recommendationservice + emailservice (tracing)
+        run: |
+          for s in recommendationservice emailservice; do
+            python -m venv "$RUNNER_TEMP/venv-$s"
+            grep -v '^google-cloud-profiler' "src/$s/requirements.txt" > "$RUNNER_TEMP/req-$s.txt"
+            "$RUNNER_TEMP/venv-$s/bin/pip" install --quiet -r "$RUNNER_TEMP/req-$s.txt"
+            (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing)
+          done
 
   # The Go and C# unit tests (they existed but never ran in CI).
   go-tests:
@@ -104,6 +114,25 @@ jobs:
         run: |
           go vet ./...
           go test -race -count=1 ./...
+
+  # The Node services' tracing tests (tracing.test.js, node --test; ADR 0010).
+  node-tests:
+    name: node tests ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [currencyservice, paymentservice]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24" # same as the Dockerfiles
+      - name: npm ci + npm test
+        working-directory: src/${{ matrix.service }}
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
 
   dotnet-tests:
     name: cartservice tests
@@ -370,7 +399,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, tests, go-tests, dotnet-tests, secrets, helm, build]
+    needs: [changes, tests, go-tests, node-tests, dotnet-tests, secrets, helm, build]
     runs-on: ubuntu-latest
     steps:
       - name: All checks passed

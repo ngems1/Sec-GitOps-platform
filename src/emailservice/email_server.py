@@ -30,11 +30,7 @@ import demo_pb2_grpc
 from grpc_health.v1 import health_pb2
 from grpc_health.v1 import health_pb2_grpc
 
-from opentelemetry import trace
-from opentelemetry.instrumentation.grpc import GrpcInstrumentorServer
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from tracing import start_tracing
 
 import googlecloudprofiler
 
@@ -216,25 +212,7 @@ if __name__ == '__main__':
   except KeyError:
       logger.info("Profiler disabled.")
 
-  # Tracing
-  try:
-    if os.environ["ENABLE_TRACING"] == "1":
-      otel_endpoint = os.getenv("COLLECTOR_SERVICE_ADDR", "localhost:4317")
-      trace.set_tracer_provider(TracerProvider())
-      trace.get_tracer_provider().add_span_processor(
-        BatchSpanProcessor(
-            OTLPSpanExporter(
-            endpoint = otel_endpoint,
-            insecure = True
-          )
-        )
-      )
-    grpc_server_instrumentor = GrpcInstrumentorServer()
-    grpc_server_instrumentor.instrument()
-
-  except (KeyError, DefaultCredentialsError):
-      logger.info("Tracing disabled.")
-  except Exception as e:
-      logger.warn(f"Exception on Cloud Trace setup: {traceback.format_exc()}, tracing disabled.") 
+  # Tracing before the gRPC server exists: server spans whenever ENABLE_TRACING=1 (tracing.py, ADR 0010).
+  start_tracing("emailservice", logger)
   
   start(dummy_mode = True)

@@ -36,9 +36,6 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 const (
@@ -91,8 +88,11 @@ func main() {
 	ctx := context.Background()
 	if os.Getenv("ENABLE_TRACING") == "1" {
 		log.Info("Tracing enabled.")
-		initTracing()
-
+		var collectorAddr string
+		mustMapEnv(&collectorAddr, "COLLECTOR_SERVICE_ADDR")
+		if _, err := startTracing(ctx, "checkoutservice", collectorAddr); err != nil {
+			log.Warnf("tracing: %v", err)
+		}
 	} else {
 		log.Info("Tracing disabled.")
 	}
@@ -144,10 +144,8 @@ func main() {
 
 	var srv *grpc.Server
 
-	// Propagate trace context always
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{}, propagation.Baggage{}))
+	// Propagate trace context always (W3C, tracing.go)
+	otel.SetTextMapPropagator(newPropagator())
 	srv = grpc.NewServer(
 		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
 		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
@@ -162,32 +160,6 @@ func main() {
 
 func initStats() {
 	//TODO(arbrown) Implement OpenTelemetry stats
-}
-
-func initTracing() {
-	var (
-		collectorAddr string
-		collectorConn *grpc.ClientConn
-	)
-
-	ctx := context.Background()
-	ctx, cancel := context.WithTimeout(ctx, time.Second*3)
-	defer cancel()
-
-	mustMapEnv(&collectorAddr, "COLLECTOR_SERVICE_ADDR")
-	mustConnGRPC(ctx, &collectorConn, collectorAddr)
-
-	exporter, err := otlptracegrpc.New(
-		ctx,
-		otlptracegrpc.WithGRPCConn(collectorConn))
-	if err != nil {
-		log.Warnf("warn: Failed to create trace exporter: %v", err)
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()))
-	otel.SetTracerProvider(tp)
-
 }
 
 func initProfiling(service, version string) {

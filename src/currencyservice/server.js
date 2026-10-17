@@ -16,31 +16,8 @@
 
 // Google Cloud Profiler removed: it only works on GCP (same as adservice).
 
-// Register GRPC OTel Instrumentation for trace propagation
-// regardless of whether tracing is emitted.
-const { GrpcInstrumentation } = require('@opentelemetry/instrumentation-grpc');
-const { registerInstrumentations } = require('@opentelemetry/instrumentation');
-
-registerInstrumentations({
-  instrumentations: [new GrpcInstrumentation()]
-});
-
-if(process.env.ENABLE_TRACING == "1") {
-  console.log("Tracing enabled.")
-  const { NodeTracerProvider } = require('@opentelemetry/sdk-trace-node');
-  const { SimpleSpanProcessor } = require('@opentelemetry/sdk-trace-base');
-  const { OTLPTraceExporter } = require("@opentelemetry/exporter-otlp-grpc");
-
-  const provider = new NodeTracerProvider();
-  
-  const collectorUrl = process.env.COLLECTOR_SERVICE_ADDR
-
-  provider.addSpanProcessor(new SimpleSpanProcessor(new OTLPTraceExporter({url: collectorUrl})));
-  provider.register();
-}
-else {
-  console.log("Tracing disabled.")
-}
+// Tracing first: it must patch @grpc/grpc-js before that is loaded (tracing.js, ADR 0010).
+require('./tracing').startTracing('currencyservice');
 
 const path = require('path');
 const grpc = require('@grpc/grpc-js');
