@@ -112,7 +112,9 @@ class EmailService(BaseEmailService):
 
 class DummyEmailService(BaseEmailService):
   def SendOrderConfirmation(self, request, context):
-    logger.info('A request to send order confirmation email to {} has been received.'.format(request.email))
+    # The order ID, never the shopper's address (ADR 0011).
+    logger.info('A request to send an order confirmation email has been received.',
+                extra={'orderId': request.order.order_id})
     return demo_pb2.Empty()
 
 class HealthCheck():

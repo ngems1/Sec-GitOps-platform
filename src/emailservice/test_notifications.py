@@ -251,5 +251,24 @@ class SesTest(unittest.TestCase):
         self.assertEqual(len(ses.ses.sent), 1)
 
 
+class NoAddressInLogsTest(unittest.TestCase):
+    """The service log never holds the shopper's address, not even masked (ADR 0011)."""
+
+    def test_no_address_in_any_log_line(self):
+        logger = FakeLogger()
+        log_table = n.NotificationLog(FakeDynamo(), "t")
+        ses = n.SesSender(FakeSes(), "orders@shop.example", ["jane.doe@mail.example"])
+        n.handle(status_event(email="jane.doe@mail.example"), log_table, logger, ses=ses)  # SES
+        n.handle(status_event(email="jane.doe@mail.example"), log_table, logger, ses=ses)  # duplicate
+        n.handle(status_event(order_id="o-2", email="john.roe@other.example"), log_table, logger)  # log mode
+        n.handle(status_event(order_id="o-3", email=""), log_table, logger)  # no address
+        self.assertEqual(len(logger.sent()), 2)
+        for level, msg, extra in logger.lines:
+            line = msg + " " + " ".join(str(v) for v in extra.values())
+            for secret in ("jane", "john", "mail.example", "other.example", "*@"):
+                self.assertNotIn(secret, line, (level, msg, extra))
+            self.assertIn("orderId", extra)
+
+
 if __name__ == "__main__":
     unittest.main()
