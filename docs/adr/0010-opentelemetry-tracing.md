@@ -132,9 +132,10 @@ On the receiving side:
   defaults).
 - Head sampling at the frontend (a fixed ratio) is cheap, but it can't keep "all errors and all
   slow requests".
-- Tail sampling in the collector decides after the whole trace has arrived. It needs every span
-  of a trace to reach the same collector instance: easy with one replica, or a load-balancing
-  tier later.
+- Tail sampling in the collector decides after the whole trace has arrived. **The error and
+  latency rules only work if every span of a trace reaches the same collector instance.** With
+  two replicas behind a Service, spans of one trace are spread over both. Each replica then sees
+  part of the trace: it can drop the slow or failing part, or keep a trace with holes.
 
 ### Volume and cost estimate
 
@@ -205,10 +206,96 @@ Sampling:
   - `filter`: drop health checks (`/_healthz`, `grpc.health.v1`);
   - `tail_sampling`: keep 100% of traces with an error and of traces slower than 1 s (the
     shop's latency SLO), plus 100% of the rest in dev and 10% in prod.
-- **Collector size:** one replica until the volume needs more.
+- **One collector replica for now**, so all spans of a trace meet in one place and the tail
+  sampling rules see whole traces.
+  - If the collector must scale, add a two-tier setup: a first tier with the `loadbalancing`
+    exporter keyed on the trace ID (`routing_key: traceID`) in front of the sampling
+    collectors.
+  - Every span of a trace then reaches the same sampling replica. A plain Service in front of
+    several sampling replicas is not allowed.
 
 The roadmap's earlier "exporting to AWS X-Ray" is replaced by this. X-Ray stays the option when
 traces must outlive the cluster without running storage.
+
+### Capacity
+
+Proposed requests and limits (no CPU limits, as for the rest of `monitoring`):
+
+| Component | Replicas | CPU request | Memory request | Memory limit | Notes |
+|---|---|---|---|---|---|
+| OTel Collector (contrib) | 1 | 100m | 256Mi | 512Mi | `memory_limiter` at about 400 MiB (spike 100 MiB), so it refuses data before the OOM kill; tail sampling `decision_wait` 10 s, `num_traces` 20,000 |
+| Tempo (single binary) | 1 | 100m | 384Mi | 1Gi | local disk `emptyDir` with `sizeLimit: 2Gi`, 24 h block retention |
+| **Total added** | | **200m** | **640Mi** | | |
+
+Current headroom, from the repo. These are requests, which is what the scheduler counts.
+
+| Item | CPU | Memory | Source |
+|---|---|---|---|
+| Node group | about 7.6 allocatable | 4 x 4 GiB physical | `terraform-aws/variables.tf`: 4 x t3.medium (min 2, max 5); "about 7.6 CPU allocatable" in `values-dev.yaml`. Allocatable memory depends on the kubelet reservation for 110 pods: read it with `kubectl describe nodes` in step 1 |
+| boutique-dev | 1.35 | 1.26 GiB | rendered chart at the HPA minimums |
+| boutique-prod | 1.35 | 1.23 GiB | same; inventoryservice runs 2 replicas |
+| monitoring | about 0.35 | about 0.9 GiB | `kube-prometheus-stack.values.yaml`: Prometheus, Grafana, operator, kube-state-metrics, node-exporter on each node |
+| Argo Rollouts, metrics-server | about 0.15 | about 0.25 GiB | their values; Argo CD sets no requests |
+| EKS add-ons and DaemonSets (CoreDNS, kube-proxy, VPC CNI, Pod Identity Agent, CloudWatch agent, Fluent Bit) | about 1.5 to 2 (estimate) | about 0.8 GiB (estimate) | not in the repo: measure in step 1 |
+| **Total today** | **about 4.7 to 5.2** | **about 4.4 GiB** | |
+
+- **Rendered totals:** the boutique figures leave out containers without requests, which get
+  the LimitRange default (50m, 64Mi).
+- **Normal running:** tracing adds 0.2 CPU and 0.6 GiB, leaving about 2.2 CPU of headroom. **No
+  bigger node group is needed.**
+- **Both environments at their HPA maximum:**
+  - each environment adds about 1.4 CPU (frontend +3 x 100m, currency +3 x 100m, catalog
+    +2 x 100m, cart +2 x 200m, recommendation +2 x 100m);
+  - that brings requests to about 7.5 to 8 CPU, which is at the limit with or without tracing.
+  - That is today's load-test case. For a load-test day, set `node_desired_size = 5` (already
+    allowed by `max_size = 5`); there is no cluster autoscaler in the repo.
+- **Step 1** records `kubectl describe nodes` (Allocated resources) before and after the
+  install.
+
+### Storage
+
+- **Dev, now:** Tempo stores blocks on the pod's local disk (`emptyDir`, the chart default
+  `persistence.enabled: false`).
+  - Traces are lost when the Tempo pod restarts or moves to another node, as well as at the
+    daily destroy.
+  - That is acceptable for dev: Prometheus already keeps its 24 h in the pod the same way.
+- **Prod option, decided later:** the Tempo S3 backend.
+  - One bucket for traces only (encrypted, a lifecycle rule matching the retention, public
+    access blocked).
+  - Tempo reaches it through a Pod Identity role scoped to that bucket and the Tempo service
+    account in `monitoring`, with the namespace-tag condition used for the other pod roles.
+  - Today the deploy role may only use the Terraform state bucket in S3 (`terraform-bootstrap/boundaries.tf`).
+    A traces bucket needs a boundary change and a bootstrap run, or the bucket in
+    `terraform-bootstrap/` if traces must survive the daily destroy.
+  - Decided when prod tracing is turned on (step 7) or when traces must outlive a pod restart.
+
+### Install method and versions
+
+- **Where it runs:** Tempo and the collector are installed by the existing `monitoring` job
+  (`deploy/monitoring.sh`, run by the deploy workflow), next to kube-prometheus-stack.
+- **Why not Argo CD:**
+  - They are shared by the cluster: one collector and one Tempo serve `boutique-dev` and
+    `boutique-prod`. They must exist before any app sends spans, and they plug into the
+    Prometheus and Grafana that this job installs (the data source, and the remote-write
+    receiver for span metrics).
+  - The Argo CD project `boutique` may only deploy to `boutique-dev` and `boutique-prod` and no
+    cluster-scoped objects (`deploy/argocd/project.yaml`). The collector needs a ClusterRole for
+    `k8sattributes`, so Argo CD would need a second project.
+  - The whole monitoring stack is not managed through GitOps today. Moving it to Argo CD is a
+    separate decision for all of it, not for two charts.
+- **Exact chart versions:** pinned in `deploy.yml` as environment variables, the way
+  `KPS_VERSION` is passed. Unlike that range, these are exact versions. CI renders both charts
+  with the same values.
+  - `open-telemetry/opentelemetry-collector` **0.174.2** (Collector 0.161.0, `contrib` image),
+    published 2026-10-01. `mode: deployment`, `replicaCount: 1`, preset
+    `kubernetesAttributes`.
+  - `grafana-community/tempo` **2.4.0** (Tempo 2.10.8, single binary), published 2026-09-11.
+    `reportingEnabled: false` (usage reports to Grafana Labs off, like Grafana's analytics).
+  - The Tempo charts in `grafana/helm-charts` (`tempo` 1.24.4, `tempo-distributed` 1.61.3) are
+    marked deprecated since 2026-01-30. The single-binary chart now lives in the
+    `grafana-community` repository (https://grafana-community.github.io/helm-charts).
+  - Its 3.x line (Tempo 3.x, since 2026-09-11) is a new major version: we stay on 2.x and
+    evaluate 3.x separately.
 
 ## Rollout plan (dev first, then prod through `env/prod`)
 
@@ -216,8 +303,9 @@ Each step is a small PR. Merging it deploys dev from `main` (Argo CD); nothing r
 until step 7.
 
 1. **Backend and collector (no app change).**
-   - `deploy/monitoring.sh` installs Tempo and the collector in `monitoring` with pinned chart
-     versions.
+   - `deploy/monitoring.sh` installs Tempo and the collector in `monitoring` with the exact chart
+     versions above. It uses the requests and limits from "Capacity" and records the node
+     allocation before and after.
    - Grafana gets a Tempo data source with a fixed uid.
    - NetworkPolicies in `monitoring`: collector 4317 from the boutique namespaces only; Tempo
      from the collector and Grafana.
@@ -254,8 +342,17 @@ until step 7.
    - Order-status Lambda tracing is optional (an OpenTelemetry Lambda layer).
 6. **Links between signals.**
    - `trace_id`/`span_id` in the JSON logs.
-   - The Tempo metrics-generator with exemplars into Prometheus (remote-write receiver and
-     exemplar storage on).
+   - The Tempo metrics-generator (span metrics and service graph) with exemplars, written to
+     Prometheus.
+     - Prometheus must accept remote writes:
+       `prometheus.prometheusSpec.enableRemoteWriteReceiver: true` in
+       `monitoring/kube-prometheus-stack.values.yaml`, plus
+       `enableFeatures: [exemplar-storage]` for the exemplars.
+     - **This changes the monitoring install.** The Prometheus pod restarts, which drops its
+       in-pod 24 h of metrics, so apply it outside a canary.
+     - The remote-write endpoint is open to anything that can reach Prometheus. Add a
+       NetworkPolicy so only Tempo may write.
+     - The CI step that renders kube-prometheus-stack covers it.
    - Grafana links: exemplars to Tempo, Tempo to span metrics, and a CloudWatch Logs Insights
      link by trace ID.
    - A "Traces" row on the Boutique dashboard and a RUNBOOK section.
@@ -268,13 +365,19 @@ until step 7.
 
 ## Consequences
 
-- Two more workloads in `monitoring` (about 200m CPU and 768Mi together, to size during step 1)
-  and two more pinned charts to upgrade.
-- Traces are lost when the cluster is destroyed, like the metrics. That is acceptable for the
-  lab, and S3 storage is the fix if not.
+- Two more workloads in `monitoring` (200m CPU and 640Mi of requests together, see
+  "Capacity"); no bigger node group for normal running. Two more pinned charts to upgrade, by
+  hand, in `deploy.yml`.
+- Traces are lost when the Tempo pod restarts and when the cluster is destroyed, like the
+  metrics. That is acceptable for dev; the S3 backend is the prod option, decided later.
+- **Tail sampling pins the design to one collector replica:** the error and latency rules need
+  every span of a trace on the same instance. That replica is a single point of failure for
+  traces (not for the shop: the SDKs drop spans when the collector is down). Scaling it means
+  adding the `loadbalancing` exporter tier keyed on the trace ID, never more replicas behind a
+  plain Service.
+- Span metrics turn on Prometheus's remote-write receiver: a change to the monitoring install
+  and a new write path into Prometheus, to limit with a NetworkPolicy.
 - Five services gain tracing code or an agent. The adservice JVM start time must be watched.
-- Tail sampling ties all spans of a trace to one collector replica. Scaling out needs a
-  load-balancing exporter tier.
 - Spans may carry attributes from requests: never the assistant's question, the session ID or
   personal data (attribute allow-list in the collector if needed).
 
