@@ -391,7 +391,20 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 1
+          "decimals": 1,
+          "noValue": "no orders",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "no orders",
+                  "color": "text"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -460,7 +473,20 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 1
+          "decimals": 1,
+          "noValue": "no orders",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "no orders",
+                  "color": "text"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -1311,7 +1337,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no messages"
         },
         "overrides": []
       },
@@ -1372,7 +1399,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no messages"
         },
         "overrides": []
       },
