@@ -266,6 +266,31 @@ jobs:
             || { echo "::error::dev: the 4317 egress rule must be on shoppingassistantservice only, found '$(egress4317 rendered-dev.yaml)'"; exit 1; }
           echo "tracing: dev on for ${want} (collector ${addr}); prod off"
 
+      # Frontend canary (ADR 0008): the loadgenerator must give the canary 3x the request-volume
+      # gate at its first check, or a healthy canary is aborted for lack of traffic (RUNBOOK 10).
+      - name: Canary gets enough traffic
+        run: |
+          # Requests per second per Locust user (wait 1-10 s between tasks), measured in prod: 5 users gave
+          # about 0.7/s. Keep it conservative: it is what the canary math below relies on.
+          per_user=0.14
+          secs() { case "$1" in *m) echo $(( ${1%m} * 60 ));; *s) echo "${1%s}";; *) echo "$1";; esac; }
+          for env in dev prod; do
+            f="rendered-${env}.yaml"
+            users=$(yq ea -N 'select(.kind == "Deployment" and .metadata.name == "loadgenerator") | .spec.template.spec.containers[] | select(.name == "main") | .env[] | select(.name == "USERS") | .value' "$f")
+            weight=$(yq ea -N 'select(.kind == "Rollout") | [.spec.strategy.canary.steps[] | select(has("setWeight"))][0].setWeight' "$f")
+            metric() { yq ea -N "select(.kind == \"AnalysisTemplate\") | .spec.metrics[] | select(.name == \"request-volume\") | $1" "$f"; }
+            delay=$(secs "$(metric .initialDelay)")
+            window=$(secs "$(metric .provider.prometheus.query | grep -o '\[[0-9]*[sm]\]' | tr -d '[]')")
+            min=$(metric .successCondition | sed -n 's/.*>= *\([0-9.]*\).*/\1/p')
+            # The first check (initialDelay after the analysis starts at the first weight) sees at most
+            # initialDelay seconds of canary traffic, never more than the window.
+            seen=$(( delay < window ? delay : window ))
+            expected=$(awk -v u="$users" -v r="$per_user" -v w="$weight" -v s="$seen" 'BEGIN { printf "%.1f", u * r * w / 100 * s }')
+            echo "${env}: ${users} users x ${per_user}/s x ${weight}% x ${seen} s = ${expected} canary requests at the first check (gate ${min}, window ${window} s)"
+            awk -v e="$expected" -v m="$min" 'BEGIN { exit !(e >= 3 * m) }' \
+              || { echo "::error::${env}: the canary's first request-volume check expects ${expected} requests, less than 3x its gate (${min}). Raise loadGenerator.users (RUNBOOK section 10)."; exit 1; }
+          done
+
       # The frontend canary analysis and Grafana query Prometheus by its in-cluster address.
       # Render kube-prometheus-stack exactly as deploy/monitoring.sh installs it (release
       # "monitoring", namespace "monitoring", same values, the chart version from deploy.yml)
