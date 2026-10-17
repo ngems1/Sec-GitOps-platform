@@ -46,9 +46,11 @@ class UnacceptedCreditCard extends CreditCardError {
   }
 }
 
+// Error messages travel to checkoutservice and the frontend, which log them: no card number
+// digits and no expiry date in them.
 class ExpiredCreditCard extends CreditCardError {
-  constructor (number, month, year) {
-    super(`Your credit card (ending ${number.substr(-4)}) expired on ${month}/${year}`);
+  constructor () {
+    super('Your credit card has expired');
   }
 }
 
@@ -77,10 +79,12 @@ module.exports = function charge (request) {
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
   const { credit_card_expiration_year: year, credit_card_expiration_month: month } = creditCard;
-  if ((currentYear * 12 + currentMonth) > (year * 12 + month)) { throw new ExpiredCreditCard(cardNumber.replace('-', ''), month, year); }
+  if ((currentYear * 12 + currentMonth) > (year * 12 + month)) { throw new ExpiredCreditCard(); }
 
-  logger.info(`Transaction processed: ${cardType} ending ${cardNumber.substr(-4)} \
+  // The card brand and amount only: never digits of the card number.
+  const transactionId = uuidv4();
+  logger.info(`Transaction processed: ${transactionId} (${cardType}) \
     Amount: ${amount.currency_code}${amount.units}.${amount.nanos}`);
 
-  return { transaction_id: uuidv4() };
+  return { transaction_id: transactionId };
 };
