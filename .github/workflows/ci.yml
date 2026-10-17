@@ -266,6 +266,61 @@ jobs:
               || { echo "::error::${f} overrides prometheusAddress: keep it in helm-chart/values.yaml only"; exit 1; }
           done
 
+      # Tracing backend (ADR 0010): both charts render with the exact versions in deploy.yml, keep
+      # the ADR's shape, and the rendered configs start in the real images. The collector checks
+      # tail sampling policies and OTTL only when its pipeline starts, not in "validate".
+      - name: Tracing backend (Tempo + OTel Collector)
+        run: |
+          pin() { sed -n "s/^ *$1: \"\([^\"]*\)\".*/\1/p" .github/workflows/deploy.yml; }
+          tempo_v=$(pin TEMPO_CHART_VERSION); otel_v=$(pin OTEL_COLLECTOR_CHART_VERSION)
+          [ -n "$tempo_v" ] && [ -n "$otel_v" ] \
+            || { echo "::error::TEMPO_CHART_VERSION or OTEL_COLLECTOR_CHART_VERSION not found in deploy.yml"; exit 1; }
+          helm template tempo tempo --repo https://grafana-community.github.io/helm-charts \
+            --version "$tempo_v" --namespace monitoring -f monitoring/tempo.values.yaml > tempo.yaml
+          helm template otel-collector opentelemetry-collector --repo https://open-telemetry.github.io/opentelemetry-helm-charts \
+            --version "$otel_v" --namespace monitoring -f monitoring/otel-collector.values.yaml > otel.yaml
+          fail() { echo "::error::$1"; exit 1; }
+
+          # Tempo: OTLP receivers only, 2 GiB local disk, no usage reports.
+          yq ea -N 'select(.kind == "ConfigMap" and .metadata.name == "tempo") | .data["tempo.yaml"]' tempo.yaml > tempo-config.yaml
+          yq ea -N 'select(.kind == "ConfigMap" and .metadata.name == "tempo") | .data["overrides.yaml"]' tempo.yaml > tempo-overrides.yaml
+          [ "$(yq '.distributor.receivers | keys | join(",")' tempo-config.yaml)" = otlp ] || fail "Tempo must have OTLP receivers only"
+          [ "$(yq '.usage_report.reporting_enabled' tempo-config.yaml)" = false ] || fail "Tempo usage reports must be off"
+          [ "$(yq ea -N 'select(.kind == "StatefulSet") | .spec.template.spec.volumes[] | select(.name == "tempo-data") | .emptyDir.sizeLimit' tempo.yaml)" = 2Gi ] \
+            || fail "Tempo traces must be on the 2Gi emptyDir"
+          # Collector: one replica (tail sampling), and a ClusterRole limited to k8s_attributes' needs.
+          [ "$(yq ea -N 'select(.kind == "Deployment") | .spec.replicas' otel.yaml)" = 1 ] \
+            || fail "the collector must run 1 replica: tail sampling needs all spans of a trace on one instance (ADR 0010)"
+          [ "$(yq ea -N 'select(.kind == "ClusterRole") | [.rules[].resources[]] | sort | join(",")' otel.yaml)" = namespaces,pods,replicasets ] \
+            || fail "the collector's ClusterRole must cover pods, namespaces and replicasets only"
+          [ "$(yq ea -N 'select(.kind == "ClusterRole") | [.rules[].verbs[]] | unique | sort | join(",")' otel.yaml)" = get,list,watch ] \
+            || fail "the collector's ClusterRole must be read-only (get, list, watch)"
+
+          # Start both with the rendered config. k8s_attributes needs a cluster: left out here.
+          yq ea -N 'select(.kind == "ConfigMap" and .metadata.name == "otel-collector") | .data.relay' otel.yaml \
+            | yq 'del(.processors.k8s_attributes) | .service.pipelines.traces.processors -= ["k8s_attributes"]' > relay.yaml
+          otel_image=$(yq ea -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].image' otel.yaml)
+          tempo_image=$(yq ea -N 'select(.kind == "StatefulSet") | .spec.template.spec.containers[0].image' tempo.yaml)
+          docker run -d --name tempo-check -v "$PWD/tempo-config.yaml:/conf/tempo.yaml:ro" \
+            -v "$PWD/tempo-overrides.yaml:/conf/overrides.yaml:ro" --tmpfs /var/tempo:uid=10001,gid=10001 \
+            "$tempo_image" -config.file=/conf/tempo.yaml -mem-ballast-size-mbs=0 >/dev/null
+          docker run -d --name otel-check -e MY_POD_IP=127.0.0.1 -e OTEL_K8S_NAMESPACE=monitoring \
+            -e OTEL_K8S_NODE_NAME=ci -e OTEL_K8S_NODE_IP=127.0.0.1 -e OTEL_K8S_POD_NAME=otel-check \
+            -e OTEL_K8S_POD_IP=127.0.0.1 -v "$PWD/relay.yaml:/conf/relay.yaml:ro" \
+            "$otel_image" --config=/conf/relay.yaml >/dev/null
+          sleep 25
+          for c in otel-check tempo-check; do
+            echo "--- ${c} (last lines)"; docker logs --tail 15 "$c" 2>&1
+          done
+          docker logs otel-check 2>&1 | grep -q "Everything is ready" \
+            && [ "$(docker inspect -f '{{.State.Running}}' otel-check)" = true ] \
+            || fail "the collector (${otel_image}) did not start with the rendered config"
+          [ "$(docker inspect -f '{{.State.Running}}' tempo-check)" = true ] \
+            && ! docker logs tempo-check 2>&1 | grep -qE 'level=(error|fatal)' \
+            || fail "Tempo (${tempo_image}) did not start with the rendered config"
+          docker rm -f otel-check tempo-check >/dev/null
+          echo "Tempo chart ${tempo_v} (${tempo_image}) and collector chart ${otel_v} (${otel_image}): render and start OK"
+
   build:
     name: build ${{ matrix.service }}
     needs: changes
