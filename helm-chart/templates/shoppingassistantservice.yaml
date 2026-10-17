@@ -1,6 +1,6 @@
 {{- /*
-AI shopping assistant (ADR 0009, src/shoppingassistantservice). Off by default and in prod
-(values-prod.yaml); on in dev (values-dev.yaml). The frontend shows its /assistant page only
+AI shopping assistant (ADR 0009, src/shoppingassistantservice). Off by default; on in dev
+and prod (values-dev.yaml, values-prod.yaml). The frontend shows its /assistant page only
 when this is on (ASSISTANT_URL in frontend.yaml).
 */ -}}
 {{- if .Values.shoppingAssistantService.create }}

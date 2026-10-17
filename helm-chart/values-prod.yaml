@@ -12,10 +12,21 @@ loadGenerator:
 tracing:
   enabled: false
 
-# AI shopping assistant (ADR 0009): off in prod until it is tested in dev (no pod, no
-# /assistant page). Its Pod Identity role exists in both environments (Terraform).
+# AI shopping assistant (ADR 0009): on in prod after 2 days in dev. The frontend gets its
+# /assistant page (ASSISTANT_URL) from this flag. Off fast: create: false here (through the
+# prod promotion), or dailyQuestionCap: 0 (the kill switch). RUNBOOK section 15.
+# Its Pod Identity role exists in both environments (Terraform). Same model and limits as dev
+# (values.yaml); only the daily cap differs:
+#   worst case per question: 4 model calls (3 tool steps + answer), about 10,700 input and
+#   2,400 output tokens = about USD 0.0012 with Nova Lite (typical: USD 0.0004);
+#   the USD 1/day Bedrock budget is account-wide (dev + prod):
+#   dev 300 x 0.0012 = 0.37 + prod 100 x 0.0012 = 0.12 -> USD 0.49 worst case, under the
+#   budget's 50% alert. The cap is per pod and UTC day, and in memory: a pod restart or a
+#   rollout's new pod starts from 0, so the real bound is cap x pods started that day.
+#   CI keeps dev + prod caps at 400 or less.
 shoppingAssistantService:
-  create: false
+  create: true
+  dailyQuestionCap: 100
 
 inventoryService:
   # Two consumers on the inventory queue. Safe because reservations are
