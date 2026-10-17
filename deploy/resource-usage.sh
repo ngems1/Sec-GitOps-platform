@@ -46,6 +46,7 @@ done
 
 kubectl get pods -A -o json > "$work/pods.json"
 kubectl get nodes -o json > "$work/nodes.json"
+kubectl get hpa -A -o json > "$work/hpa.json"
 {
   kubectl get deployments,statefulsets,daemonsets,jobs -A -o json
   if kubectl get crd rollouts.argoproj.io >/dev/null 2>&1; then kubectl get rollouts.argoproj.io -A -o json; fi
