@@ -2,11 +2,16 @@
 
 Status: accepted (Phase 1, Day 4). Date: 2026-10-15. Amended 2026-10-15: shared account services.
 
+> **Update 2026-10-17:** this ADR first spoke of a "daily destroy". That was the habit of tearing
+> `terraform-aws/` down at the end of a working day; nothing does it on a schedule, only a manual
+> `infra` run with `action = destroy`. The decision does not depend on how often it happens, only
+> on `terraform-aws/` being destroyed at all (Object Lock, tag conditions), so it is unchanged.
+
 ## Context
 
 The platform runs in one AWS account: the shared VPC and EKS cluster, the dev and prod data
 stores, the Terraform state and the GitHub Actions roles. `terraform-aws/` is destroyed and
-re-applied almost every day to save money. The deploy role had AdministratorAccess with no
+re-applied often, by hand (`infra` with `action = destroy`), to save money. The deploy role had AdministratorAccess with no
 ceiling, and the project had no audit trail of its own. The project has one maintainer and a
 one-week schedule for this phase.
 
@@ -21,18 +26,18 @@ cannot create its own, and they are not its to import, re-tag or change.
    IAM Identity Center.
    - Strongest isolation: a compromised dev or CI identity cannot reach prod or the logs, and this
      project would own its own detector, recorder and hub.
-   - Several accounts to bootstrap, cross-account roles in every workflow, the daily destroy split
+   - Several accounts to bootstrap, cross-account roles in every workflow, every destroy split
      across accounts, more fixed cost. Too much for one person in one week (DESIGN D-07).
 2. **One account, hardened inside it**: an audit trail the CI cannot erase, permission boundaries
    and tag conditions on the CI roles, and the account's security services as they are.
-   - Fits the schedule and the daily destroy; one bootstrap run.
+   - Fits the schedule and the frequent destroy and apply; one bootstrap run.
    - Isolation is by policy, not by account; the detector, recorder and hub are someone else's.
 
 ## Decision
 
 Option 2. What this project owns is created by `terraform-bootstrap/` (never destroyed, tagged
 `Project = week3-boutique`, `ManagedBy = terraform-bootstrap`), not `terraform-aws/` (destroyed
-daily: Object Lock files cannot be deleted, so a destroy of the audit bucket would fail):
+by every `infra` destroy: Object Lock files cannot be deleted, so a destroy of the audit bucket would fail):
 
 - **CloudTrail (owned)**: this project's own multi-region trail, log file validation, KMS key with
   rotation; S3 bucket with Object Lock in **GOVERNANCE** mode (30-day default retention), public
@@ -70,8 +75,8 @@ GuardDuty's findings: severity >= 7 goes to Slack (`terraform-aws/security-alert
   USD 8 to 22 a month. The other project already has a trail, so this one is a second copy of the
   management events, billed at about USD 2 per 100,000 events (about USD 6 to 20 for this account);
   KMS and S3 about USD 2; the six Config rules under USD 1. GuardDuty, the recorder and Security
-  Hub are billed to the same account whoever owns them, and this project's daily destroy/apply
-  adds to what they record and check.
+  Hub are billed to the same account whoever owns them, and this project's destroy and apply
+  cycles add to what they record and check.
 - Still open: the deploy role can create a role without a boundary and give it inline rights;
   requiring a boundary on every role terraform-aws creates is the next step (SECURITY.md
   section 7).

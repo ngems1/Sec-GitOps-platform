@@ -19,8 +19,8 @@ service, managed AWS data stores and the order events.
 | dev | `https://dev.sebngembou-cloud.click` |
 | Grafana | `https://grafana.sebngembou-cloud.click` (allow-listed IPs only) |
 
-> The infrastructure is destroyed at the end of every day to save cost, so these addresses only
-> answer while it is up.
+> The infrastructure is usually destroyed by hand when not in use (`infra` with `action = destroy`)
+> to save cost, so these addresses only answer while it is up.
 
 ---
 

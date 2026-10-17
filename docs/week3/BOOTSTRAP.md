@@ -100,8 +100,9 @@ Then continue with SETUP.md step 5 (`infra` > `apply`).
 ## Re-running after a change in `terraform-bootstrap/`
 
 The bootstrap is not only one-time: the CI roles' permission boundaries and this project's audit
-baseline (its CloudTrail trail, Object Lock bucket, KMS key and AWS Config rules) live here too, because `terraform-aws` is
-destroyed every day. After a merge that changes `terraform-bootstrap/`, run **bootstrap** with
+baseline (its CloudTrail trail, Object Lock bucket, KMS key and AWS Config rules) live here too, because they must outlive `terraform-aws`.
+That is destroyed whenever someone runs **infra** with `action = destroy`: by hand, never on a
+schedule. After a merge that changes `terraform-bootstrap/`, run **bootstrap** with
 **apply unchecked**, read the plan, then run it again with **apply checked**. A new AWS service in
 `terraform-aws` needs its line in `terraform-bootstrap/boundaries.tf` and this run **before** the
 infra apply that uses it.

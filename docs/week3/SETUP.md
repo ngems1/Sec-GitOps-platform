@@ -47,6 +47,7 @@ kubectl get nodes
 
 If you get "Unauthorized", your IAM identity was not set in `ADMIN_PRINCIPAL_ARN` (step 4).
 
-## Tear down (do this at the end of every day)
+## Tear down (by hand, at the end of a working day)
 
-Actions > infra > Run workflow > action = `destroy`. It also removes the two ALBs. The next day: infra `apply`, then run deploy again (it rebuilds the images, because `destroy` also empties ECR). The running cost is roughly 9 to 12 USD per day (EKS control plane, 3 nodes, NAT gateway, 2 MySQL databases, 2 Redis nodes, logs).
+Nothing destroys the infrastructure automatically: until you run this, everything keeps running
+and costing money. Actions > infra > Run workflow > action = `destroy`. It also removes the two ALBs. The next day: infra `apply`, then run deploy again (it rebuilds the images, because `destroy` also empties ECR). The running cost is roughly 9 to 12 USD per day (EKS control plane, 4 nodes, NAT gateway, 2 MySQL databases, 2 Redis nodes, logs).
