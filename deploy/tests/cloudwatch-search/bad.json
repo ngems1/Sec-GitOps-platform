@@ -1,0 +1,12 @@
+{
+  "panels": [
+    {
+      "title": "Fixture: quoted fragment (must fail)",
+      "targets": [{"expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"CPUUtilization\" \"week3-boutique\"', 'Average', 300)"}]
+    },
+    {
+      "title": "Fixture: requests dev searching prod (must fail)",
+      "targets": [{"expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-prod', 'Sum', 60)"}]
+    }
+  ]
+}
