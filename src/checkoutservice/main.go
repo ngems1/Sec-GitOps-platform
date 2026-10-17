@@ -134,7 +134,7 @@ func main() {
 		log.Info("order persistence and events disabled (EVENT_BUS_NAME / DB_SECRET_ARN not set)")
 	}
 
-	log.Infof("service config: shipping=%s catalog=%s cart=%s currency=%s email=%s payment=%s",
+	log.Infof("service config: shipping=%s catalog=%s cart=%s currency=%s email=%s payment=%s", // pii-ok: service addresses, not a shopper
 		svc.shippingSvcAddr, svc.productCatalogSvcAddr, svc.cartSvcAddr, svc.currencySvcAddr, svc.emailSvcAddr, svc.paymentSvcAddr)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))

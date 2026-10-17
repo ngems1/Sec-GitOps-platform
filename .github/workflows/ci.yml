@@ -62,6 +62,15 @@ jobs:
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications
+      # No personal data in log calls (ADR 0011). The fixture proves the guard still catches the
+      # patterns it is meant for.
+      - name: no personal data in logs (grep guard)
+        run: |
+          bash deploy/tests/no-pii-in-logs.sh
+          if bash deploy/tests/no-pii-in-logs.sh deploy/tests/no-pii-in-logs > "$RUNNER_TEMP/pii.txt"; then
+            echo "::error::the guard missed the known-bad lines in deploy/tests/no-pii-in-logs"; exit 1
+          fi
+          test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 11
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |
