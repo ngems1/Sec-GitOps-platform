@@ -580,6 +580,27 @@ Flags, worth a look before changing a row:
 - After the change, run the report again a day later. Check the flags, restarts
   (cluster-status > Namespace snapshot) and the canary's p95.
 
+**The requests in use (2026-10-17).** These come from this report: about 6 h of data at 15
+users (the loadgenerator's steady browse-only traffic, no load test). They are the same in dev
+and prod, in `helm-chart/values-aws.yaml`, requests only; the limits are in `values.yaml`.
+
+- **HPA services** (frontend, currency, catalog, cart, recommendation; CPU target 70%): CPU
+  request about **2.5 x CPU p95**, the report's HPA rule (p95 / 0.4). At today's load the HPA
+  sees about 40% and scales out only at about 1.75x that load.
+- **Other services** (checkout, shipping, email, payment, inventory): **25m floor**. They use
+  only a few millicores at this traffic.
+- **Memory:** above the measured maximum, and below the limit (currency and email are at
+  112Mi of a 128Mi limit, the tightest).
+- **Not changed:** adservice (the JVM's start-up needs), loadgenerator (it drives the
+  canary's traffic), shoppingassistantservice.
+
+To check them, run the report again (Actions > cluster-status), ideally after a day that
+includes a `load-test` run:
+
+- **HPA rows:** at the new requests, the CPU p95 should stay well under the 70% target.
+- **`MEM-OOM`:** watch for it on currency and email.
+- **Restarts:** check them in cluster-status > Namespace snapshot.
+
 ## 14. What we never log (ADR 0011)
 
 The container logs of every namespace end up in one CloudWatch log group, which Grafana can
