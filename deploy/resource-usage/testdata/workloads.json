@@ -1,0 +1,6 @@
+{"items":[
+ {"kind":"Deployment","metadata":{"namespace":"boutique-dev","name":"frontend"}},
+ {"kind":"Rollout","metadata":{"namespace":"boutique-dev","name":"frontend"}},
+ {"kind":"Deployment","metadata":{"namespace":"boutique-dev","name":"cartservice"}},
+ {"kind":"StatefulSet","metadata":{"namespace":"monitoring","name":"tempo"}},
+ {"kind":"Deployment","metadata":{"namespace":"argo-rollouts","name":"argo-rollouts"}}]}

@@ -1,0 +1,63 @@
+# Resource usage report, query part (deploy/resource-usage.sh): runs each line of the ConfigMap
+# resource-usage-queries (deploy/resource-usage/queries.txt) against Prometheus in "monitoring"
+# and prints one line per query: "RESULT <name> <JSON>". Read-only; no secret (Prometheus needs no
+# login inside the cluster). envsubst fills in the curl image.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: resource-usage-query
+  namespace: monitoring
+  labels:
+    app: resource-usage-query
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: resource-usage-query
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: query
+        image: ${CURL_IMAGE}
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -u
+          url="http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090/api/v1/query"
+          status=0
+          while read -r name query; do
+            case "$name" in ''|'#'*) continue ;; esac
+            if out=$(curl -sS --fail --max-time 60 -G "$url" --data-urlencode "query=$query"); then
+              echo "RESULT $name $out"
+            else
+              echo "FAILED $name"
+              status=1
+            fi
+          done < /queries/queries.txt
+          exit $status
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        resources:
+          requests: { cpu: 10m, memory: 16Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+        volumeMounts:
+        - name: queries
+          mountPath: /queries
+          readOnly: true
+      volumes:
+      - name: queries
+        configMap:
+          name: resource-usage-queries
