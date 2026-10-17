@@ -92,6 +92,14 @@ class OrderStatusTests(unittest.TestCase):
         self.assertEqual(len(out["batchItemFailures"]), 2)
         self.assertEqual(self.sent, [])
 
+    def test_trace_field_is_passed_on(self):
+        tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        self.run_handler(result("InventoryReserved", "o1", _trace={"traceparent": tp, "baggage": "x=y"}),
+                         result("InventoryReserved", "o2"), result("InventoryFailed", "o1", _trace="bad"))
+        self.assertEqual(self.sent[0]["_trace"], {"traceparent": tp})
+        self.assertNotIn("_trace", self.sent[1])  # no field in, none out
+        self.assertEqual(self.conn.db["o2"]["status"], "CONFIRMED")
+
 
 if __name__ == "__main__":
     unittest.main()
