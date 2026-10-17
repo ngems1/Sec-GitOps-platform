@@ -52,17 +52,29 @@ if [ "$ns" = monitoring ]; then
     kubectl -n "$ns" logs "$gpod" -c grafana 2>&1 | grep -iE 'plugin|prometheus|level=(error|warn)' | grep -v 'level=debug' | head -60
     # CloudWatch panels empty? Same queries as the dashboard, straight to AWS (workflow role):
     # series found here but not in Grafana = a Grafana problem; none here = no data in AWS.
+    # Search terms are unquoted token matches (a quoted term must equal a whole dimension value;
+    # RUNBOOK section 5). Each query prints its series, CloudWatch's messages (errors, partial
+    # data), or "NO series" when CloudWatch matched nothing and reported no error.
     echo "=== CloudWatch: dashboard queries run directly against AWS (last hour) ==="
     end=$(date -u +%Y-%m-%dT%H:%M:%SZ); start=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)
     for q in \
-      "rds_cpu|SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"CPUUtilization\" \"week3-boutique\"', 'Average', 300)" \
-      "sqs_waiting|SEARCH('{AWS/SQS,QueueName} MetricName=\"ApproximateNumberOfMessagesVisible\" \"week3-boutique\"', 'Maximum', 60)" \
-      "alb_requests|SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" \"boutique-dev\"', 'Sum', 60)"; do
+      "rds_cpu|SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"CPUUtilization\" week3-boutique', 'Average', 300)" \
+      "sqs_waiting|SEARCH('{AWS/SQS,QueueName} MetricName=\"ApproximateNumberOfMessagesVisible\" week3-boutique', 'Maximum', 60)" \
+      "alb_requests_dev|SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-dev', 'Sum', 60)" \
+      "alb_requests_prod|SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-prod', 'Sum', 60)"; do
       id=${q%%|*}; expr=${q#*|}
       jq -n --arg id "$id" --arg e "$expr" '[{Id: $id, Expression: $e, ReturnData: true}]' > cw-q.json
-      aws cloudwatch get-metric-data --metric-data-queries file://cw-q.json --start-time "$start" --end-time "$end" \
-        --query "MetricDataResults[].[Label, length(Values)]" --output text 2>&1 \
-        | awk -v id="$id" 'BEGIN{n=0} {n++; print "  " id ": " $0 " points"} END{if(n==0) print "  " id ": NO series"}'
+      if ! out=$(aws cloudwatch get-metric-data --metric-data-queries file://cw-q.json \
+                   --start-time "$start" --end-time "$end" --output json 2>&1); then
+        echo "  ${id}: ERROR (aws cli): $(printf '%s' "$out" | tail -1)"
+        continue
+      fi
+      printf '%s' "$out" | jq -r --arg id "$id" '
+        ([.Messages[]? | "  \($id): ERROR (CloudWatch): \(.Code // "") \(.Value // "")"]) as $top
+        | ([.MetricDataResults[]? | "  \($id): \(.Label) \(.Values | length) points (\(.StatusCode))"
+              + ([.Messages[]? | " [\(.Code // ""): \(.Value // "")]"] | join(""))]) as $series
+        | ($top + $series) as $lines
+        | if ($lines | length) == 0 then "  \($id): NO series (no metric matched, no error)" else $lines[] end'
     done
     rm -f cw-q.json
     # Grafana's CloudWatch plugin logs (last 40 lines).

@@ -55,7 +55,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "100 * (1 - FILL(SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" \"boutique-prod\"', 'Sum', 300)), 0) / SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" \"boutique-prod\"', 'Sum', 300)))",
+          "expression": "100 * (1 - FILL(SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" boutique-prod', 'Sum', 300)), 0) / SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-prod', 'Sum', 300)))",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -133,7 +133,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "100 * (1 - FILL(SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" \"boutique-dev\"', 'Sum', 300)), 0) / SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" \"boutique-dev\"', 'Sum', 300)))",
+          "expression": "100 * (1 - FILL(SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" boutique-dev', 'Sum', 300)), 0) / SUM(SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-dev', 'Sum', 300)))",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -211,7 +211,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" \"boutique-prod\"', 'p95', 300)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" boutique-prod', 'p95', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -289,7 +289,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" \"boutique-dev\"', 'p95', 300)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" boutique-dev', 'p95', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -362,7 +362,7 @@
             "uid": "${prometheus}"
           },
           "refId": "A",
-          "expr": "100 * sum(increase(inventory_reservations_total{namespace=\"boutique-prod\",result=\"reserved\"}[1h])) / sum(increase(inventory_reservations_total{namespace=\"boutique-prod\",result=~\"reserved|failed\"}[1h]))",
+          "expr": "100 * sum(increase(inventory_reservations_total{namespace=boutique-prod,result=\"reserved\"}[1h])) / sum(increase(inventory_reservations_total{namespace=boutique-prod,result=~\"reserved|failed\"}[1h]))",
           "legendFormat": "prod",
           "range": false,
           "instant": true
@@ -391,7 +391,20 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 1
+          "decimals": 1,
+          "noValue": "no orders",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "no orders",
+                  "color": "text"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -431,7 +444,7 @@
             "uid": "${prometheus}"
           },
           "refId": "A",
-          "expr": "100 * sum(increase(inventory_reservations_total{namespace=\"boutique-dev\",result=\"reserved\"}[1h])) / sum(increase(inventory_reservations_total{namespace=\"boutique-dev\",result=~\"reserved|failed\"}[1h]))",
+          "expr": "100 * sum(increase(inventory_reservations_total{namespace=boutique-dev,result=\"reserved\"}[1h])) / sum(increase(inventory_reservations_total{namespace=boutique-dev,result=~\"reserved|failed\"}[1h]))",
           "legendFormat": "dev",
           "range": false,
           "instant": true
@@ -460,7 +473,20 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 1
+          "decimals": 1,
+          "noValue": "no orders",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "no orders",
+                  "color": "text"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -500,7 +526,7 @@
             "uid": "${prometheus}"
           },
           "refId": "A",
-          "expr": "sum(kube_pod_status_ready{namespace=\"boutique-prod\",condition=\"false\"} * on(namespace,pod) group_left() (kube_pod_status_phase{phase=\"Running\"} == 1)) or vector(0)",
+          "expr": "sum(kube_pod_status_ready{namespace=boutique-prod,condition=\"false\"} * on(namespace,pod) group_left() (kube_pod_status_phase{phase=\"Running\"} == 1)) or vector(0)",
           "legendFormat": "prod",
           "range": false,
           "instant": true
@@ -565,7 +591,7 @@
             "uid": "${prometheus}"
           },
           "refId": "A",
-          "expr": "sum(kube_pod_status_ready{namespace=\"boutique-dev\",condition=\"false\"} * on(namespace,pod) group_left() (kube_pod_status_phase{phase=\"Running\"} == 1)) or vector(0)",
+          "expr": "sum(kube_pod_status_ready{namespace=boutique-dev,condition=\"false\"} * on(namespace,pod) group_left() (kube_pod_status_phase{phase=\"Running\"} == 1)) or vector(0)",
           "legendFormat": "dev",
           "range": false,
           "instant": true
@@ -648,7 +674,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" \"boutique-prod\"', 'Sum', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-prod', 'Sum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -668,7 +694,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" \"boutique-dev\"', 'Sum', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"RequestCount\" boutique-dev', 'Sum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -729,7 +755,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" \"boutique-prod\"', 'Sum', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" boutique-prod', 'Sum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -749,7 +775,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" \"boutique-dev\"', 'Sum', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_Target_5XX_Count\" boutique-dev', 'Sum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -769,7 +795,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_ELB_5XX_Count\" \"boutique-prod\"', 'Sum', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_ELB_5XX_Count\" boutique-prod', 'Sum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -789,7 +815,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_ELB_5XX_Count\" \"boutique-dev\"', 'Sum', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"HTTPCode_ELB_5XX_Count\" boutique-dev', 'Sum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -850,7 +876,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" \"boutique-prod\"', 'p95', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" boutique-prod', 'p95', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -870,7 +896,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" \"boutique-dev\"', 'p95', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" boutique-dev', 'p95', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -890,7 +916,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" \"boutique-prod\"', 'p50', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" boutique-prod', 'p50', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -910,7 +936,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" \"boutique-dev\"', 'p50', 60)",
+          "expression": "SEARCH('{AWS/ApplicationELB,LoadBalancer} MetricName=\"TargetResponseTime\" boutique-dev', 'p50', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -1291,7 +1317,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/SQS,QueueName} MetricName=\"ApproximateNumberOfMessagesVisible\" \"week3-boutique\" NOT dlq', 'Maximum', 60)",
+          "expression": "SEARCH('{AWS/SQS,QueueName} MetricName=\"ApproximateNumberOfMessagesVisible\" week3-boutique NOT dlq', 'Maximum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -1311,7 +1337,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no messages"
         },
         "overrides": []
       },
@@ -1352,7 +1379,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/SQS,QueueName} MetricName=\"ApproximateNumberOfMessagesVisible\" \"week3-boutique\" dlq', 'Maximum', 60)",
+          "expression": "SEARCH('{AWS/SQS,QueueName} MetricName=\"ApproximateNumberOfMessagesVisible\" week3-boutique dlq', 'Maximum', 60)",
           "statistic": "Sum",
           "period": "60",
           "metricQueryType": 0,
@@ -1372,7 +1399,8 @@
             "stacking": {
               "mode": "none"
             }
-          }
+          },
+          "noValue": "no messages"
         },
         "overrides": []
       },
@@ -1701,7 +1729,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"CPUUtilization\" \"week3-boutique\"', 'Average', 300)",
+          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"CPUUtilization\" week3-boutique', 'Average', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -1762,7 +1790,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"DatabaseConnections\" \"week3-boutique\"', 'Average', 300)",
+          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"DatabaseConnections\" week3-boutique', 'Average', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -1823,7 +1851,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"FreeStorageSpace\" \"week3-boutique\"', 'Minimum', 300)",
+          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"FreeStorageSpace\" week3-boutique', 'Minimum', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -1884,7 +1912,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"ReadLatency\" \"week3-boutique\"', 'Average', 300)",
+          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"ReadLatency\" week3-boutique', 'Average', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,
@@ -1904,7 +1932,7 @@
           "id": "",
           "namespace": "",
           "metricName": "",
-          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"WriteLatency\" \"week3-boutique\"', 'Average', 300)",
+          "expression": "SEARCH('{AWS/RDS,DBInstanceIdentifier} MetricName=\"WriteLatency\" week3-boutique', 'Average', 300)",
           "statistic": "Sum",
           "period": "300",
           "metricQueryType": 0,

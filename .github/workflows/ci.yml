@@ -71,6 +71,15 @@ jobs:
             echo "::error::the guard missed the known-bad lines in deploy/tests/no-pii-in-logs"; exit 1
           fi
           test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 11
+      # CloudWatch SEARCH terms are token matches: a quoted term must equal a whole dimension value
+      # (RUNBOOK section 5). The fixtures prove the check still catches what it is meant for.
+      - name: CloudWatch SEARCH terms (dashboard, diagnose.sh)
+        run: |
+          bash deploy/tests/cloudwatch-search-check.sh
+          if bash deploy/tests/cloudwatch-search-check.sh deploy/tests/cloudwatch-search/bad.json deploy/tests/cloudwatch-search/bad.sh > "$RUNNER_TEMP/cw.txt"; then
+            echo "::error::the check missed the known-bad SEARCH terms in deploy/tests/cloudwatch-search"; exit 1
+          fi
+          test "$(grep -c '^::error' "$RUNNER_TEMP/cw.txt")" -eq 3
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |
