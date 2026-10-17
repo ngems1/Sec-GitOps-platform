@@ -3,11 +3,12 @@
 | Piece | Where | What it does |
 |---|---|---|
 | **Prometheus** | namespace `monitoring` (kube-prometheus-stack) | Scrapes pods (CPU, memory, restarts, readiness), nodes, and the services that expose `/metrics`: inventoryservice (orders reserved / failed / duplicate, processing time) productcatalogservice (cache hits / misses, MySQL and Redis errors) and the frontend (HTTP requests by status code, latency histogram: the Argo Rollouts canary analysis, ADR 0008). 24 h of history. |
-| **Grafana** | same namespace, its own ALB | Dashboards. Data sources: Prometheus, and **CloudWatch** (ALB, SQS, RDS) through a read-only Pod Identity role (`terraform-aws/monitoring.tf`). |
+| **Grafana** | same namespace, its own ALB | Dashboards. Data sources: Prometheus, **Tempo** (traces) and **CloudWatch** (ALB, SQS, RDS) through a read-only Pod Identity role (`terraform-aws/monitoring.tf`). |
+| **Tempo + OTel Collector** | same namespace (`tempo`, `otel-collector`) | The tracing backend (ADR 0010): the collector receives OTLP from `boutique-dev` and `boutique-prod`, keeps errors, slow traces, all of dev and 10% of prod, and sends them to Tempo (24 h, local disk). No shop service sends traces yet (ADR 0010, step 2). RUNBOOK section 12. |
 | **Alerts** | CloudWatch alarms → SNS → Slack `#boutique-alerts` | Unchanged (docs/week3/SLACK.md). Alertmanager is not used. |
 
 Installed and updated by the **deploy** workflow (job `monitoring`, after dev), from:
-`monitoring/kube-prometheus-stack.values.yaml`, `monitoring/dashboards/*.json`, `monitoring/grafana-ingress.yaml`, `deploy/monitoring.sh`.
+`monitoring/kube-prometheus-stack.values.yaml`, `monitoring/dashboards/*.json`, `monitoring/grafana-ingress.yaml`, `deploy/monitoring.sh`, and for tracing `monitoring/tempo.values.yaml`, `monitoring/otel-collector.values.yaml`, `monitoring/tracing-networkpolicies.yaml` (smoke test: `deploy/tracing-smoke.sh`).
 
 ## One-time setup (2 GitHub settings)
 

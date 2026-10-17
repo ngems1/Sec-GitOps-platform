@@ -310,6 +310,59 @@ reviewed change. Lesson from the metrics-server incident (section 7): a floating
 Never `most_recent = true`, also not "just for a test": the next `infra` apply, or a new cluster
 after `destroy`, would pick up whatever AWS released last.
 
+## 12. Tracing backend (Tempo + OTel Collector, ADR 0010)
+
+**What runs.** In `monitoring`, installed by the deploy workflow's `monitoring` job
+(`deploy/monitoring.sh`, exact chart versions in `deploy.yml`). The shop does not send traces yet:
+that is step 2 of ADR 0010.
+
+- `otel-collector`: a Deployment with 1 replica. It receives OTLP on 4317 (gRPC) and 4318 (HTTP)
+  from `boutique-dev` and `boutique-prod` only. Pipeline: memory_limiter, k8s_attributes,
+  tail_sampling, batch, then Tempo. `monitoring/otel-collector.values.yaml`.
+  - Tail sampling drops health checks and keeps errors, traces over 1 s, all of dev and 10% of
+    prod.
+  - One replica on purpose: tail sampling needs all spans of a trace on one instance. Never scale
+    it by replicas.
+- `tempo`: a StatefulSet with 1 replica, single binary, OTLP receivers only.
+  - Traces are on a 2 GiB `emptyDir` with 24 h retention, lost when the pod restarts.
+    `monitoring/tempo.values.yaml`.
+  - Queried by Grafana only, through the data source **Tempo** (uid `tempo`).
+- NetworkPolicies `otel-collector` and `tempo` (`monitoring/tracing-networkpolicies.yaml`). They
+  select only these pods; there is no default deny in `monitoring`.
+
+**Check.**
+
+1. The deploy run, step **Tracing smoke test**:
+   - telemetrygen sends 3 traces and 1 error trace from `boutique-dev`;
+   - a Job finds the error trace in Tempo through Grafana's data source;
+   - both Jobs are removed afterwards.
+2. Actions > cluster-status (any namespace):
+   - **Tracing backend**: pods, restarts, last termination reason, usage, chart versions,
+     NetworkPolicies;
+   - **Node capacity**: requests against allocatable, per node and in total. That's how to check
+     ADR 0010's capacity estimate.
+3. Grafana > Explore > Tempo > Search: service `trace-smoke-<run id>-<attempt>` (last 24 h).
+
+| Symptom | Fix |
+|---|---|
+| Smoke test: "telemetrygen could not send traces" | Collector pod not Ready (cluster-status > Tracing backend), or the NetworkPolicy `otel-collector` is missing its rule for `boutique-dev` (namespace label `kubernetes.io/metadata.name`) |
+| Smoke test: "the error trace ... is not in Tempo" | Collector logs (`kubectl -n monitoring logs deploy/otel-collector`): export errors to `tempo.monitoring.svc:4317` mean Tempo is down or its NetworkPolicy blocks the collector. "HTTP 4xx/5xx" in the query Job means Grafana or the Tempo data source (uid `tempo`) |
+| Collector `OOMKilled` or "memory limiter: data refused" | Too many traces in the 10 s decision window. Lower the dev share or raise `limits.memory` and `memory_limiter.limit_mib` together (ADR 0010, Capacity). Never add replicas: that splits traces across instances |
+| Collector logs "Could not initialize kube client" or 403 on pods | The ClusterRole `otel-collector` (pods, namespaces, ReplicaSets) or its API egress rule (Kubernetes Service IP and the VPC range on 443) |
+| Tempo `OOMKilled`, or evicted for ephemeral storage | Memory limit 1Gi (`GOMEMLIMIT` 900MiB); the trace disk is capped at 2Gi. Lower retention, or plan the S3 backend (ADR 0010, Storage) |
+| Traces gone after a Tempo restart | Expected: local storage (ADR 0010) |
+
+**Remove** (for example to free capacity). Then delete the Tempo entry from
+`additionalDataSources` in `monitoring/kube-prometheus-stack.values.yaml`, and remove the
+install lines and the smoke step, or the next deploy installs it all again.
+
+```bash
+helm -n monitoring uninstall otel-collector tempo
+kubectl -n monitoring delete networkpolicy otel-collector tempo
+kubectl delete clusterrole otel-collector --ignore-not-found       # normally removed by the uninstall
+kubectl delete clusterrolebinding otel-collector --ignore-not-found
+```
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |
