@@ -27,15 +27,17 @@ authorizationPolicies:
   # Specifies if the AuthorizationPolicies are created or not. If true, one fine granular AuthorizationPolicy per app is created.
   create: false
 
-opentelemetryCollector:
-  create: false
-  name: opentelemetrycollector
-  # Specifies the project id for the otel collector. If set as "PROJECT_ID" (default value), an initContainer will automatically retrieve the project id value from the metadata server.
-  projectId: "PROJECT_ID"
+# OpenTelemetry tracing (ADR 0010). When enabled, the services that already have tracing code
+# (frontend, checkoutservice, productcatalogservice, currencyservice, paymentservice,
+# recommendationservice, emailservice) export OTLP gRPC to the collector in "monitoring"
+# (deploy/monitoring.sh). Off by default and in prod; on in dev (values-dev.yaml). Replaces the
+# upstream GCP-only collector template and the googleCloudOperations.tracing flag.
+tracing:
+  enabled: false
+  collectorAddr: otel-collector.monitoring.svc:4317
 
 googleCloudOperations:
   profiler: false
-  tracing: false
   metrics: false
 
 seccompProfile:

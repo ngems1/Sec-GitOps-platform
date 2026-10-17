@@ -125,14 +125,7 @@ spec:
           {{- end }}
           - name: ENV_PLATFORM
             value: {{ .Values.frontend.platform | quote }}
-          {{- if .Values.opentelemetryCollector.create }}
-          - name: COLLECTOR_SERVICE_ADDR
-            value: "{{ .Values.opentelemetryCollector.name }}:4317"
-          {{- end }}
-          {{- if .Values.googleCloudOperations.tracing }}
-          - name: ENABLE_TRACING
-            value: "1"
-          {{- end }}
+          {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.frontend.name)) }}{{ . | nindent 10 }}{{ end }}
           {{- if .Values.googleCloudOperations.profiler }}
           - name: ENABLE_PROFILER
             value: "1"
@@ -247,9 +240,6 @@ spec:
     - ./{{ .Values.productCatalogService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.recommendationService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.shippingService.name }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- if .Values.opentelemetryCollector.create }}
-    - ./{{ .Values.opentelemetryCollector.name }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- end }}
 {{- end }}
 {{- if .Values.authorizationPolicies.create }}
 ---

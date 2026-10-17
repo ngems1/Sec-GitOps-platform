@@ -81,14 +81,7 @@ spec:
           value: "8080"
         - name: PRODUCT_CATALOG_SERVICE_ADDR
           value: "{{ .Values.productCatalogService.name }}:3550"
-        {{- if .Values.opentelemetryCollector.create }}
-        - name: COLLECTOR_SERVICE_ADDR
-          value: "{{ .Values.opentelemetryCollector.name }}:4317"
-        {{- end }}
-        {{- if .Values.googleCloudOperations.tracing }}
-        - name: ENABLE_TRACING
-          value: "1"
-        {{- end }}
+        {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.recommendationService.name)) }}{{ . | nindent 8 }}{{ end }}
         {{- if not .Values.googleCloudOperations.profiler }}
         - name: DISABLE_PROFILER
           value: "1"
@@ -149,9 +142,6 @@ spec:
   - hosts:
     - istio-system/*
     - ./{{ .Values.productCatalogService.name }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- if .Values.opentelemetryCollector.create }}
-    - ./{{ .Values.opentelemetryCollector.name }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- end }}
 {{- end }}
 {{- if .Values.authorizationPolicies.create }}
 ---

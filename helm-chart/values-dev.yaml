@@ -1,6 +1,10 @@
 # dev (namespace boutique-dev): deployed automatically on every push to main.
 # Kept small: one replica of each service.
 
+# OpenTelemetry tracing (ADR 0010): on in dev only. RUNBOOK section 12 says how to turn it off.
+tracing:
+  enabled: true
+
 # AI shopping assistant (ADR 0009): on in dev only, with the /assistant page in the frontend.
 shoppingAssistantService:
   create: true

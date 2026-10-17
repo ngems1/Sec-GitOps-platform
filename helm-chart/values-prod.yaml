@@ -6,6 +6,10 @@
 loadGenerator:
   users: 5
 
+# OpenTelemetry tracing (ADR 0010): off in prod until it is proven in dev (ADR 0010, step 7).
+tracing:
+  enabled: false
+
 # AI shopping assistant (ADR 0009): off in prod until it is tested in dev (no pod, no
 # /assistant page). Its Pod Identity role exists in both environments (Terraform).
 shoppingAssistantService:
