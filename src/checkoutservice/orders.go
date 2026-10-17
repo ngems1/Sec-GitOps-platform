@@ -261,7 +261,7 @@ func (s *orderStore) record(ctx context.Context, order *pb.OrderResult, email st
 			lastErr = fmt.Errorf("event rejected: %s %s",
 				aws.ToString(out.Entries[0].ErrorCode), aws.ToString(out.Entries[0].ErrorMessage))
 		default:
-			log.WithField("orderId", event.OrderID).Info("order saved (PENDING) and OrderCreated published")
+			log.WithContext(ctx).WithField("orderId", event.OrderID).Info("order saved (PENDING) and OrderCreated published")
 			return nil
 		}
 		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)

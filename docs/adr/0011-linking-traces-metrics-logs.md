@@ -191,6 +191,12 @@ Also part of this decision:
 
 ### `trace_id` and `span_id` in the JSON logs
 
+> **Note 2026-10-17:** the log fields are `trace_id`, `span_id` and `trace_flags` (2-character
+> lower-case hex: `"01"` sampled, `"00"` not) in all languages, as in the OTel log data model
+> and the Node (pino) and Java agent integrations. The Python and .NET PRs must map to these
+> names; .NET's `TraceId`/`SpanId` scope fields are not enough. The Go services have them
+> (`logtrace.go`).
+
 - **Field names:** `trace_id` and `span_id`, lower-case hex as in `traceparent`. These are the
   OpenTelemetry Java agent's defaults and the OTel log data model's names.
 - **When they are written:** only when a span is active and valid. With tracing off (prod)

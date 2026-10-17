@@ -64,7 +64,7 @@ func (lh *logHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Request logs (ADR 0011): the path without its query string, the method and a random
 	// request ID. Never the session ID, the user agent, the client IP, headers or cookies, at
 	// any level.
-	log := lh.log.WithFields(logrus.Fields{
+	log := lh.log.WithContext(ctx).WithFields(logrus.Fields{ // the request span's trace_id / span_id (logtrace.go)
 		"http.req.path":   r.URL.Path,
 		"http.req.method": r.Method,
 		"http.req.id":     requestID.String(),

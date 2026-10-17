@@ -70,17 +70,17 @@ func (l *catalogLoader) products(ctx context.Context) []*pb.Product {
 	if err != nil || len(ps) == 0 {
 		l.stats.dbErrors.Add(1)
 		if err == nil {
-			log.Warn("catalog: MySQL returned no products")
+			log.WithContext(ctx).Warn("catalog: MySQL returned no products")
 		} else {
-			log.WithError(err).Warn("catalog: MySQL load failed")
+			log.WithContext(ctx).WithError(err).Warn("catalog: MySQL load failed")
 		}
 		if last := l.last(); len(last) > 0 {
 			l.stats.stale.Add(1)
-			log.Warnf("catalog: serving the last catalog read from MySQL (%d products)", len(last))
+			log.WithContext(ctx).Warnf("catalog: serving the last catalog read from MySQL (%d products)", len(last))
 			return last
 		}
 		l.stats.fallbacks.Add(1)
-		log.Warn("catalog: serving the built-in products.json")
+		log.WithContext(ctx).Warn("catalog: serving the built-in products.json")
 		return l.fallback()
 	}
 
@@ -94,11 +94,11 @@ func (l *catalogLoader) products(ctx context.Context) []*pb.Product {
 				cached = "cached for " + l.ttl.String()
 			} else {
 				l.stats.cacheErrors.Add(1)
-				log.WithError(err).Warn("catalog: Redis SET failed")
+				log.WithContext(ctx).WithError(err).Warn("catalog: Redis SET failed")
 			}
 		}
 	}
-	log.WithField("products", len(ps)).WithField("ms", time.Since(start).Milliseconds()).
+	log.WithContext(ctx).WithField("products", len(ps)).WithField("ms", time.Since(start).Milliseconds()).
 		Infof("catalog cache miss: loaded %d products from MySQL, %s", len(ps), cached)
 	return ps
 }
@@ -110,7 +110,7 @@ func (l *catalogLoader) fromCache(ctx context.Context) ([]*pb.Product, bool) {
 	data, found, err := l.cache.Get(ctx, catalogCacheKey)
 	if err != nil {
 		l.stats.cacheErrors.Add(1)
-		log.WithError(err).Warn("catalog: Redis GET failed, reading MySQL")
+		log.WithContext(ctx).WithError(err).Warn("catalog: Redis GET failed, reading MySQL")
 		return nil, false
 	}
 	if !found {
@@ -119,7 +119,7 @@ func (l *catalogLoader) fromCache(ctx context.Context) ([]*pb.Product, bool) {
 	ps, err := l.decode(data)
 	if err != nil || len(ps) == 0 {
 		l.stats.cacheErrors.Add(1)
-		log.WithError(err).Warn("catalog: unreadable cache entry, reading MySQL")
+		log.WithContext(ctx).WithError(err).Warn("catalog: unreadable cache entry, reading MySQL")
 		return nil, false
 	}
 	return ps, true

@@ -31,6 +31,7 @@ func initializeLogger() {
 		TimestampFormat: time.RFC3339Nano,
 	}
 	log.Out = os.Stdout
+	log.AddHook(traceLogHook{}) // trace_id / span_id on lines logged with a context (logtrace.go)
 }
 
 func loadDeploymentDetails() {
