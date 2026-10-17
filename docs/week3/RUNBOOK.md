@@ -402,11 +402,20 @@ after `destroy`, would pick up whatever AWS released last.
     `opentelemetry.proto.collector.trace.v1.TraceService`), a defence against self-tracing.
   - Tail sampling drops health checks (gRPC health, and `/_healthz` by path or by the frontend's
     route) and keeps errors, traces over 1 s, all of dev and 10% of prod.
+  - It decides 30 s after a trace's first span (`decision_wait`; 10 s until 2026-10-17). An
+    order's trace crosses EventBridge and SQS, and its inventory and email spans arrive about
+    4.5 s or more after PlaceOrder. A span later than 30 s (a retried message) may miss its
+    trace.
   - One replica on purpose: tail sampling needs all spans of a trace on one instance. Never scale
     it by replicas.
 - `tempo`: a StatefulSet with 1 replica, single binary, OTLP receivers only.
   - Traces are on a 2 GiB `emptyDir` with 24 h retention, lost when the pod restarts.
     `monitoring/tempo.values.yaml`.
+  - **A Tempo restart loses all stored traces. That is expected** (local disk, ADR 0010). A
+    resources or config change to Tempo restarts it on the next deploy, so traces from before
+    that deploy are gone. Prometheus, Grafana and the shop are not affected.
+  - Memory: request 1024Mi, limit 1536Mi, `GOMEMLIMIT` 1350MiB. That's sized from a 874Mi max
+    on 2026-10-17, which was close to the old 1Gi limit.
   - Queried by Grafana only, through the data source **Tempo** (uid `tempo`).
 - NetworkPolicies `otel-collector` and `tempo` (`monitoring/tracing-networkpolicies.yaml`). They
   select only these pods; there is no default deny in `monitoring`.
@@ -428,9 +437,9 @@ after `destroy`, would pick up whatever AWS released last.
 |---|---|
 | Smoke test: "telemetrygen could not send traces" | Collector pod not Ready (cluster-status > Tracing backend), or the NetworkPolicy `otel-collector` is missing its rule for `boutique-dev` (namespace label `kubernetes.io/metadata.name`) |
 | Smoke test: "the error trace ... is not in Tempo" | Collector logs (`kubectl -n monitoring logs deploy/otel-collector`): export errors to `tempo.monitoring.svc:4317` mean Tempo is down or its NetworkPolicy blocks the collector. "HTTP 4xx/5xx" in the query Job means Grafana or the Tempo data source (uid `tempo`) |
-| Collector `OOMKilled` or "memory limiter: data refused" | Too many traces in the 10 s decision window. Lower the dev share or raise `limits.memory` and `memory_limiter.limit_mib` together (ADR 0010, Capacity). Never add replicas: that splits traces across instances |
+| Collector `OOMKilled` or "memory limiter: data refused" | Too many traces in the 30 s decision window. Lower the dev share or raise `limits.memory` and `memory_limiter.limit_mib` together (ADR 0010, Capacity). Never add replicas: that splits traces across instances |
 | Collector logs "Could not initialize kube client" or 403 on pods | The ClusterRole `otel-collector` (pods, namespaces, ReplicaSets) or its API egress rule (Kubernetes Service IP and the VPC range on 443) |
-| Tempo `OOMKilled`, or evicted for ephemeral storage | Memory limit 1Gi (`GOMEMLIMIT` 900MiB); the trace disk is capped at 2Gi. Lower retention, or plan the S3 backend (ADR 0010, Storage) |
+| Tempo `OOMKilled`, or evicted for ephemeral storage | Memory limit 1536Mi (`GOMEMLIMIT` 1350MiB); the trace disk is capped at 2Gi. Lower retention, or plan the S3 backend (ADR 0010, Storage) |
 | Traces gone after a Tempo restart | Expected: local storage (ADR 0010) |
 | Dev traces missing for one service | cluster-status > `boutique-dev`: its pod env must have the four tracing variables, and its start log says "Tracing enabled." (all 12 services; adservice: "Tracing enabled (OpenTelemetry Java agent, ...)"), not "Tracing disabled." |
 
@@ -497,7 +506,7 @@ If an order's trace stops at checkout or at inventory, the next consumer has not
 message yet, or the message is being retried or is in the DLQ: check the queue and DLQ alarms.
 The trace is not the place to read the queue state.
 
-Late spans: the collector decides on a trace 10 s after its first span (`decision_wait`). A
+Late spans: the collector decides on a trace 30 s after its first span (`decision_wait`). A
 consumer span that comes later (a retried message, a slow Lambda) may be missing from the trace
 or kept on its own.
 
