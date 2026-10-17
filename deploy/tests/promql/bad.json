@@ -1,0 +1,17 @@
+{
+  "title": "Fixture for deploy/tests/promql-check.sh (must fail)",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Fixture: label value without quotes",
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "targets": [{"expr": "sum(kube_pod_status_ready{namespace=boutique-prod,condition=\"false\"}) or vector(0)"}]
+    },
+    {
+      "id": 2,
+      "title": "Fixture: a correct query with Grafana variables (must pass)",
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "targets": [{"expr": "sum by (namespace) (rate(frontend_http_requests_total{namespace=\"$namespace\"}[$__rate_interval]))"}]
+    }
+  ]
+}

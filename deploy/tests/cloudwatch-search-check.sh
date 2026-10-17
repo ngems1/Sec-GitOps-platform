@@ -17,9 +17,12 @@ files=("$@")
 
 fail=0
 for f in "${files[@]}"; do
-  # Every string that holds a SEARCH, one per line, with shell-escaped quotes (\") made plain.
+  # Every SEARCH expression, one per line, with shell-escaped quotes (\") made plain.
   if [[ "$f" == *.json ]]; then
-    exprs=$(jq -r '.. | strings | select(test("SEARCH\\("))' "$f")
+    # CloudWatch targets only (the panel's or the target's data source uid "cloudwatch"): PromQL
+    # in the same file has quoted label values on purpose (deploy/tests/promql-check.sh).
+    exprs=$(jq -r '.. | objects | select(has("targets")) | . as $p | (.targets // [])[]
+      | select(((.datasource.uid // $p.datasource.uid) // "") == "cloudwatch") | (.expression // empty)' "$f")
   else
     exprs=$(grep -F 'SEARCH(' "$f" | sed 's/\\"/"/g')
   fi

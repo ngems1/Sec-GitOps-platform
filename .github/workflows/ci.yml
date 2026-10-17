@@ -80,6 +80,27 @@ jobs:
             echo "::error::the check missed the known-bad SEARCH terms in deploy/tests/cloudwatch-search"; exit 1
           fi
           test "$(grep -c '^::error' "$RUNNER_TEMP/cw.txt")" -eq 3
+      # Every PromQL query of the dashboards parses, with the cluster's Prometheus version
+      # (kube-prometheus-stack 89.2.4 runs v3.14.0). Unquoted label values broke Order success and
+      # Pods not ready after #61. The fixture has one broken query and one with Grafana variables.
+      - name: Dashboard PromQL parses (promtool)
+        env:
+          PROMETHEUS_VERSION: "3.14.0"
+        run: |
+          d="$RUNNER_TEMP/prometheus"; mkdir -p "$d"; cd "$d"
+          base="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}"
+          tarball="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          curl -sSfLO "${base}/${tarball}"
+          curl -sSfLO "${base}/sha256sums.txt"
+          grep " ${tarball}\$" sha256sums.txt | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          cd "$GITHUB_WORKSPACE"
+          export PROMTOOL="$d/promtool"
+          bash deploy/tests/promql-check.sh
+          if bash deploy/tests/promql-check.sh deploy/tests/promql/bad.json > "$RUNNER_TEMP/pq.txt" 2>&1; then
+            echo "::error::the PromQL check missed the broken query in deploy/tests/promql/bad.json"; exit 1
+          fi
+          test "$(grep -c 'could not parse expression' "$RUNNER_TEMP/pq.txt")" -eq 1
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |
