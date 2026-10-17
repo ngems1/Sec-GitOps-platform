@@ -50,8 +50,8 @@ func assertTraceFields(t *testing.T, lines []map[string]any, sc trace.SpanContex
 		t.Fatal("no log line")
 	}
 	for _, l := range lines {
-		if l["trace_id"] != sc.TraceID().String() || l["span_id"] != sc.SpanID().String() || l["trace_sampled"] != true {
-			t.Errorf("want trace_id %s span_id %s trace_sampled true, got %v", sc.TraceID(), sc.SpanID(), l)
+		if l["trace_id"] != sc.TraceID().String() || l["span_id"] != sc.SpanID().String() || l["trace_flags"] != sc.TraceFlags().String() {
+			t.Errorf("want trace_id %s span_id %s trace_flags %s, got %v", sc.TraceID(), sc.SpanID(), sc.TraceFlags(), l)
 		}
 	}
 }
@@ -59,7 +59,7 @@ func assertTraceFields(t *testing.T, lines []map[string]any, sc trace.SpanContex
 func assertNoTraceFields(t *testing.T, lines []map[string]any) {
 	t.Helper()
 	for _, l := range lines {
-		for _, k := range []string{"trace_id", "span_id", "trace_sampled"} {
+		for _, k := range []string{"trace_id", "span_id", "trace_flags"} {
 			if _, ok := l[k]; ok {
 				t.Errorf("%s should be absent: %v", k, l)
 			}
@@ -84,6 +84,9 @@ func TestTraceLogHook(t *testing.T) {
 	span.End()
 	inside := logLines(t, &buf)
 	assertTraceFields(t, inside, span.SpanContext())
+	if inside[0]["trace_flags"] != "01" {
+		t.Errorf(`want trace_flags "01" (sampled), got %v`, inside[0]["trace_flags"])
+	}
 	if inside[0]["orderId"] != "o-1" || inside[0]["msg"] != "inside a span" {
 		t.Errorf("the existing fields must stay: %v", inside[0])
 	}
@@ -116,4 +119,22 @@ func TestTraceLogHookTracingOff(t *testing.T) {
 	var buf bytes.Buffer
 	testLogger(&buf).WithContext(ctx).Info("tracing off")
 	assertNoTraceFields(t, logLines(t, &buf))
+}
+
+// Tracing on, parent not sampled (ParentBased keeps the parent's decision): the span is valid
+// but not sampled, so the line says trace_flags "00".
+func TestTraceLogHookNotSampled(t *testing.T) {
+	tracer := withTracing(t)
+	parent := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{0x4b, 0xf9, 0x2f, 0x35}, SpanID: trace.SpanID{0x00, 0xf0, 0x67}, Remote: true,
+	})
+	ctx, span := tracer.Start(trace.ContextWithRemoteSpanContext(context.Background(), parent), "request")
+	defer span.End()
+	var buf bytes.Buffer
+	testLogger(&buf).WithContext(ctx).Info("unsampled")
+	lines := logLines(t, &buf)
+	assertTraceFields(t, lines, span.SpanContext())
+	if lines[0]["trace_flags"] != "00" {
+		t.Errorf(`want trace_flags "00", got %v`, lines[0]["trace_flags"])
+	}
 }

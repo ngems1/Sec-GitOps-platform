@@ -6,10 +6,12 @@ package main
 // A log entry written with a context (log.WithContext(ctx)) gets the fields of the span in
 // that context:
 //
-//	"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "span_id": "00f067aa0ba902b7", "trace_sampled": true
+//	"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "span_id": "00f067aa0ba902b7", "trace_flags": "01"
 //
-// lower-case hex, as in a W3C traceparent; CloudWatch Logs Insights and Grafana find a trace's
-// lines by trace_id (ADR 0011). Nothing is added without a context, without a valid span, or
+// lower-case hex, as in a W3C traceparent (trace_flags: "01" sampled, "00" not). These are the
+// names of the OTel log data model, also written by the Node (pino) and Java agent integrations,
+// and the same in every language (ADR 0011). CloudWatch Logs Insights and Grafana find a trace's
+// lines by trace_id. Nothing is added without a context, without a valid span, or
 // while tracing is off (ENABLE_TRACING unset, the prod default): the W3C propagator also runs
 // then, so a traceparent sent by a client would otherwise put an ID of its choosing in our logs.
 
@@ -37,6 +39,6 @@ func (traceLogHook) Fire(e *logrus.Entry) error {
 	}
 	e.Data["trace_id"] = sc.TraceID().String()
 	e.Data["span_id"] = sc.SpanID().String()
-	e.Data["trace_sampled"] = sc.IsSampled()
+	e.Data["trace_flags"] = sc.TraceFlags().String() // "01" or "00"
 	return nil
 }
