@@ -338,13 +338,45 @@ after `destroy`, would pick up whatever AWS released last.
 
 **Who sends.** Only dev (`tracing.enabled: true` in `helm-chart/values-dev.yaml`; prod is
 `false`).
-- The 7 services with tracing code send traces: frontend, checkoutservice, productcatalogservice,
-  currencyservice, paymentservice, recommendationservice and emailservice.
-- Each gets `ENABLE_TRACING=1`, `COLLECTOR_SERVICE_ADDR` (`tracing.collectorAddr`),
+- 12 services send traces: frontend, checkoutservice, productcatalogservice, currencyservice,
+  paymentservice, recommendationservice, emailservice (since step 2), and shippingservice, adservice,
+  cartservice, inventoryservice and shoppingassistantservice (since step 4). Only the loadgenerator
+  and Redis are not traced.- Each gets `ENABLE_TRACING=1`, `COLLECTOR_SERVICE_ADDR` (`tracing.collectorAddr`),
   `OTEL_SERVICE_NAME` (its own name) and `OTEL_RESOURCE_ATTRIBUTES`
   (`deployment.environment=dev,service.namespace=boutique`).
-- The other services send nothing yet (ADR 0010, step 4). shoppingassistantservice already has
-  its NetworkPolicy rule to the collector (4317).
+- shoppingassistantservice reaches the collector through its NetworkPolicy rule (4317); the others
+  allow all egress.
+
+**The services added in step 4:**
+- **shippingservice (Go):** the same `tracing.go` as checkoutservice, with gRPC server spans.
+- **adservice (Java):** the OpenTelemetry Java agent 2.32.0 (pinned, SHA-256 checked in the
+  Dockerfile). It is always loaded, and active only with `ENABLE_TRACING=1` (`docker-entrypoint.sh`;
+  otherwise `OTEL_JAVAAGENT_ENABLED=false`).
+  - Only the gRPC instrumentation is on.
+  - Measured on one CPU: about 5.7 s to listen and about 190 MiB with the agent active, against
+    2.5 s and 110-115 MiB without it. The startup probe allows 180 s.
+  - Its memory request is 256Mi in dev (`values-dev.yaml`) instead of 180Mi; the 512Mi limit is
+    unchanged.
+- **cartservice (C#):** OpenTelemetry .NET 1.19, with ASP.NET Core gRPC server spans (health checks
+  left out) and StackExchange.Redis client spans. Redis statements are not verbose: the command,
+  never the key (a cart's key is the shopper's session).
+- **inventoryservice (Python):**
+  - API spans named after the route (`GET /stock/{productId}`), never for `/healthz`, `/readyz` or
+    `/metrics`;
+  - one `process OrderCreated` consumer span per message, with its DynamoDB and EventBridge calls
+    (botocore) as children;
+  - no span for the 20 s SQS long poll.
+- **shoppingassistantservice (Python):**
+  - one `POST /ask` server span, continuing the frontend's trace, with `assistant.outcome`
+    (`kill_switch` when paused for the day);
+  - one `chat <model>` span per Bedrock call, with `gen_ai.request.model`, `gen_ai.usage.input_tokens`,
+    `gen_ai.usage.output_tokens`, `assistant.step`, `assistant.tools` and `assistant.outcome` (`ok`,
+    `rate_limited`, `timeout`, `error`);
+  - catalog gRPC client spans;
+  - never the question, the answer, the session ID or its hash. botocore is not instrumented, and
+    errors are not recorded as span events.
+- **frontend:** the call to the assistant carries the trace (otelhttp transport). One trace covers
+  frontend, assistant, Bedrock and the catalog.
 
 **What the services do** (ADR 0010, step 3; code in `tracing.go`, `tracing.js`, `tracing.py`):
 - **Service name:** from `OTEL_SERVICE_NAME`, falling back to the service's own name. The Node
@@ -399,7 +431,7 @@ after `destroy`, would pick up whatever AWS released last.
 | Collector logs "Could not initialize kube client" or 403 on pods | The ClusterRole `otel-collector` (pods, namespaces, ReplicaSets) or its API egress rule (Kubernetes Service IP and the VPC range on 443) |
 | Tempo `OOMKilled`, or evicted for ephemeral storage | Memory limit 1Gi (`GOMEMLIMIT` 900MiB); the trace disk is capped at 2Gi. Lower retention, or plan the S3 backend (ADR 0010, Storage) |
 | Traces gone after a Tempo restart | Expected: local storage (ADR 0010) |
-| Dev traces missing for one service | cluster-status > `boutique-dev`: its pod env must have the four tracing variables, and its start log says "Tracing enabled." (all 7 services), not "Tracing disabled." |
+| Dev traces missing for one service | cluster-status > `boutique-dev`: its pod env must have the four tracing variables, and its start log says "Tracing enabled." (all 12 services; adservice: "Tracing enabled (OpenTelemetry Java agent, ...)"), not "Tracing disabled." |
 
 **Find a trace** (Grafana > Explore > data source Tempo > TraceQL; last 1 h to 24 h):
 
@@ -414,6 +446,16 @@ after `destroy`, would pick up whatever AWS released last.
 | Only dev | `{ resource.deployment.environment = "dev" }` |
 | The deploy's smoke test | `{ resource.service.name = "trace-smoke-<run id>-<attempt>" && status = error }` |
 | Self-tracing (must be empty) | `{ span.rpc.service = "opentelemetry.proto.collector.trace.v1.TraceService" }` |
+| Assistant questions, from the shop | `{ resource.service.name = "frontend" && name = "POST /assistant" }` (one trace: frontend, assistant, Bedrock, catalog) |
+| Slow Bedrock calls (> 3 s) | `{ span.gen_ai.system = "aws.bedrock" && duration > 3s }` |
+| Assistant errors | `{ resource.service.name = "shoppingassistantservice" && status = error }` |
+| Bedrock throttling | `{ span.assistant.outcome = "rate_limited" }` |
+| Questions refused by the daily cap | `{ span.assistant.outcome = "kill_switch" }` |
+| Heavy token use | `{ span.gen_ai.usage.input_tokens > 3000 }`, `{ span.gen_ai.usage.output_tokens > 500 }` |
+| Questions that needed 3 or more model calls | `{ name = "POST /ask" } >> { span.gen_ai.system = "aws.bedrock" && span.assistant.step >= 2 }` |
+| Ads | `{ resource.service.name = "adservice" }` |
+| Orders reserved by inventory | `{ resource.service.name = "inventoryservice" && name = "process OrderCreated" }` |
+| Cart calls to Redis | `{ resource.service.name = "cartservice" && kind = client }` |
 
 Only kept traces are there: health checks are dropped, and in prod only 10% of normal traces
 (plus all errors and slow ones). A query that finds nothing for an old time range may just be
@@ -421,13 +463,13 @@ past Tempo's 24 h, or a Tempo restart.
 
 **Turn tracing off for dev** (for example if a dev deploy misbehaves after this switch):
 
-1. Set `tracing.enabled: false` in `helm-chart/values-dev.yaml` and merge. Argo CD rolls the 7
+1. Set `tracing.enabled: false` in `helm-chart/values-dev.yaml` and merge. Argo CD rolls the 12
    Deployments without the tracing variables.
    - The frontend change goes through its canary, like any frontend change.
    - The collector and Tempo keep running, so turning tracing back on is the same one-line change.
 2. What to expect:
    - **Services:** they start and serve whether tracing is on or off, and whether the collector
-     answers or not (checked for the 7 services in ADR 0010, step 2). The gRPC dial to the
+     answers or not (checked for each service in ADR 0010, steps 2 to 4). The gRPC dial to the
      collector does not block, and spans are exported in the background.
    - **Collector down while tracing is on:** spans are dropped, never sent again. Spans not yet
      exported when a pod stops are lost too.
