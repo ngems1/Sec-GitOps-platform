@@ -325,11 +325,29 @@ after `destroy`, would pick up whatever AWS released last.
 - The other services send nothing yet (ADR 0010, step 4). shoppingassistantservice already has
   its NetworkPolicy rule to the collector (4317).
 
+**What the services do** (ADR 0010, step 3; code in `tracing.go`, `tracing.js`, `tracing.py`):
+- **Service name:** from `OTEL_SERVICE_NAME`, falling back to the service's own name. The Node
+  services no longer appear as `unknown_service:node`.
+- **Sampling and propagation:** ParentBased(AlwaysOn), which follows the caller's decision; the
+  collector decides what is kept. W3C `traceparent` and baggage in every language.
+- **No self-tracing:** the Go services export on a gRPC connection without the otelgrpc
+  interceptor. Node and Python suppress instrumentation while they export.
+- **Frontend span names:** method and route template, like `GET /product/{id}` or
+  `POST /cart/checkout` (attribute `http.route`); just `GET` for an unknown path. Never IDs or
+  query strings. `X-Forwarded-For` is dropped before tracing, so the shopper's IP is never a
+  span attribute.
+- **Never in the request path:** spans are batched and exported in the background, and dropped
+  when the collector is down. Tests in each service cover this (`tracing_test.go`,
+  `tracing.test.js`, `test_tracing.py`).
+- **emailservice:** has gRPC server spans whenever `ENABLE_TRACING=1`.
+
 - `otel-collector`: a Deployment with 1 replica. It receives OTLP on 4317 (gRPC) and 4318 (HTTP)
-  from `boutique-dev` and `boutique-prod` only. Pipeline: memory_limiter, k8s_attributes,
+  from `boutique-dev` and `boutique-prod` only. Pipeline: memory_limiter, filter, k8s_attributes,
   tail_sampling, batch, then Tempo. `monitoring/otel-collector.values.yaml`.
-  - Tail sampling drops health checks and keeps errors, traces over 1 s, all of dev and 10% of
-    prod.
+  - The filter drops spans of an OTLP export itself (`rpc.service` =
+    `opentelemetry.proto.collector.trace.v1.TraceService`), a defence against self-tracing.
+  - Tail sampling drops health checks (gRPC health, and `/_healthz` by path or by the frontend's
+    route) and keeps errors, traces over 1 s, all of dev and 10% of prod.
   - One replica on purpose: tail sampling needs all spans of a trace on one instance. Never scale
     it by replicas.
 - `tempo`: a StatefulSet with 1 replica, single binary, OTLP receivers only.
@@ -360,7 +378,25 @@ after `destroy`, would pick up whatever AWS released last.
 | Collector logs "Could not initialize kube client" or 403 on pods | The ClusterRole `otel-collector` (pods, namespaces, ReplicaSets) or its API egress rule (Kubernetes Service IP and the VPC range on 443) |
 | Tempo `OOMKilled`, or evicted for ephemeral storage | Memory limit 1Gi (`GOMEMLIMIT` 900MiB); the trace disk is capped at 2Gi. Lower retention, or plan the S3 backend (ADR 0010, Storage) |
 | Traces gone after a Tempo restart | Expected: local storage (ADR 0010) |
-| Dev traces missing for one service | cluster-status > `boutique-dev`: its pod env must have the four tracing variables, and its start log must not say "Tracing disabled." (frontend, checkout, currency and payment also log "Tracing enabled.") |
+| Dev traces missing for one service | cluster-status > `boutique-dev`: its pod env must have the four tracing variables, and its start log says "Tracing enabled." (all 7 services), not "Tracing disabled." |
+
+**Find a trace** (Grafana > Explore > data source Tempo > TraceQL; last 1 h to 24 h):
+
+| Looking for | TraceQL |
+|---|---|
+| One service | `{ resource.service.name = "checkoutservice" }` |
+| Orders (PlaceOrder) | `{ span.rpc.method = "PlaceOrder" }`, or from the shop: `{ resource.service.name = "frontend" && name = "POST /cart/checkout" }` |
+| Errors | `{ status = error }`, or for one service: `{ resource.service.name = "frontend" && status = error }` |
+| Slow spans (> 500 ms) | `{ duration > 500ms }` |
+| Slow traces (> 500 ms end to end) | `{ traceDuration > 500ms }` |
+| A slow page | `{ span.http.route = "/product/{id}" && duration > 500ms }` |
+| Only dev | `{ resource.deployment.environment = "dev" }` |
+| The deploy's smoke test | `{ resource.service.name = "trace-smoke-<run id>-<attempt>" && status = error }` |
+| Self-tracing (must be empty) | `{ span.rpc.service = "opentelemetry.proto.collector.trace.v1.TraceService" }` |
+
+Only kept traces are there: health checks are dropped, and in prod only 10% of normal traces
+(plus all errors and slow ones). A query that finds nothing for an old time range may just be
+past Tempo's 24 h, or a Tempo restart.
 
 **Turn tracing off for dev** (for example if a dev deploy misbehaves after this switch):
 
