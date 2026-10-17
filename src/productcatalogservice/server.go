@@ -36,9 +36,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 )
 
@@ -68,9 +65,11 @@ func init() {
 
 func main() {
 	if os.Getenv("ENABLE_TRACING") == "1" {
-		err := initTracing()
-		if err != nil {
-			log.Warnf("warn: failed to start tracer: %+v", err)
+		log.Info("Tracing enabled.")
+		var collectorAddr string
+		mustMapEnv(&collectorAddr, "COLLECTOR_SERVICE_ADDR")
+		if _, err := startTracing(context.Background(), "productcatalogservice", collectorAddr); err != nil {
+			log.Warnf("warn: tracing: %+v", err)
 		}
 	} else {
 		log.Info("Tracing disabled.")
@@ -127,10 +126,8 @@ func run(port string) string {
 		log.Fatal(err)
 	}
 
-	// Propagate trace context
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{}, propagation.Baggage{}))
+	// Propagate trace context (W3C, tracing.go)
+	otel.SetTextMapPropagator(newPropagator())
 	var srv *grpc.Server
 	srv = grpc.NewServer(
 		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
@@ -172,30 +169,6 @@ func run(port string) string {
 
 func initStats() {
 	// TODO(drewbr) Implement OpenTelemetry stats
-}
-
-func initTracing() error {
-	var (
-		collectorAddr string
-		collectorConn *grpc.ClientConn
-	)
-
-	ctx := context.Background()
-
-	mustMapEnv(&collectorAddr, "COLLECTOR_SERVICE_ADDR")
-	mustConnGRPC(ctx, &collectorConn, collectorAddr)
-
-	exporter, err := otlptracegrpc.New(
-		ctx,
-		otlptracegrpc.WithGRPCConn(collectorConn))
-	if err != nil {
-		log.Warnf("warn: Failed to create trace exporter: %v", err)
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()))
-	otel.SetTracerProvider(tp)
-	return err
 }
 
 func initProfiling(service, version string) {

@@ -26,11 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 )
 
@@ -79,7 +75,6 @@ type frontendServer struct {
 	adSvcConn *grpc.ClientConn
 
 	collectorAddr string
-	collectorConn *grpc.ClientConn
 }
 
 func main() {
@@ -98,13 +93,14 @@ func main() {
 
 	svc := new(frontendServer)
 
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{}, propagation.Baggage{}))
+	otel.SetTextMapPropagator(newPropagator()) // W3C trace context, also when tracing is off
 
 	if os.Getenv("ENABLE_TRACING") == "1" {
 		log.Info("Tracing enabled.")
-		initTracing(log, ctx, svc)
+		mustMapEnv(&svc.collectorAddr, "COLLECTOR_SERVICE_ADDR")
+		if _, err := startTracing(ctx, "frontend", svc.collectorAddr); err != nil {
+			log.Warnf("tracing: %v", err)
+		}
 	} else {
 		log.Info("Tracing disabled.")
 	}
@@ -162,11 +158,11 @@ func main() {
 	metrics := newHTTPMetrics()
 
 	var handler http.Handler = r
-	handler = faultInjection(fault, handler)           // demo: injected 500s
-	handler = &logHandler{log: log, next: handler}     // add logging
-	handler = ensureSessionID(handler)                 // add session ID
-	handler = metrics.middleware(handler)              // add Prometheus metrics (canary analysis)
-	handler = otelhttp.NewHandler(handler, "frontend") // add OTel tracing
+	handler = faultInjection(fault, handler)       // demo: injected 500s
+	handler = &logHandler{log: log, next: handler} // add logging
+	handler = ensureSessionID(handler)             // add session ID
+	handler = metrics.middleware(handler)          // add Prometheus metrics (canary analysis)
+	handler = tracedHandler(r, handler)            // add OTel tracing (tracing.go): span per route
 
 	// Metrics on their own port: not behind the Service or the ALB, only Prometheus.
 	if metricsPort := os.Getenv("METRICS_PORT"); metricsPort != "" {
@@ -181,23 +177,6 @@ func main() {
 }
 func initStats(log logrus.FieldLogger) {
 	// TODO(arbrown) Implement OpenTelemtry stats
-}
-
-func initTracing(log logrus.FieldLogger, ctx context.Context, svc *frontendServer) (*sdktrace.TracerProvider, error) {
-	mustMapEnv(&svc.collectorAddr, "COLLECTOR_SERVICE_ADDR")
-	mustConnGRPC(ctx, &svc.collectorConn, svc.collectorAddr)
-	exporter, err := otlptracegrpc.New(
-		ctx,
-		otlptracegrpc.WithGRPCConn(svc.collectorConn))
-	if err != nil {
-		log.Warnf("warn: Failed to create trace exporter: %v", err)
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()))
-	otel.SetTracerProvider(tp)
-
-	return tp, err
 }
 
 func initProfiling(log logrus.FieldLogger, service, version string) {
