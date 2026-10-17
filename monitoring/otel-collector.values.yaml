@@ -102,7 +102,11 @@ config:
 
     # A trace is kept when one policy keeps it; the drop policy wins over all of them.
     tail_sampling:
-      decision_wait: 10s
+      # 30 s (was 10 s): an order's trace goes through EventBridge and SQS and its last spans
+      # (inventory, email) arrive about 4.5 s or more after the first, later on a retry. Memory:
+      # the collector holds 3x the in-flight spans, a few MiB at today's rate; memory_limiter
+      # (400 MiB) and num_traces bound the worst case. RUNBOOK section 12.
+      decision_wait: 30s
       num_traces: 20000
       expected_new_traces_per_sec: 50
       policies:

@@ -109,8 +109,9 @@ grafana:
       preinstall_auto_update: false
   # Week 3: 384Mi was too little: Grafana was OOMKilled during the stress test (the 503
   # page) and again later with the whole dashboard open. Grafana 13 needs more.
+  # 2026-10-17 (cluster-status Resource usage): max 540Mi, so the request covers it (was 256Mi).
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
+    requests: { cpu: 100m, memory: 576Mi }
     limits: { memory: 768Mi }
   defaultDashboardsTimezone: browser
   # No "plugins:" list here either: it would make Grafana replace a bundled plugin at
@@ -146,6 +147,11 @@ grafana:
         authType: default          # AWS SDK default chain = EKS Pod Identity
         defaultRegion: us-east-1
   sidecar:
+    # Both sidecars (grafana-sc-dashboard, grafana-sc-datasources): one setting in the chart.
+    # They had no requests, so the scheduler reserved nothing for them.
+    resources:
+      requests: { cpu: 25m, memory: 96Mi }
+      limits: { memory: 192Mi }
     datasources:
       defaultDatasourceEnabled: false   # replaced by the Prometheus entry above
     dashboards:
