@@ -481,7 +481,7 @@ Flags, worth a look before changing a row:
 | `CPU-THROTTLE` | max CPU >= 90% of the CPU limit: the container was likely throttled | Raise the limit before lowering anything; check its latency |
 | `MEM-OOM` | max memory >= 90% of the memory limit: close to an OOM kill | Raise the memory limit (and keep request <= limit) |
 | `CPU-REQ>LIM` / `MEM-REQ>LIM` | The suggested request is above the current limit | The limit must be raised with it, or the suggestion is invalid |
-| `SHORT-DATA(<h>)` | Less than 12 h of data (a new cluster, or a new workload) | Wait for a full day; `terraform-aws` is rebuilt daily and Prometheus keeps 24 h |
+| `SHORT-DATA(<h>)` | Less than 12 h of data (a new cluster, or a new workload) | Wait for a full day. Less data means a new workload, a cluster rebuilt by a manual `infra` destroy and apply (nothing destroys it on a schedule), or a Prometheus restart: it keeps 24 h in the pod, lost when the pod is replaced |
 | `NO-DATA` | No usage series (just started, or not scraped) | Keep the current request |
 
 **Use it.** Change requests in a separate PR, a few services at a time, in
