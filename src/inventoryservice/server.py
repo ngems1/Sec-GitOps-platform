@@ -71,12 +71,15 @@ stop = threading.Event()
 last_poll = {"t": 0.0}
 
 
-def handle_message(store, events, msg):
+def handle_message(store, events, msg, body=None, span=None):
+    """body: the SQS body without its trace field (tracing.take_trace); span: the message's span."""
     with PROCESSING.time():
-        order_id, items = inv.parse_order_created(msg["Body"])
+        order_id, items = inv.parse_order_created(msg["Body"] if body is None else body)
+        tracing.set_order_id(span, order_id)
         res = store.reserve(order_id, items)
         detail_type, detail = inv.result_event(res)
-        inv.publish(events, BUS, detail_type, detail)
+        with tracing.producer_span(f"publish {detail_type}", BUS, order_id):
+            inv.publish(events, BUS, detail_type, tracing.with_trace(detail))
     RESERVATIONS.labels("duplicate" if res.duplicate else res.status.lower()).inc()
     info("order processed", orderId=order_id, result=res.status, duplicate=res.duplicate,
          failedProducts=res.failed_products, receiveCount=msg.get("Attributes", {}).get("ApproximateReceiveCount"))
@@ -97,9 +100,13 @@ def consume(store, sqs, events):
             continue
         for msg in resp.get("Messages", []):
             try:
+                # The trace field comes out before the event is parsed; the span continues
+                # checkout's trace when the field was there.
+                body, carrier = tracing.take_trace(msg["Body"])
                 with tracing.consumer_span("process OrderCreated",
-                                           {"messaging.system": "aws_sqs", "messaging.operation": "process"}):
-                    handle_message(store, events, msg)
+                                           {"messaging.system": "aws_sqs", "messaging.operation": "process"},
+                                           carrier) as span:
+                    handle_message(store, events, msg, body, span)
                     sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
             except inv.InvalidEvent as exc:
                 MESSAGE_ERRORS.labels("invalid").inc()

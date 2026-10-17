@@ -30,6 +30,7 @@ import (
 	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/go-sql-driver/mysql"
+	"go.opentelemetry.io/otel/codes"
 
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/checkoutservice/genproto"
 )
@@ -61,6 +62,8 @@ type orderCreated struct {
 	Items              []orderLine `json:"items"`
 	Total              orderTotal  `json:"total"`
 	ShippingTrackingID string      `json:"shippingTrackingId"`
+	// W3C trace context for the consumers (asyncevents.go); absent while tracing is off.
+	Trace map[string]string `json:"_trace,omitempty"`
 }
 
 // orderLines turns the order items into {productId, quantity} lines.
@@ -233,6 +236,10 @@ func (s *orderStore) record(ctx context.Context, order *pb.OrderResult, email st
 		return fmt.Errorf("save order: %w", err)
 	}
 
+	// PRODUCER span around the publish; its context goes into the event (asyncevents.go).
+	ctx, span := startPublishSpan(ctx, s.bus, event.OrderID)
+	defer span.End()
+	event.Trace = traceCarrier(ctx)
 	detail, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -259,5 +266,6 @@ func (s *orderStore) record(ctx context.Context, order *pb.OrderResult, email st
 		}
 		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 	}
+	span.SetStatus(codes.Error, "OrderCreated not published")
 	return fmt.Errorf("publish OrderCreated: %w", lastErr)
 }

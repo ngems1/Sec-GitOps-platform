@@ -24,12 +24,17 @@ thousands of orders): the next message says how many were not shown.
 Failures: an invalid event or an AWS error leaves the message in the queue; it is
 retried and, after 3 tries, moved to the dead-letter queue (CloudWatch alarm -> Slack).
 This module has no boto3 import, so the tests run without AWS.
+
+Tracing (ADR 0010, messagetrace.py): one CONSUMER span per message, in the order's trace when the
+event has a "_trace" field; the field is removed before the event is parsed.
 """
 import json
 import time
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+import messagetrace
 
 SCHEMA_VERSION = "1"
 EVENT_TYPE = "OrderStatusUpdated"
@@ -227,9 +232,11 @@ def send(logger, order, subject, body):
         "subject": subject, "delivery": DELIVERY_MODE, "body": body})
 
 
-def handle(body, log_table, logger, slack=None, ses=None):
-    """Process one message. Returns 'sent', 'duplicate' or 'no-email'. Raises to retry."""
+def handle(body, log_table, logger, slack=None, ses=None, span=None):
+    """Process one message. Returns 'sent', 'duplicate' or 'no-email'. Raises to retry.
+    span: the message's span, if any (gets the order ID)."""
     order = parse_message(body)
+    messagetrace.set_order_id(span, order.order_id)
     subject, text = render_email(order)
     delivery = "ses" if ses and order.email and ses.can_send(order.email) else DELIVERY_MODE
     if not log_table.claim(order, subject, delivery):
@@ -277,8 +284,11 @@ class Consumer:
         results = []
         for msg in resp.get("Messages", []):
             try:
-                results.append(handle(msg["Body"], self.log_table, self.logger, self.slack, self.ses))
-                self.sqs.delete_message(QueueUrl=self.queue_url, ReceiptHandle=msg["ReceiptHandle"])
+                body, carrier = messagetrace.take_trace(msg["Body"])
+                with messagetrace.consumer_span(f"process {EVENT_TYPE}", carrier,
+                                                {"messaging.system": "aws_sqs", "messaging.operation": "process"}) as span:
+                    results.append(handle(body, self.log_table, self.logger, self.slack, self.ses, span))
+                    self.sqs.delete_message(QueueUrl=self.queue_url, ReceiptHandle=msg["ReceiptHandle"])
             except InvalidEvent as exc:
                 self.logger.error("invalid message, will retry then go to the DLQ",
                                   extra={"error": str(exc), "messageId": msg.get("MessageId")})

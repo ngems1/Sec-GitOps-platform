@@ -353,8 +353,13 @@ until step 7.
      model and token counts, never the question text.
 5. **Async context.**
    - Put `traceparent` into the EventBridge event detail and read it in the SQS consumers
-     (inventory, email), as span links.
-   - Order-status Lambda tracing is optional (an OpenTelemetry Lambda layer).
+     (inventory, email).
+   - Done as parent and child, not span links: each message has one producer, so each order
+     is one trace.
+     - `_trace` field: only while tracing is on; the consumers remove it before parsing.
+     - The order-status Lambda only copies the field to `OrderStatusUpdated`.
+     - RUNBOOK section 12.
+   - Order-status Lambda spans are optional (an OpenTelemetry Lambda layer); not done.
 6. **Links between signals.**
    - `trace_id`/`span_id` in the JSON logs.
    - The Tempo metrics-generator (span metrics and service graph) with exemplars, written to

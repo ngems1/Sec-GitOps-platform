@@ -13,6 +13,11 @@ finds the order already in that status and simply re-publishes the same result.
 If the order row is not there yet, the message fails and is retried
 (3 tries, then the dead-letter queue).
 
+Tracing (ADR 0010, step 5): the Lambda has no OpenTelemetry. It only copies the
+event's "_trace" field (W3C traceparent/tracestate, put there by inventoryservice)
+to OrderStatusUpdated, so emailservice's span joins the order's trace, as a child of
+inventory's publish span. Events without the field are handled as before.
+
 Runs inside the VPC. DB credentials come from the RDS-managed secret in
 Secrets Manager; on "access denied" (password rotated) it re-reads the secret once.
 pymysql and the RDS CA bundle are added to this folder by the infra workflow.
@@ -111,6 +116,7 @@ def process(event, conn, publish):
     order_id = detail.get("orderId")
     if not order_id:
         raise ValueError(f"{detail_type} without orderId")
+    trace_field = _trace_field(detail.get("_trace"))
 
     new_status = RESULTS[detail_type]
     reason = "" if new_status == "CONFIRMED" else str(detail.get("reason") or "INSUFFICIENT_STOCK")
@@ -126,10 +132,20 @@ def process(event, conn, publish):
     out = {"version": SCHEMA_VERSION, "orderId": order_id, "status": new_status,
            "reason": row["status_reason"], "email": row["email"],
            "productIds": detail.get("productIds", [])}
+    if trace_field:
+        out["_trace"] = trace_field
     publish(out)
     log.info(json.dumps({"msg": "order status updated", "orderId": order_id,
                          "status": new_status, "duplicate": not changed}))
     return out
+
+
+def _trace_field(raw):
+    """The W3C keys of an incoming "_trace" field, as short strings, or None."""
+    if not isinstance(raw, dict):
+        return None
+    out = {k: raw[k] for k in ("traceparent", "tracestate") if isinstance(raw.get(k), str) and len(raw[k]) <= 512}
+    return out if "traceparent" in out else None
 
 
 def _publish(detail):
