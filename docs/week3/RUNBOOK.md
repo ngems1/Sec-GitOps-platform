@@ -91,6 +91,7 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 | "Datasource prometheus was not found", empty Prometheus settings | Bundled plugins broke on the read-only disk; `preinstall_disabled: true` in `grafana.ini` must stay |
 | CloudWatch panels "No data" | Traffic needed (run load-test), time range ≥ 30 min; cluster-status → `monitoring` runs the dashboard queries directly against AWS to separate a Grafana problem from a missing metric |
 | CloudWatch "AccessDenied" in Grafana | The Grafana Pod Identity role (`terraform-aws/monitoring.tf`) lacks that read action; add it there, never broader than read-only |
+| A log group's retention reads "Never expire" again, or the infra plan wants to change it | Terraform manages the Container Insights groups (`terraform-aws/logs.tf`): application 1 day for now (the purge of lines written before fix/no-pii-in-logs; then 14), dataplane 14, host 14, performance 7. The add-on's Fluent Bit sets no retention by default; if an add-on upgrade starts setting one, the next infra plan shows the drift. After an `infra` destroy the groups stay (`skip_destroy`) and the next apply adopts them again (the `import` block) |
 | `#boutique-alerts`: ":rotating_light: GuardDuty HIGH/CRITICAL: ..." | GuardDuty found something with severity >= 7 (for example credentials used from outside AWS, a node talking to a known bad address) | Open the finding (link in the message). Do not delete anything first: the CloudTrail files are kept 30 days under Object Lock. Real: rotate what leaked (the CI roles have no keys; check the Pod Identity role named in the finding), then `infra` destroy/apply if a node is suspect. False positive: the detector belongs to another project in this account (shared, SECURITY.md section 2a); ask its owner to archive or suppress it, do not change GuardDuty from here |
 
 ## 6. HTTPS and DNS
@@ -611,7 +612,12 @@ and durations.
   - It doesn't see fields added on another line, which is why the tests exist too.
 
 **Old lines:** lines written before the fix stay in CloudWatch until the log group's
-retention removes them (14 days once ADR 0011's PR 2 is merged; no expiry before that).
+retention removes them.
+
+- **Now:** the application group is at **1 day** (`terraform-aws/logs.tf`, ADR 0011 PR 2) to
+  purge them. CloudWatch deletes expired lines, usually within 72 hours of the apply.
+- **After the follow-up PR:** **14 days**.
+- **Before PR 2:** no expiry at all.
 
 ## Incident log (things that actually happened)
 
