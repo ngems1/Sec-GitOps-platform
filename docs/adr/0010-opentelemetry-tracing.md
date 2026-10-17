@@ -361,6 +361,11 @@ until step 7.
      - RUNBOOK section 12.
    - Order-status Lambda spans are optional (an OpenTelemetry Lambda layer); not done.
 6. **Links between signals.**
+   - **Decided in [ADR 0011](0011-linking-traces-metrics-logs.md),** which replaces the
+     points below:
+     - logs stay in CloudWatch (no Loki);
+     - span metrics come from the collector's connectors, scraped by Prometheus, not from
+       Tempo's metrics-generator with remote write.
    - `trace_id`/`span_id` in the JSON logs.
    - The Tempo metrics-generator (span metrics and service graph) with exemplars, written to
      Prometheus.
