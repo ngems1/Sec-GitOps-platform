@@ -58,8 +58,8 @@ What exists today (from the repo, 2026-10-17):
 ### Options
 
 1. **CloudWatch Logs data source** (the logs we already ship).
-   - **IAM:** nothing new. The data source, its role and the log-group scoping exist and are
-     reviewed (SECURITY.md). No boundary change, no bootstrap run.
+   - **IAM:** no new role, no boundary change, no bootstrap run. See "Grafana's AWS
+     credentials" below for what the repo shows.
    - **Compute:** none added. Fluent Bit already runs as part of Container Insights.
    - **Cost:** we already pay for ingestion, so no new line on the bill. Logs Insights is
      billed per GB scanned: a query over one trace's time window scans little. The
@@ -96,12 +96,71 @@ What exists today (from the repo, 2026-10-17):
    - **Multi-cloud:** the same chart runs on any cloud. This is the main argument for it in
      Phase 6.
 
+### Grafana's AWS credentials (checked 2026-10-17)
+
+**Grafana uses EKS Pod Identity, not IRSA and not the node role.** The repo shows:
+
+- **The association:** `aws_eks_pod_identity_association.grafana` (`terraform-aws/monitoring.tf`)
+  links namespace `monitoring`, service account `grafana`, to the role
+  `week3-boutique-grafana-cloudwatch`. The role trusts only `pods.eks.amazonaws.com`
+  (`workload-iam.tf`).
+- **Grafana's values:** the chart creates the service account `grafana`
+  (`kube-prometheus-stack.values.yaml`). The data source uses `authType: default`, the AWS SDK
+  default chain.
+- **Why the chain picks Pod Identity:** the EKS Pod Identity webhook puts
+  `AWS_CONTAINER_CREDENTIALS_FULL_URI` and the token file into the pod when it is created. The
+  SDK's container-credentials provider comes before the instance metadata provider.
+- **No IRSA:** no `eks.amazonaws.com/role-arn` annotation anywhere in `monitoring/`,
+  `terraform-aws/` or `deploy/`.
+- **The role's log rights:**
+  - `logs:DescribeLogGroups` and `logs:ListAggregateLogGroupSummaries` on `*` (they can't be
+    scoped);
+  - `logs:GetLogGroupFields`, `StartQuery`, `GetLogEvents` and `FilterLogEvents` on
+    `/aws/containerinsights/<cluster>/*` and `/aws/lambda/week3-boutique-*`;
+  - `logs:GetQueryResults` and `StopQuery` on `*` (AWS doesn't scope them).
+  - There is no write action, and no other account's or project's log groups.
+
+What the repo can't show, and its risk:
+
+- **The node role as a fallback.** Grafana falls back to the node instance role through
+  instance metadata (IMDS) in two cases:
+  - the Grafana pod started before its association existed (the webhook adds the variables
+    only at pod creation);
+  - pods can reach IMDS. The repo leaves the node group's `metadata_options` at the EKS module
+    default, so the hop limit is not visible here.
+- **What the node role could do.** It has `CloudWatchAgentServerPolicy`. That policy allows
+  log *writes* and `DescribeLogGroups`, but no `StartQuery`, `GetQueryResults`,
+  `GetLogEvents`, `FilterLogEvents` or `GetMetricData`. So queries would fail with
+  AccessDenied, and Grafana would get no extra rights.
+- **The check, in PR 4 below.** Both are read-only:
+  - the Grafana pod's environment has `AWS_CONTAINER_CREDENTIALS_FULL_URI` (names only, no
+    values printed);
+  - a Logs Insights query in Explore succeeds, and CloudTrail shows its `StartQuery` called
+    by `week3-boutique-grafana-cloudwatch`, not by the node role.
+- **Separate finding, not fixed by this ADR.** If pods can reach IMDS, every pod can use the
+  node role (ECR pull, CNI, log writes). The fix is `http_put_response_hop_limit = 1` on the
+  node group. It is a Terraform change to the nodes, to be decided on its own.
+
+**Narrower scope** (optional PR 2b below):
+
+- The `/aws/containerinsights/<cluster>/*` pattern also covers the `performance`, `dataplane`
+  and `host` groups. Grafana only needs `application` for this ADR.
+- Narrowing it to `/aws/containerinsights/<cluster>/application:*` changes only the existing
+  role policy.
+- The deploy role's boundary already allows `iam` and `logs` on resources tagged
+  `Project = week3-boutique`, so **no boundary change and no bootstrap run**.
+- IAM can't scope inside one log group, so the `application` group still holds every
+  namespace's container logs (boutique-dev, boutique-prod, monitoring, Argo CD). That is why
+  no personal data may be in any container log (PR 1).
+- The Lambda groups stay in the policy: Grafana reads them today (SECURITY.md).
+
 ### Decision
 
 **Option 1: the CloudWatch Logs data source.** Loki is not installed now.
 
-1. **No IAM, boundary or bootstrap change, and no new compute** on a cluster at 82% of its CPU
-   requests. Loki's 300m would come out of the right-sizing margin before that work has
+1. **No new role, boundary or bootstrap change, and no new compute** on a cluster at 82% of
+   its CPU requests. Grafana already reads these logs with its own Pod Identity role (see
+   above). Loki's 300m would come out of the right-sizing margin before that work has
    landed.
 2. **One log pipeline.** CloudWatch keeps the control-plane, audit and Lambda logs anyway.
    Loki would add a second copy of the container logs, not replace one.
@@ -280,6 +339,9 @@ are code, with no prod-only switch). Tracing stays off in prod until ADR 0010 st
    drop `session`, frontend request logs at Info.
 2. **Log retention.** Terraform: import the Container Insights application log group and set
    14 days. Plan shows only that group.
+   - 2b (optional): narrow Grafana's log-read resources to the `application` group (see
+     "Grafana's AWS credentials"). The plan shows only `aws_iam_role_policy.grafana`. No
+     boundary or bootstrap change.
 3. **`trace_id`/`span_id` in the logs, by language:**
    - 3a: the four Go services;
    - 3b: currency and payment (Node);
@@ -288,7 +350,9 @@ are code, with no prod-only switch). Tracing stays off in prod until ADR 0010 st
    - 3e: cartservice.
    One PR per group, with a unit test each and a check in dev Logs Insights.
 4. **Logs to trace and trace to logs in Grafana:** the Correlation, the "Logs for a trace"
-   dashboard, and the RUNBOOK query. No Prometheus change.
+   dashboard, and the RUNBOOK query. No Prometheus change. Check first that Grafana uses its
+   Pod Identity role, not the node role (the two read-only checks in "Grafana's AWS
+   credentials").
 5. **Collector span metrics** (`spanmetrics`, `servicegraph`, the `prometheus` exporter, pod
    annotations, the new collector resources). The metrics appear in Prometheus, without
    exemplars yet. Check the names against Grafana's Service Graph in Explore.
