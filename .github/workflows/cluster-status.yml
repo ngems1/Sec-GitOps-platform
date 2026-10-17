@@ -110,6 +110,22 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Real CPU and memory use per container over the last 24 h (Prometheus), against requests and
+      # limits, with a suggested request: data for right-sizing, nothing is changed. A one-off Job
+      # in "monitoring" queries Prometheus (no secret) and is removed afterwards
+      # (deploy/resource-usage.sh; RUNBOOK section 13).
+      - name: Resource usage
+        continue-on-error: true # the other sections still run without Prometheus
+        env:
+          CURL_IMAGE: docker.io/curlimages/curl:8.22.0
+        run: |
+          {
+            echo "### Resource usage (last 24 h; CPU in millicores, memory in MiB)"
+            echo '```'
+            bash deploy/resource-usage.sh
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Read-only (list-addons, describe-addon). The EKS add-ons and the exact versions they
       # run, for pinning them in terraform-aws/eks.tf (addon_version, never most_recent:
       # RUNBOOK "Upgrade an EKS add-on"). Add-ons running but not in eks.tf are flagged.

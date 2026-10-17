@@ -447,6 +447,52 @@ kubectl delete clusterrole otel-collector --ignore-not-found       # normally re
 kubectl delete clusterrolebinding otel-collector --ignore-not-found
 ```
 
+## 13. Resource usage report (right-sizing requests)
+
+**Why.** Cluster CPU requests are high while most services use a small share of what they
+request. Requests, not usage, decide whether a pod fits on a node. This report gives the real
+usage, so requests can be changed from data. It changes nothing itself.
+
+**Run it.** Actions > cluster-status > Run workflow (any namespace). The section **Resource
+usage** is in the log and on the run's Summary page.
+- A one-off Job in `monitoring` (`deploy/k8s/resource-usage-query.yaml`) runs the queries in
+  `deploy/resource-usage/queries.txt` against Prometheus. Prometheus needs no login, so no
+  secret is used or printed.
+- The Job and its ConfigMap are deleted at the end, pass or fail.
+- If Prometheus is down, only this section fails; the others still run.
+
+**Read it.** One table per namespace (boutique-dev, boutique-prod, monitoring, argo-rollouts),
+one row per workload and container. CPU is in millicores (m), memory in MiB.
+
+| Column | Meaning |
+|---|---|
+| REPL | Pods running now |
+| CPU avg / p95 / max | `rate(container_cpu_usage_seconds_total[5m])` over the last 24 h, sampled every 2 min; the highest pod of the workload (avg: the mean of its pods). Deleted pods count, so a rollout's old pods are included |
+| MEM p95 / max | `container_memory_working_set_bytes` over 24 h: the memory the kubelet uses for evictions, close to what counts against the limit |
+| req / lim | Current requests and limits (the current pods) |
+| SUGGEST | CPU: p95 x 1.5, at least 10m, never below the max seen, rounded up to 5m. Memory: max x 1.3, at least 32 MiB, rounded up to 8 MiB |
+| TOTAL | Requests now and with the suggestions, for all replicas. Rows without data keep their current request |
+| Cluster | Allocatable, requests now and with the suggestions (all namespaces: kube-system and other namespaces are counted at their current requests), and the headroom |
+
+Flags, worth a look before changing a row:
+
+| Flag | Meaning | Before changing it |
+|---|---|---|
+| `CPU-THROTTLE` | max CPU >= 90% of the CPU limit: the container was likely throttled | Raise the limit before lowering anything; check its latency |
+| `MEM-OOM` | max memory >= 90% of the memory limit: close to an OOM kill | Raise the memory limit (and keep request <= limit) |
+| `CPU-REQ>LIM` / `MEM-REQ>LIM` | The suggested request is above the current limit | The limit must be raised with it, or the suggestion is invalid |
+| `SHORT-DATA(<h>)` | Less than 12 h of data (a new cluster, or a new workload) | Wait for a full day. Less data means a new workload, a cluster rebuilt by a manual `infra` destroy and apply (nothing destroys it on a schedule), or a Prometheus restart: it keeps 24 h in the pod, lost when the pod is replaced |
+| `NO-DATA` | No usage series (just started, or not scraped) | Keep the current request |
+
+**Use it.** Change requests in a separate PR, a few services at a time, in
+`helm-chart/values*.yaml`.
+- Prefer a day that includes a load test (`load-test` workflow). Otherwise the max only shows
+  the loadgenerator's light traffic, and a suggestion based on it is too low for real load.
+- Keep HPA targets in mind: autoscaling uses CPU as a % of the request. A lower request scales out
+  at a lower load (`autoscaling.targetCPUUtilization`).
+- After the change, run the report again a day later. Check the flags, restarts
+  (cluster-status > Namespace snapshot) and the canary's p95.
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |

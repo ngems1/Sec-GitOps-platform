@@ -55,6 +55,11 @@ jobs:
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications
+      # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
+      - name: resource usage report (fixtures)
+        run: |
+          bash -n deploy/resource-usage.sh
+          bash deploy/resource-usage/test.sh
       - name: order-status Lambda
         working-directory: terraform-aws/lambda/order_status
         run: |

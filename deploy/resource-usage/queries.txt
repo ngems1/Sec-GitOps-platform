@@ -1,0 +1,9 @@
+# Resource usage queries (deploy/resource-usage.sh), one per line: <name> <PromQL>.
+# Per pod and container (cAdvisor, scraped from the kubelet by kube-prometheus-stack), over the
+# last 24 h or as much as Prometheus keeps (24 h retention; less after a cluster rebuild).
+cpu_avg avg_over_time(rate(container_cpu_usage_seconds_total{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""}[5m])[24h:2m])
+cpu_p95 quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""}[5m])[24h:2m])
+cpu_max max_over_time(rate(container_cpu_usage_seconds_total{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""}[5m])[24h:2m])
+mem_p95 quantile_over_time(0.95, container_memory_working_set_bytes{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""}[24h])
+mem_max max_over_time(container_memory_working_set_bytes{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""}[24h])
+hours (max_over_time(timestamp(container_memory_working_set_bytes{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""})[24h:5m]) - min_over_time(timestamp(container_memory_working_set_bytes{namespace=~"boutique-dev|boutique-prod|monitoring|argo-rollouts",container!="",container!="POD",image!=""})[24h:5m])) / 3600
