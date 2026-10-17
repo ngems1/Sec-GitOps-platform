@@ -68,6 +68,7 @@ spec:
         ports:
         - containerPort: 7070
         env:
+        {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.cartService.name)) }}{{ . | nindent 8 }}{{ end }}
         {{- if eq .Values.cartDatabase.type "spanner" }}
         - name: SPANNER_CONNECTION_STRING
         {{- else }}

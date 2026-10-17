@@ -192,42 +192,11 @@ public final class AdService {
         .build();
   }
 
-  private static void initStats() {
-    if (System.getenv("DISABLE_STATS") != null) {
-      logger.info("Stats disabled.");
-      return;
-    }
-    logger.info("Stats enabled, but temporarily unavailable");
-
-    long sleepTime = 10; /* seconds */
-    int maxAttempts = 5;
-
-    // TODO(arbrown) Implement OpenTelemetry stats
-
-  }
-
-  private static void initTracing() {
-    if (System.getenv("DISABLE_TRACING") != null) {
-      logger.info("Tracing disabled.");
-      return;
-    }
-    logger.info("Tracing enabled but temporarily unavailable");
-    logger.info("See https://github.com/GoogleCloudPlatform/microservices-demo/issues/422 for more info.");
-
-    // TODO(arbrown) Implement OpenTelemetry tracing
-    
-    logger.info("Tracing enabled - Stackdriver exporter initialized.");
-  }
+  // Tracing (ADR 0010) is the OpenTelemetry Java agent, not code: see the Dockerfile and
+  // docker-entrypoint.sh. It is active only with ENABLE_TRACING=1.
 
   /** Main launches the server from the command line. */
   public static void main(String[] args) throws IOException, InterruptedException {
-
-    new Thread(
-            () -> {
-              initStats();
-              initTracing();
-            })
-        .start();
 
     // Start the RPC server. You shouldn't see any output from gRPC before this.
     logger.info("AdService starting.");

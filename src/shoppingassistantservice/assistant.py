@@ -19,6 +19,7 @@ Guardrails, in the order a question meets them:
      blocks (Amazon Nova's reasoning) are removed
   7. cost: max_tool_steps tool rounds, max_tokens per model call, a deadline per question
 """
+import contextlib
 import datetime
 import hashlib
 import re
@@ -180,14 +181,35 @@ class NoMetrics:
         pass
 
 
+class NoSpans:
+    """Tracing hook (tracing.py replaces it when tracing is on): one span per model call. The hook is
+    only ever given the model ID, the step, token counts, tool names and an outcome: never the
+    question, the answer, the session or anything derived from them."""
+
+    @contextlib.contextmanager
+    def model_call(self, model_id, step):
+        yield _NoCall()
+
+
+class _NoCall:
+    def record(self, input_tokens=0, output_tokens=0, tools=(), outcome="ok"):
+        pass
+
+
+# Outcome of a model call on its span: a BedrockError kind -> ok / rate_limited / timeout / error.
+CALL_OUTCOMES = {"throttled": "rate_limited", "timeout": "timeout"}
+TOOL_NAMES = {"list_products", "search_products", "get_product"}
+
+
 class Assistant:
-    def __init__(self, model, catalog, *, metrics=None, max_question_chars=500, max_tool_steps=3,
+    def __init__(self, model, catalog, *, metrics=None, spans=None, max_question_chars=500, max_tool_steps=3,
                  max_tokens=600, temperature=0.2, deadline_seconds=20, rate_per_minute=10,
                  rate_burst=5, daily_question_cap=300, max_concurrent_calls=2,
                  clock=time.monotonic, today=None):
         self.model = model
         self.catalog = catalog
         self.metrics = metrics or NoMetrics()
+        self.spans = spans or NoSpans()
         self.max_question_chars = max_question_chars
         self.max_tool_steps = max_tool_steps
         self.max_tokens = max_tokens
@@ -252,11 +274,19 @@ class Assistant:
         for step in range(self.max_tool_steps + 1):
             if self.clock() - start > self.deadline_seconds:
                 return self._result("timeout", GIVE_UP_ANSWER)
-            response = self.model.converse(self._request(messages, currency))
-            usage = response.get("usage", {})
+            with self.spans.model_call(getattr(self.model, "model_id", "unknown"), step) as call:
+                try:
+                    response = self.model.converse(self._request(messages, currency))
+                except Exception as err:
+                    call.record(outcome=CALL_OUTCOMES.get(getattr(err, "kind", ""), "error"))
+                    raise
+                usage = response.get("usage", {})
+                message = response.get("output", {}).get("message", {"role": "assistant", "content": []})
+                tools = [b["toolUse"].get("name") for b in message.get("content", []) if "toolUse" in b]
+                call.record(input_tokens=usage.get("inputTokens", 0), output_tokens=usage.get("outputTokens", 0),
+                            tools=[t if t in TOOL_NAMES else "unknown" for t in tools], outcome="ok")
             self.metrics.add_tokens("input", usage.get("inputTokens", 0))
             self.metrics.add_tokens("output", usage.get("outputTokens", 0))
-            message = response.get("output", {}).get("message", {"role": "assistant", "content": []})
             if response.get("stopReason") != "tool_use":
                 text = strip_thinking(" ".join(b["text"] for b in message.get("content", []) if "text" in b))
                 text, products = self._citations(text)

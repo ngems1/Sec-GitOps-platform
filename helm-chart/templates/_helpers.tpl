@@ -26,9 +26,8 @@ topologySpreadConstraints:
 {{- end }}
 
 {{- /*
-Tracing env (ADR 0010) for the services that already have OpenTelemetry code: frontend,
-checkoutservice, productcatalogservice, currencyservice, paymentservice, recommendationservice,
-emailservice. Only when tracing.enabled (dev): they then export OTLP gRPC to the collector in
+Tracing env (ADR 0010) for the 12 traced services (every service but the loadgenerator and
+Redis). Only when tracing.enabled (dev): they then export OTLP gRPC to the collector in
 "monitoring". deployment.environment is the namespace without "boutique-" (dev / prod).
 Usage (renders nothing at all when off):
   {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.frontend.name)) }}{{ . | nindent 10 }}{{ end }}

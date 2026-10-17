@@ -5,6 +5,14 @@
 tracing:
   enabled: true
 
+# adservice with the OpenTelemetry Java agent on (tracing.enabled): about 190 MiB measured after
+# start (one CPU, JVM sized for 512 MiB) against 110-115 MiB without it, so the memory request
+# covers it in dev. The limit (512Mi) and the CPU request do not change; prod (no tracing) keeps 180Mi.
+adService:
+  resources:
+    requests:
+      memory: 256Mi
+
 # AI shopping assistant (ADR 0009): on in dev only, with the /assistant page in the frontend.
 shoppingAssistantService:
   create: true

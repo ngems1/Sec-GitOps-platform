@@ -27,9 +27,8 @@ authorizationPolicies:
   # Specifies if the AuthorizationPolicies are created or not. If true, one fine granular AuthorizationPolicy per app is created.
   create: false
 
-# OpenTelemetry tracing (ADR 0010). When enabled, the services that already have tracing code
-# (frontend, checkoutservice, productcatalogservice, currencyservice, paymentservice,
-# recommendationservice, emailservice) export OTLP gRPC to the collector in "monitoring"
+# OpenTelemetry tracing (ADR 0010). When enabled, the 12 traced services (all but the
+# loadgenerator and Redis) export OTLP gRPC to the collector in "monitoring"
 # (deploy/monitoring.sh). Off by default and in prod; on in dev (values-dev.yaml). Replaces the
 # upstream GCP-only collector template and the googleCloudOperations.tracing flag.
 tracing:

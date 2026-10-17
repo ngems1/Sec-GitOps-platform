@@ -15,6 +15,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	"go.opentelemetry.io/otel/trace"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 )
@@ -165,5 +166,41 @@ func TestSpanNamedAfterRoute(t *testing.T) {
 				t.Errorf("%s %s: http.route %q", c.method, c.target, v)
 			}
 		}
+	}
+}
+
+// The call to the shopping assistant carries the trace (otelhttp transport): one trace covers
+// frontend -> assistant. The session's hash travels as X-Session-Id but is never a span attribute.
+func TestAssistantCallCarriesTheTrace(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	oldTP, oldProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder)))
+	otel.SetTextMapPropagator(newPropagator())
+	t.Cleanup(func() { otel.SetTracerProvider(oldTP); otel.SetTextMapPropagator(oldProp) })
+
+	srv, f := fakeAssistant(t, http.StatusOK, `{"outcome":"answered","answer":"ok","products":[]}`)
+	withAssistant(t, srv.URL)
+	ctx, parent := otel.Tracer("test").Start(context.Background(), "POST /assistant")
+	askAssistant(ctx, "a question", "EUR", "session-123")
+	parent.End()
+
+	_, headers, _ := f.last()
+	want := parent.SpanContext().TraceID().String()
+	if tp := headers.Get("Traceparent"); !strings.Contains(tp, want) {
+		t.Fatalf("traceparent %q does not carry trace %s", tp, want)
+	}
+	var client bool
+	for _, s := range recorder.Ended() {
+		if s.SpanKind() == trace.SpanKindClient && s.Parent().TraceID().String() == want {
+			client = true
+		}
+		for _, kv := range s.Attributes() {
+			if v := kv.Value.Emit(); strings.Contains(v, hashedSession("session-123")) || strings.Contains(v, "a question") {
+				t.Errorf("span %q attribute %s leaks %q", s.Name(), kv.Key, v)
+			}
+		}
+	}
+	if !client {
+		t.Error("no client span for the assistant call")
 	}
 }

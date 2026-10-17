@@ -24,6 +24,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 import assistant as core
 import bedrock
 import metrics as m
+import tracing
 
 # ------------------------------------------------------------------ config
 PORT = int(os.environ.get("PORT", "8080"))
@@ -120,6 +121,15 @@ def make_handler(bot):
         def do_POST(self):  # noqa: N802
             if self.path.split("?")[0].rstrip("/") != "/ask":
                 return self._send(404, {"error": "not found"})
+            # One span per question (tracing.py): status, outcome and product count only, never the
+            # question, the answer or the session.
+            with tracing.server_span("POST", "/ask", "/ask", self.headers) as span:
+                code, outcome, products = self._ask()
+                if span is not None:
+                    span.record(code, outcome, products)
+
+        def _ask(self):
+            """Answers one POST /ask; returns (status code, outcome, number of products)."""
             start = time.monotonic()
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -132,7 +142,8 @@ def make_handler(bot):
                 result = bot.ask(body["question"], str(body.get("currency") or "USD"), session)
             except (core.QuestionError, ValueError) as err:
                 m.REQUESTS.labels("bad_request").inc()
-                return self._send(400, {"outcome": "bad_request", "error": str(err)})
+                self._send(400, {"outcome": "bad_request", "error": str(err)})
+                return 400, "bad_request", 0
             finally:
                 m.DURATION.observe(time.monotonic() - start)
                 m.DAILY_USED.set(bot.daily.used)
@@ -141,7 +152,9 @@ def make_handler(bot):
             if "error" in result:
                 fields["error"] = result.pop("error")
             info("question answered", **fields)
-            return self._send(STATUS.get(result["outcome"], 200), result)
+            code = STATUS.get(result["outcome"], 200)
+            self._send(code, result)
+            return code, result["outcome"], len(result["products"])
 
         def log_message(self, *args):  # silence default access log (probes are noisy)
             pass
@@ -154,9 +167,11 @@ def main():
         log.error("missing configuration: PRODUCT_CATALOG_SERVICE_ADDR")
         sys.exit(1)
 
+    # Tracing before the catalog's gRPC channel exists (its client spans, tracing.py).
+    spans = tracing.OtelSpans() if tracing.start_tracing("shoppingassistantservice", log) else None
     import catalog  # gRPC: imported here so a missing address fails fast and clearly
     model = bedrock.BedrockModel(MODEL_ID, REGION, timeout_seconds=TIMEOUT)
-    bot = core.Assistant(model, catalog.Catalog(CATALOG_ADDR), metrics=m.PrometheusMetrics(), **SETTINGS)
+    bot = core.Assistant(model, catalog.Catalog(CATALOG_ADDR), metrics=m.PrometheusMetrics(), spans=spans, **SETTINGS)
     m.DAILY_CAP.set(SETTINGS["daily_question_cap"])
 
     stop = threading.Event()

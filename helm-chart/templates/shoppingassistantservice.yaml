@@ -74,6 +74,7 @@ spec:
         - name: http
           containerPort: 8080
         env:
+        {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .name)) }}{{ . | nindent 8 }}{{ end }}
         - name: PORT
           value: "8080"
         - name: AWS_REGION

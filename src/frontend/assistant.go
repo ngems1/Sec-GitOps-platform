@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -38,8 +40,10 @@ const (
 )
 
 var (
-	assistantURL    = strings.TrimRight(strings.TrimSpace(os.Getenv("ASSISTANT_URL")), "/")
-	assistantClient = &http.Client{Timeout: assistantTimeout}
+	assistantURL = strings.TrimRight(strings.TrimSpace(os.Getenv("ASSISTANT_URL")), "/")
+	// otelhttp: a client span, and the trace context (traceparent) on the request, so one trace
+	// covers frontend -> assistant -> Bedrock -> catalog (ADR 0010).
+	assistantClient = &http.Client{Timeout: assistantTimeout, Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	// Example questions on /assistant (chips): they only fill the text box, through ?q=.
 	assistantExamples = []string{
 		"What is the cheapest item?",
@@ -73,9 +77,9 @@ func hashedSession(sessionID string) string {
 
 // askAssistant calls POST {ASSISTANT_URL}/ask. Every failure becomes a reply with a message
 // for the shopper, so the caller never has to turn it into an error page.
-func askAssistant(question, currency, sessionID string) (assistantReply, int) {
+func askAssistant(ctx context.Context, question, currency, sessionID string) (assistantReply, int) {
 	body, _ := json.Marshal(map[string]string{"question": question, "currency": currency})
-	req, err := http.NewRequest(http.MethodPost, assistantURL+"/ask", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, assistantURL+"/ask", bytes.NewReader(body))
 	if err != nil {
 		return assistantReply{Outcome: "error", Answer: assistantUnavailable, Error: err.Error()}, 0
 	}
@@ -141,7 +145,7 @@ func serveAssistant(w http.ResponseWriter, r *http.Request, p platformDetails, d
 			data["answer"] = fmt.Sprintf("Please keep your question under %d characters.", assistantMaxQuestion)
 		default:
 			start := time.Now()
-			reply, code := askAssistant(question, currentCurrency(r), sessionID(r))
+			reply, code := askAssistant(r.Context(), question, currentCurrency(r), sessionID(r))
 			fields := logrus.Fields{"outcome": reply.Outcome, "assistant.status": code,
 				"took_ms": time.Since(start).Milliseconds(), "products": len(reply.Products)}
 			if reply.Error != "" {

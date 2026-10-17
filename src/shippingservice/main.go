@@ -22,6 +22,8 @@ import (
 
 	"cloud.google.com/go/profiler"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -53,10 +55,13 @@ func init() {
 }
 
 func main() {
-	if os.Getenv("DISABLE_TRACING") == "" {
-		log.Info("Tracing enabled, but temporarily unavailable")
-		log.Info("See https://github.com/GoogleCloudPlatform/microservices-demo/issues/422 for more info.")
-		go initTracing()
+	// Tracing (tracing.go, ADR 0010): only with ENABLE_TRACING=1. W3C trace context always.
+	otel.SetTextMapPropagator(newPropagator())
+	if os.Getenv("ENABLE_TRACING") == "1" {
+		log.Info("Tracing enabled.")
+		if _, err := startTracing(context.Background(), "shippingservice", os.Getenv("COLLECTOR_SERVICE_ADDR")); err != nil {
+			log.Warnf("tracing: %v", err)
+		}
 	} else {
 		log.Info("Tracing disabled.")
 	}
@@ -79,14 +84,10 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	var srv *grpc.Server
-	if os.Getenv("DISABLE_STATS") == "" {
-		log.Info("Stats enabled, but temporarily unavailable")
-		srv = grpc.NewServer()
-	} else {
-		log.Info("Stats disabled.")
-		srv = grpc.NewServer()
-	}
+	// Server spans for every RPC (no-ops while tracing is off).
+	srv := grpc.NewServer(
+		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()))
 	svc := &server{}
 	pb.RegisterShippingServiceServer(srv, svc)
 	healthpb.RegisterHealthServer(srv, svc)
@@ -142,14 +143,6 @@ func (s *server) ShipOrder(ctx context.Context, in *pb.ShipOrderRequest) (*pb.Sh
 	return &pb.ShipOrderResponse{
 		TrackingId: id,
 	}, nil
-}
-
-func initStats() {
-	//TODO(arbrown) Implement OpenTelemetry stats
-}
-
-func initTracing() {
-	// TODO(arbrown) Implement OpenTelemetry tracing
 }
 
 func initProfiling(service, version string) {

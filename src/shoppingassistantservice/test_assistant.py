@@ -1,5 +1,6 @@
 """Unit tests with a fake Bedrock and a fake catalog (no AWS, no network). CatalogCodeTest needs the
 pinned requirements installed: it fails if demo_pb2*.py and the protobuf / grpcio runtime do not match."""
+import contextlib
 import datetime
 import unittest
 
@@ -353,6 +354,62 @@ class BedrockTest(unittest.TestCase):
             with self.assertRaises(bedrock.BedrockError) as ctx:
                 bedrock.BedrockModel("m", "us-east-1", client=FailingClient(err)).converse({})
             self.assertEqual(ctx.exception.kind, kind)
+
+
+class FakeSpans:
+    """Records what the tracing hook is given (tracing.OtelSpans has the same interface)."""
+
+    def __init__(self):
+        self.calls = []
+
+    @contextlib.contextmanager
+    def model_call(self, model_id, step):
+        call = {"model_id": model_id, "step": step, "records": []}
+        self.calls.append(call)
+
+        class Recorder:
+            def record(self, **fields):
+                call["records"].append(fields)
+
+        yield Recorder()
+
+
+class SpanHookTest(unittest.TestCase):
+    """One span per Bedrock call, built from typed fields only (ADR 0010)."""
+
+    def test_one_call_per_step_with_tokens_tools_outcome(self):
+        model = FakeModel(tool_use("search_products", {"query": "mug"}), final("The Mug [6E92ZMYYFZ]."))
+        model.model_id = "amazon.nova-lite-v1:0"
+        spans = FakeSpans()
+        make(model, spans=spans).ask("SECRET-QUESTION mug?", "EUR", "SECRET-SESSION")
+        self.assertEqual([(c["model_id"], c["step"]) for c in spans.calls],
+                         [("amazon.nova-lite-v1:0", 0), ("amazon.nova-lite-v1:0", 1)])
+        self.assertEqual(spans.calls[0]["records"],
+                         [{"input_tokens": 100, "output_tokens": 10, "tools": ["search_products"], "outcome": "ok"}])
+        self.assertEqual(spans.calls[1]["records"],
+                         [{"input_tokens": 200, "output_tokens": 30, "tools": [], "outcome": "ok"}])
+        # nothing the hook is given can carry the question, the answer or the session
+        given = repr(spans.calls)
+        for secret in ("SECRET-QUESTION", "SECRET-SESSION", core.session_key("SECRET-SESSION"), "Mug [6E92ZMYYFZ]"):
+            self.assertNotIn(secret, given)
+
+    def test_unknown_tool_name_is_not_passed_through(self):
+        model = FakeModel(tool_use("drop_tables; --", {}), final("ok"))
+        spans = FakeSpans()
+        make(model, spans=spans).ask("hi")
+        self.assertEqual(spans.calls[0]["records"][0]["tools"], ["unknown"])
+
+    def test_error_outcomes(self):
+        for kind, outcome in [("throttled", "rate_limited"), ("timeout", "timeout"), ("validation", "error")]:
+            spans = FakeSpans()
+            make(FakeModel(bedrock.BedrockError(kind, "x")), spans=spans).ask("hi")
+            self.assertEqual(spans.calls[0]["records"], [{"outcome": outcome}], kind)
+
+    def test_no_model_call_when_paused(self):
+        spans = FakeSpans()
+        out = make(FakeModel(), daily_question_cap=0, spans=spans).ask("hi")
+        self.assertEqual(out["outcome"], "paused")
+        self.assertEqual(spans.calls, [])
 
 
 class CatalogCodeTest(unittest.TestCase):

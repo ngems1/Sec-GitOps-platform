@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 COPY --from=builder /install /usr/local
-COPY inventory.py server.py ./
+COPY inventory.py server.py tracing.py ./
 # Runs as a non-root user; works with readOnlyRootFilesystem (nothing is written to disk)
 USER 1000:1000
 EXPOSE 8080

@@ -15,10 +15,9 @@
 name: boutique
 
 x-common-env: &no-gcp
-  # Online Boutique ships with Google Cloud profiling/tracing; switch it off locally.
+  # Online Boutique ships with Google Cloud profiling; switch it off locally. Tracing (ADR 0010) is
+  # off unless ENABLE_TRACING=1 (no collector in this compose file).
   DISABLE_PROFILER: "1"
-  DISABLE_TRACING: "1"
-  DISABLE_STATS: "1"
   ENABLE_TRACING: "0"
 
 services:

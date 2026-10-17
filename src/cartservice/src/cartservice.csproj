@@ -13,6 +13,12 @@
     <PackageReference Include="Google.Cloud.Spanner.Data" Version="4.6.0" />
     <PackageReference Include="Npgsql" Version="7.0.4" />
     <PackageReference Include="Google.Cloud.SecretManager.V1" Version="2.1.0" />
+    <!-- OpenTelemetry tracing (ADR 0010, Tracing.cs). StackExchangeRedis is the official instrumentation
+         from opentelemetry-dotnet-contrib, published only as beta. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.19.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.StackExchangeRedis" Version="1.19.0-beta.1" />
   </ItemGroup>
 
   <ItemGroup>

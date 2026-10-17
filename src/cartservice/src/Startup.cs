@@ -42,9 +42,18 @@ namespace cartservice
                 {
                     redisOptions.Password = redisPassword;
                 }
-                services.AddStackExchangeRedisCache(options =>
+                services.AddStackExchangeRedisCache(_ => { });
+                // The cache still connects lazily (first cart call); the connection it opens is traced
+                // when tracing is on (Tracing.cs).
+                services.AddOptions<RedisCacheOptions>().Configure<IServiceProvider>((options, provider) =>
                 {
                     options.ConfigurationOptions = redisOptions;
+                    options.ConnectionMultiplexerFactory = async () =>
+                    {
+                        var connection = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(redisOptions);
+                        Tracing.TraceRedisConnection(provider, connection);
+                        return connection;
+                    };
                 });
                 services.AddSingleton<ICartStore, RedisCartStore>();
             }
@@ -66,6 +75,7 @@ namespace cartservice
 
 
             services.AddGrpc();
+            Tracing.AddTracing(services, Configuration);
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
