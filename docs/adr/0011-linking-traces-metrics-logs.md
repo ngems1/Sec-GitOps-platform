@@ -175,7 +175,11 @@ What the repo can't show, and its risk:
 Also part of this decision:
 
 - **Retention:** 14 days on `/aws/containerinsights/<cluster>/application` (the same as the
-  Lambdas). First read the current value with `aws logs describe-log-groups`. The group was
+  Lambdas).
+  > **Note 2026-10-17:** changed. The application log group stays at **1 day** by choice: cost
+  > and privacy, and it matches Tempo's 24 h of traces. PR 2 set 1 day to purge the pre-fix
+  > lines, and there is no 14-day follow-up. dataplane and host stay at 14 days, performance
+  > at 7 days. Revisit in Phase 2b if the incident assistant needs more history. First read the current value with `aws logs describe-log-groups`. The group was
   created by the add-on, so Terraform must import it before it manages the retention. The
   other Container Insights groups (`performance`, `dataplane`, `host`) get the same review.
 - **No personal data in logs:**
