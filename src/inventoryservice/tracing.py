@@ -13,11 +13,18 @@ What is traced here:
   after the route ("GET /stock/{productId}"); /healthz, /readyz and /metrics are left out;
 - each OrderCreated message: one CONSUMER span ("process OrderCreated"), with its DynamoDB and
   EventBridge calls as children (botocore instrumentation: the AWS operation and table, never
-  request or response bodies);
+  request or response bodies). The span joins checkout's trace: EventBridge has no message
+  attributes, so checkoutservice puts the W3C context in the event detail ("_trace":
+  {"traceparent", "tracestate"}, src/checkoutservice/asyncevents.go). take_trace() removes it
+  before the event is parsed, tracing on or off; events without it start a new trace as before;
+- the InventoryReserved / InventoryFailed publish: a PRODUCER span, and its context in the
+  event's "_trace" (with_trace(), only while a span is recording), for the order-status Lambda
+  and emailservice. Span attributes: the order ID and messaging fields, never the email address;
 - not the SQS long poll: a 20 s ReceiveMessage would be a 20 s span every poll, kept by the
   collector's "slow trace" rule. It runs with instrumentation suppressed (quiet()).
 """
 import contextlib
+import json
 import os
 
 _tracer = None
@@ -95,16 +102,75 @@ def set_status_code(span, code):
         span.set_status(Status(StatusCode.ERROR))
 
 
+TRACE_FIELD = "_trace"
+
+
+def take_trace(sqs_body):
+    """Splits an SQS body (an EventBridge event) into (the body without detail._trace, the W3C
+    carrier). A body that is not JSON or has no trace field comes back unchanged with {}."""
+    try:
+        event = json.loads(sqs_body)
+    except (TypeError, ValueError):
+        return sqs_body, {}
+    detail = event.get("detail") if isinstance(event, dict) else None
+    if not isinstance(detail, dict) or TRACE_FIELD not in detail:
+        return sqs_body, {}
+    raw = detail.pop(TRACE_FIELD)
+    if not isinstance(raw, dict):
+        return json.dumps(event), {}
+    # Only the two W3C keys, as short strings: the field comes from a message, not from us.
+    carrier = {k: raw[k] for k in ("traceparent", "tracestate") if isinstance(raw.get(k), str) and len(raw[k]) <= 512}
+    return json.dumps(event), carrier
+
+
 @contextlib.contextmanager
-def consumer_span(name, attributes=None):
-    """A CONSUMER span for one queue message (its AWS calls become children)."""
+def consumer_span(name, attributes=None, carrier=None):
+    """A CONSUMER span for one queue message (its AWS calls become children), a child of the
+    producer span in carrier (from take_trace) when there is one, else a new trace."""
+    if _tracer is None:
+        yield None
+        return
+    from opentelemetry import trace
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    ctx = TraceContextTextMapPropagator().extract(carrier) if carrier else None
+    with _tracer.start_as_current_span(name, context=ctx, kind=trace.SpanKind.CONSUMER,
+                                       attributes=attributes or {}) as span:
+        yield span
+
+
+@contextlib.contextmanager
+def producer_span(name, bus, order_id):
+    """A PRODUCER span around PutEvents: the bus and the order, never the shopper."""
     if _tracer is None:
         yield None
         return
     from opentelemetry import trace
 
-    with _tracer.start_as_current_span(name, kind=trace.SpanKind.CONSUMER, attributes=attributes or {}) as span:
+    with _tracer.start_as_current_span(name, kind=trace.SpanKind.PRODUCER, attributes={
+            "messaging.system": "aws_eventbridge", "messaging.operation": "publish",
+            "messaging.destination.name": bus, "boutique.order_id": order_id}) as span:
         yield span
+
+
+def with_trace(detail):
+    """detail plus "_trace" (the current span's W3C context, never baggage) while a span is
+    recording; detail unchanged otherwise (tracing off)."""
+    if _tracer is None:
+        return detail
+    from opentelemetry import trace
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    if not trace.get_current_span().is_recording():
+        return detail
+    carrier = {}
+    TraceContextTextMapPropagator().inject(carrier)
+    return {**detail, TRACE_FIELD: carrier} if carrier.get("traceparent") else detail
+
+
+def set_order_id(span, order_id):
+    if span is not None:
+        span.set_attribute("boutique.order_id", order_id)
 
 
 @contextlib.contextmanager
