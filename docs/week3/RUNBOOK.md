@@ -478,6 +478,16 @@ Only kept traces are there: health checks are dropped, and in prod only 10% of n
 (plus all errors and slow ones). A query that finds nothing for an old time range may just be
 past Tempo's 24 h, or a Tempo restart.
 
+**Trace IDs in the logs (ADR 0011, step 6).** The Go services (frontend, checkout, catalog,
+shipping) add `trace_id`, `span_id` (lower-case hex, as in `traceparent`) and `trace_sampled`
+to every log line written during a traced request.
+
+- **When the fields are absent:** while tracing is off (prod today), whatever `traceparent` a
+  request carries, and on lines written outside a request.
+- **Finding a trace's lines:** Logs Insights on the application log group:
+  `filter @message like "<trace id>"`.
+- **Other languages:** Node, Python, Java and .NET follow in separate PRs.
+
 **One order, one trace (EventBridge and SQS, ADR 0010 step 5).** The async flow
 (`terraform-aws/modules/environment/events.tf`, one bus `<prefix>-events`; every queue has a DLQ
 after 3 tries):
