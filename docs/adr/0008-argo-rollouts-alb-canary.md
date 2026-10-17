@@ -37,6 +37,9 @@ Option 1, with the frontend instrumented for Prometheus (user decision, 2026-10-
 - **Traffic for the analysis:** a browse-only loadgenerator (no orders, no cart writes) in dev
   (10 shoppers, ~1.5 requests/s) and prod (5, ~0.8 requests/s) shops through the ALB name, the only
   path where the canary gets its share. It needs the domain.
+  Update 2026-10-17: 15 shoppers in both (about 2.1 requests/s). With 5, the first request-volume
+  check expected about 12.6 requests for a gate of 10 and aborted a healthy prod canary;
+  15 gives about 38 (RUNBOOK section 10, checked in CI).
 - **Controller:** argo-rollouts Helm chart, pinned (`ARGO_ROLLOUTS_CHART_VERSION: 2.41.1` in
   `argocd-install.yml`), namespace `argo-rollouts`, installed by `deploy/argocd.sh` before the
   Applications. Argo CD shows Rollout health natively (Progressing / Suspended during a step,

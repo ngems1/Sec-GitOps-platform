@@ -236,8 +236,8 @@ fails or errors.
 **Needs:** argocd-install has run (it installs the Rollouts controller, namespace `argo-rollouts`),
 and Prometheus runs (deploy workflow, job "monitoring"). Without Prometheus every canary aborts.
 Traffic: a browse-only **loadgenerator** in each namespace (no orders, no cart writes) shops
-through the ALB name (`dev.` / `shop.<domain>`) all the time, ~1.5 requests/s in dev and ~0.8 in
-prod, so the canary always gets its share. Without a domain it cannot reach the ALB, and every
+through the ALB name (`dev.` / `shop.<domain>`) all the time: 15 users in each environment, about
+2.1 requests/s, so the canary always gets its share. Without a domain it cannot reach the ALB, and every
 frontend canary aborts for lack of traffic (the deploy log warns).
 
 **Why did a canary stop?** A failed Argo CD deploy prints a **Canary report** on the run's Summary
@@ -245,6 +245,27 @@ page *before* the rollback resets the Rollout: its abort message, every Analysis
 values each metric measured, the canary and stable pods, Rollout events and the last 30 lines of
 the loadgenerator. The same report, any time: Actions > cluster-status > `boutique-dev` (or
 `boutique-prod`), section **Rollouts** (`deploy/rollouts-report.sh`, read-only).
+
+**request-volume failed, but the canary was healthy** (success-rate 1, p95 well under 1 s,
+request-volume just under 10, for example 9.74 then 8.85):
+- **What it means:** the canary was not shown to be broken. It got too little traffic to be judged,
+  and "not enough data" is a failure on purpose. The first check runs 90 s after the canary
+  gets its 20%, so it sees at most 90 s of canary traffic:
+  `users x 0.14 requests/s x 20% x 90 s`.
+  - With 5 users (prod until this fix) that is about 12.6 for a gate of 10: a normal dip in
+    Locust's random 1-10 s waits made two checks in a row miss it.
+  - With 15 users it is about 38 (3.8x). The helm CI job recomputes this from the rendered chart
+    ("Canary gets enough traffic") and fails below 3x.
+- **What to do:**
+  1. In the Canary report, check that the loadgenerator was running and reaching the ALB (its
+     last lines show requests, not connection errors). Check that `loadGenerator.users` was not
+     lowered.
+  2. Deploy the same tag again: Actions > deploy > `image_tag` = that tag. That is a redeploy, nothing
+     is rebuilt.
+  3. If it happens again with the loadgenerator healthy, raise `loadGenerator.users` in
+     `values-aws.yaml` (each user is about 0.14 requests/s; its CPU request does not change).
+  4. Never lower `minRequests`, raise `failureLimit` or drop the request-volume metric to get a
+     deploy through: a canary with no traffic would then pass unjudged.
 
 ### Demo: a good canary
 
