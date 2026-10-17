@@ -64,6 +64,7 @@ spec:
         ports:
         - containerPort: 9555
         env:
+        {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.adService.name)) }}{{ . | nindent 8 }}{{ end }}
         - name: PORT
           value: "9555"
         resources:

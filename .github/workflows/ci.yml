@@ -49,9 +49,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # With its pinned requirements: test_tracing.py needs OpenTelemetry and boto3 (Python 3.12, the image's).
       - name: inventoryservice
         working-directory: src/inventoryservice
-        run: python -m unittest -v
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-inventory"
+          "$RUNNER_TEMP/venv-inventory/bin/pip" install --quiet -r requirements.txt
+          "$RUNNER_TEMP/venv-inventory/bin/python" -m unittest -v
+      # The Java agent switch (ENABLE_TRACING=1 only), tested on the entrypoint script.
+      - name: adservice entrypoint (tracing switch)
+        run: bash src/adservice/test-entrypoint.sh
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications
@@ -273,11 +280,11 @@ jobs:
           fi
           echo "dev: ${tf_model} (inference profile: ${tf_profile}); prod: off"
 
-      # Tracing switch (ADR 0010, step 2): on in dev for exactly the 7 services with tracing code,
+      # Tracing switch (ADR 0010, steps 2 and 4): on in dev for exactly the 12 traced services,
       # off in prod (no tracing env, no 4317 egress). Uses the rendered files of the step above.
       - name: Tracing on in dev only
         run: |
-          want="checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice"
+          want="adservice cartservice checkoutservice currencyservice emailservice frontend inventoryservice paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
           addr=$(yq '.tracing.collectorAddr' helm-chart/values.yaml)
           traced() { # rendered file -> workloads (Deployment, StatefulSet, Job, Rollout) with any tracing env var
             yq ea -N '[select(.spec.template.spec.containers) | select([.spec.template.spec.containers[].env[]?.name] | any_c(test("^(ENABLE_TRACING|COLLECTOR_SERVICE_ADDR|OTEL_.*)$"))) | .metadata.name] | unique | sort | join(" ")' "$1"
@@ -288,7 +295,7 @@ jobs:
           # prod: tracing stays off (ADR 0010, step 7).
           [ -z "$(traced rendered-prod.yaml)" ] || { echo "::error::prod renders tracing env on: $(traced rendered-prod.yaml)"; exit 1; }
           [ -z "$(egress4317 rendered-prod.yaml)" ] || { echo "::error::prod renders a 4317 egress rule in: $(egress4317 rendered-prod.yaml)"; exit 1; }
-          # dev: exactly the 7 instrumented services, each with all four variables and its own name.
+          # dev: exactly the 12 traced services, each with all four variables and its own name.
           [ "$(traced rendered-dev.yaml)" = "$want" ] || { echo "::error::dev tracing env on '$(traced rendered-dev.yaml)', want '${want}'"; exit 1; }
           for svc in $want; do
             envval() { yq ea -N "select(.kind == \"Deployment\" and .metadata.name == \"${svc}\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" rendered-dev.yaml; }

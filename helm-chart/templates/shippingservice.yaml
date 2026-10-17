@@ -64,6 +64,7 @@ spec:
         ports:
         - containerPort: 50051
         env:
+        {{- with (include "boutique.tracingEnv" (dict "root" $ "name" .Values.shippingService.name)) }}{{ . | nindent 8 }}{{ end }}
         - name: PORT
           value: "50051"
         {{- if not .Values.googleCloudOperations.profiler }}
