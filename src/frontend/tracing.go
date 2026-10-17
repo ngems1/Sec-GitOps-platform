@@ -76,6 +76,14 @@ func startTracing(ctx context.Context, defaultName, collectorAddr string) (*sdkt
 // tracedHandler wraps the router for tracing:
 //   - drops X-Forwarded-For before otelhttp, which would copy the shopper's IP into
 //     http.client_ip (nothing else in the frontend reads it);
+//   - the frontend is the edge (requests come from the internet through the ALB), so it never
+//     continues a trace sent by a client: every request starts a new root span, sampled by our
+//     sampler, with the client's span context (if any) kept only as a span link
+//     (otelhttp.WithPublicEndpoint). A client can no longer choose the trace ID, nor send
+//     sampled=00 to make its requests invisible in every service;
+//   - drops the inbound baggage header (no service reads baggage; a client's would otherwise be
+//     forwarded to every backend), and, while tracing is off, also traceparent and tracestate:
+//     the no-op tracer ignores WithPublicEndpoint and would forward the client's context;
 //   - names each server span after the method and the route template, "GET /product/{id}",
 //     never the raw path (IDs) or the query string; "GET" alone when no route matches.
 func tracedHandler(router *mux.Router, next http.Handler) http.Handler {
@@ -92,9 +100,22 @@ func tracedHandler(router *mux.Router, next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 	traced := otelhttp.NewHandler(named, "frontend",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method }))
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method }),
+		otelhttp.WithPublicEndpoint())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("X-Forwarded-For")
+		stripInboundTraceHeaders(r.Header)
 		traced.ServeHTTP(w, r)
 	})
+}
+
+// stripInboundTraceHeaders removes what a client must not push into our traces: baggage
+// always; traceparent and tracestate while tracing is off (with it on, WithPublicEndpoint
+// turns them into a span link on a new root span).
+func stripInboundTraceHeaders(h http.Header) {
+	h.Del("Baggage")
+	if _, on := otel.GetTracerProvider().(*sdktrace.TracerProvider); !on {
+		h.Del("Traceparent")
+		h.Del("Tracestate")
+	}
 }
