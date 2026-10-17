@@ -460,6 +460,8 @@ usage** is in the log and on the run's Summary page.
   secret is used or printed.
 - The Job and its ConfigMap are deleted at the end, pass or fail.
 - If Prometheus is down, only this section fails; the others still run.
+- One namespace that cannot be reported prints an `ERROR` line in its place; the other
+  namespaces and the cluster totals are still printed.
 
 **Read it.** One table per namespace (boutique-dev, boutique-prod, monitoring, argo-rollouts),
 one row per workload and container. CPU is in millicores (m), memory in MiB.
@@ -467,10 +469,11 @@ one row per workload and container. CPU is in millicores (m), memory in MiB.
 | Column | Meaning |
 |---|---|
 | REPL | Pods running now |
+| HPA | For a workload with an autoscaler: `min-max@target%` (CPU target), otherwise `-` |
 | CPU avg / p95 / max | `rate(container_cpu_usage_seconds_total[5m])` over the last 24 h, sampled every 2 min; the highest pod of the workload (avg: the mean of its pods). Deleted pods count, so a rollout's old pods are included |
 | MEM p95 / max | `container_memory_working_set_bytes` over 24 h: the memory the kubelet uses for evictions, close to what counts against the limit |
-| req / lim | Current requests and limits (the current pods) |
-| SUGGEST | CPU: p95 x 1.5, at least 10m, never below the max seen, rounded up to 5m. Memory: max x 1.3, at least 32 MiB, rounded up to 8 MiB |
+| req / lim | Current requests and limits (the current pods). `-` = not set (or not readable): such a container counts as 0 in the totals, with a note on the TOTAL row |
+| SUGGEST | CPU: p95 x 1.5, at least 10m, never below the max seen, rounded up to 5m. With a CPU HPA, also at least p95 x 1.75 / target (at 70%: p95 / 0.4), so the HPA reaches its target only at about 1.75x today's p95: a smaller request would make it scale out at today's load. Memory: max x 1.3, at least 32 MiB, rounded up to 8 MiB |
 | TOTAL | Requests now and with the suggestions, for all replicas. Rows without data keep their current request |
 | Cluster | Allocatable, requests now and with the suggestions (all namespaces: kube-system and other namespaces are counted at their current requests), and the headroom |
 
@@ -483,6 +486,8 @@ Flags, worth a look before changing a row:
 | `CPU-REQ>LIM` / `MEM-REQ>LIM` | The suggested request is above the current limit | The limit must be raised with it, or the suggestion is invalid |
 | `SHORT-DATA(<h>)` | Less than 12 h of data (a new cluster, or a new workload) | Wait for a full day. Less data means a new workload, a cluster rebuilt by a manual `infra` destroy and apply (nothing destroys it on a schedule), or a Prometheus restart: it keeps 24 h in the pod, lost when the pod is replaced |
 | `NO-DATA` | No usage series (just started, or not scraped) | Keep the current request |
+| `HPA` | The workload is autoscaled: its suggestion uses the HPA rule above | Change the request and the HPA target together; a lower request means more replicas at the same load |
+| `NO-REQUEST` | A CPU or memory request is not set: the scheduler reserves nothing for it (the boutique namespaces have a LimitRange, `monitoring` does not) | Set a request; the suggestion is a starting point |
 
 **Use it.** Change requests in a separate PR, a few services at a time, in
 `helm-chart/values*.yaml`.
