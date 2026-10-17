@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,4 +45,27 @@ func TestRequestLogsHoldNoPersonalData(t *testing.T) {
 			t.Errorf("logs contain %q:\n%s", secret, logs)
 		}
 	}
+}
+
+// The request logger (logHandler) carries the request span's IDs on every line, the handlers'
+// own lines included (ADR 0011).
+func TestRequestLogsCarryTraceIDs(t *testing.T) {
+	tracer := withTracing(t)
+	var buf bytes.Buffer
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger).Info("handler line")
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := ensureSessionID(&logHandler{log: testLogger(&buf), next: inner})
+
+	ctx, span := tracer.Start(context.Background(), "GET /") // the server span tracedHandler starts
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	span.End()
+
+	lines := logLines(t, &buf)
+	if len(lines) != 3 { // request started (Debug), handler line, request complete
+		t.Fatalf("want 3 lines, got %d: %v", len(lines), lines)
+	}
+	assertTraceFields(t, lines, span.SpanContext())
 }

@@ -57,6 +57,7 @@ func init() {
 		TimestampFormat: time.RFC3339Nano,
 	}
 	log.Out = os.Stdout
+	log.AddHook(traceLogHook{}) // trace_id / span_id on lines logged with a context (logtrace.go)
 }
 
 type checkoutService struct {
@@ -219,7 +220,7 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate order uuid")
 	}
-	olog := log.WithField("orderId", orderID.String())
+	olog := log.WithContext(ctx).WithField("orderId", orderID.String()) // + trace_id / span_id (logtrace.go)
 	olog.Infof("[PlaceOrder] user_currency=%q", req.UserCurrency)
 
 	prep, err := cs.prepareOrderItemsAndShippingQuoteFromCart(ctx, req.UserId, req.UserCurrency, req.Address)
@@ -266,10 +267,10 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 	// failing the customer's checkout.
 	if store := cs.orders.Load(); store != nil {
 		if err := store.record(ctx, orderResult, req.Email, &total); err != nil {
-			log.WithField("orderId", orderResult.OrderId).Errorf("order not recorded: %v", err)
+			olog.Errorf("order not recorded: %v", err)
 		}
 	} else if cs.ordersWanted {
-		log.WithField("orderId", orderResult.OrderId).Error("order not recorded: order store not connected yet")
+		olog.Error("order not recorded: order store not connected yet")
 	}
 
 	// Week 3: with the event flow on, the email is no longer sent from here. emailservice

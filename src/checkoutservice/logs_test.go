@@ -32,7 +32,9 @@ func (emptyCart) EmptyCart(context.Context, *pb.EmptyCartRequest) (*pb.Empty, er
 
 // PlaceOrder logs the order ID, never the user ID (the shopper's session ID) or the email
 // (ADR 0011). The empty-cart path is the one a test can reach without the other services.
-func TestPlaceOrderLogsNoPersonalData(t *testing.T) {
+// emptyCartCheckout is a checkoutService whose cartservice always returns an empty cart.
+func emptyCartCheckout(t *testing.T) *checkoutService {
+	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
 	pb.RegisterCartServiceServer(srv, emptyCart{})
@@ -44,14 +46,23 @@ func TestPlaceOrderLogsNoPersonalData(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
+	return &checkoutService{cartSvcConn: conn}
+}
 
+// captureLog sends the package logger's output to a buffer for one test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
 	var buf bytes.Buffer
 	oldOut, oldLevel := log.Out, log.Level
 	log.Out, log.Level = &buf, logrus.DebugLevel
 	t.Cleanup(func() { log.Out, log.Level = oldOut, oldLevel })
+	return &buf
+}
 
-	cs := &checkoutService{cartSvcConn: conn}
-	_, err = cs.PlaceOrder(context.Background(), &pb.PlaceOrderRequest{
+func TestPlaceOrderLogsNoPersonalData(t *testing.T) {
+	cs := emptyCartCheckout(t)
+	buf := captureLog(t)
+	_, err := cs.PlaceOrder(context.Background(), &pb.PlaceOrderRequest{
 		UserId: "session-5f1c2a", UserCurrency: "USD", Email: "jane@example.com",
 		Address:    &pb.Address{StreetAddress: "1600 Amphitheatre Parkway", City: "Mountain View"},
 		CreditCard: &pb.CreditCardInfo{CreditCardNumber: "4432801561520454", CreditCardCvv: 672},
@@ -68,4 +79,19 @@ func TestPlaceOrderLogsNoPersonalData(t *testing.T) {
 			t.Errorf("logs contain %q:\n%s", secret, logs)
 		}
 	}
+}
+
+// PlaceOrder's lines carry the gRPC server span's IDs (ADR 0011).
+func TestPlaceOrderLogsCarryTraceIDs(t *testing.T) {
+	tracer := withTracing(t)
+	cs := emptyCartCheckout(t)
+	buf := captureLog(t)
+	ctx, span := tracer.Start(context.Background(), "hipstershop.CheckoutService/PlaceOrder")
+	_, _ = cs.PlaceOrder(ctx, &pb.PlaceOrderRequest{UserId: "u", UserCurrency: "USD"})
+	span.End()
+	lines := logLines(t, buf)
+	if len(lines) != 2 { // [PlaceOrder] user_currency, rejected: the cart is empty
+		t.Fatalf("want 2 lines, got %d: %v", len(lines), lines)
+	}
+	assertTraceFields(t, lines, span.SpanContext())
 }
