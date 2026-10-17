@@ -8,7 +8,7 @@
 # Needs kubectl + helm on the cluster and:
 #   GRAFANA_ADMIN_PASSWORD   Grafana login (GitHub secret). Required.
 #   MONITORING_ALLOWED_CIDR  e.g. 203.0.113.7/32 (GitHub variable). Empty = Grafana not exposed.
-#   KPS_VERSION              kube-prometheus-stack chart version (constraint)
+#   KPS_VERSION              kube-prometheus-stack chart version (exact)
 #   TEMPO_CHART_VERSION, OTEL_COLLECTOR_CHART_VERSION  exact chart versions of the tracing backend (ADR 0010)
 #   VPC_CIDR                 the VPC range (Terraform output), for the collector's egress to the API server
 set -euo pipefail

@@ -233,7 +233,9 @@ jobs:
     outputs:
       grafana_url: ${{ steps.install.outputs.GRAFANA_URL }}
     env:
-      KPS_VERSION: ">= 75.0.0, < 90.0.0" # kube-prometheus-stack; the installed version is printed in the log
+      # Exact, like the tracing charts: a chart upgrade restarts Prometheus (its 24 h of metrics are
+      # lost), so it is done on purpose and alone, never as a side effect of a deploy (RUNBOOK 12).
+      KPS_VERSION: "89.2.4"                     # kube-prometheus-stack, the version running since 2026-09
       # Tracing backend (ADR 0010): exact versions, upgraded by hand.
       TEMPO_CHART_VERSION: "2.4.0"              # grafana-community/tempo, Tempo 2.10.8 (single binary)
       OTEL_COLLECTOR_CHART_VERSION: "0.174.2"   # open-telemetry/opentelemetry-collector, Collector 0.161.0

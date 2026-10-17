@@ -408,6 +408,9 @@ after `destroy`, would pick up whatever AWS released last.
     trace.
   - One replica on purpose: tail sampling needs all spans of a trace on one instance. Never scale
     it by replicas.
+  - Memory measured on 2026-10-17 (cluster-status): p95 85Mi, max 86Mi, against a 256Mi request
+    and 512Mi limit, with `decision_wait` still at 10 s. With 30 s, expect up to about 3x the
+    in-flight spans (a few MiB at today's rate). Check the next report.
 - `tempo`: a StatefulSet with 1 replica, single binary, OTLP receivers only.
   - Traces are on a 2 GiB `emptyDir` with 24 h retention, lost when the pod restarts.
     `monitoring/tempo.values.yaml`.
@@ -419,6 +422,10 @@ after `destroy`, would pick up whatever AWS released last.
   - Queried by Grafana only, through the data source **Tempo** (uid `tempo`).
 - NetworkPolicies `otel-collector` and `tempo` (`monitoring/tracing-networkpolicies.yaml`). They
   select only these pods; there is no default deny in `monitoring`.
+- **Chart versions are pinned** in `deploy.yml`: kube-prometheus-stack `KPS_VERSION` 89.2.4, Tempo
+  and the collector. Upgrading kube-prometheus-stack restarts Prometheus, which loses its 24 h of
+  metrics (and with them the right-sizing data and any running canary's analysis). So upgrade it
+  in a PR of its own, outside a canary.
 
 **Check.**
 
