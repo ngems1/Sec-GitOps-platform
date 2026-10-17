@@ -260,9 +260,13 @@ jobs:
               || { echo "::error::${env}: no boutique-${env} PriorityClass for deploy-env.yml"; exit 1; }
           done
 
-      # AI shopping assistant (ADR 0009): on in dev only, and it must call exactly the model its
-      # Pod Identity role allows (terraform-aws/variables.tf), or every question is denied.
-      - name: Shopping assistant (dev only, model matches Terraform)
+      # AI shopping assistant (ADR 0009), on in dev and prod. In each environment it must call
+      # exactly the model its Pod Identity role allows (terraform-aws/variables.tf), or every
+      # question is denied, and keep its cost guards: one pod (the daily cap is per pod), the
+      # token, timeout and rate limits, and a daily cap. The caps of dev and prod together stay at
+      # 400 questions a day or less: at the worst case of about USD 0.0012 per question that is
+      # USD 0.49, under the 50% alert of the USD 1/day Bedrock budget (math: values-prod.yaml).
+      - name: Shopping assistant (model matches Terraform, cost guards)
         run: |
           tf_default() {
             awk -v v="variable \"$1\"" 'index($0, v) == 1 {f = 1} f && $1 == "default" {gsub(/[" ]/, ""); sub(/^default=/, ""); print; exit}' terraform-aws/variables.tf
@@ -279,18 +283,57 @@ jobs:
           if grep -rnE "TF_VAR_shopping_assistant_|shopping_assistant_(model_id|use_inference_profile) *=" .github terraform-aws --include=*.yml --include=*.tfvars --exclude=ci.yml; then
             echo "::error::the shopping_assistant_* Terraform variables are overridden: update this check and helm-chart/values.yaml together"; exit 1
           fi
-          for pair in "BEDROCK_MODEL_ID=${tf_model}" "BEDROCK_USE_INFERENCE_PROFILE=${tf_profile}"; do
-            got=$(deployed dev "${pair%%=*}")
-            [ "$got" = "${pair#*=}" ] \
-              || { echo "::error::dev ${pair%%=*} is '${got}', Terraform allows '${pair#*=}' (helm-chart/values.yaml shoppingAssistantService)"; exit 1; }
+          total_cap=0
+          for env in dev prod; do
+            r="rendered-${env}.yaml"
+            for pair in "BEDROCK_MODEL_ID=${tf_model}" "BEDROCK_USE_INFERENCE_PROFILE=${tf_profile}"; do
+              got=$(deployed "$env" "${pair%%=*}")
+              [ "$got" = "${pair#*=}" ] \
+                || { echo "::error::${env} ${pair%%=*} is '${got}', Terraform allows '${pair#*=}' (helm-chart/values.yaml shoppingAssistantService)"; exit 1; }
+            done
+            grep -q 'name: ASSISTANT_URL' "$r" || { echo "::error::${env}: the frontend has no ASSISTANT_URL"; exit 1; }
+            # Cost guards (src/shoppingassistantservice/server.py reads them)
+            replicas=$(yq ea -N 'select(.kind == "Deployment" and .metadata.name == "shoppingassistantservice") | .spec.replicas' "$r")
+            [ "$replicas" = "1" ] || { echo "::error::${env}: ${replicas} assistant replicas: the daily cap is per pod, keep 1"; exit 1; }
+            if yq ea -N 'select(.kind == "HorizontalPodAutoscaler") | .spec.scaleTargetRef.name' "$r" | grep -qx shoppingassistantservice; then
+              echo "::error::${env}: an HPA scales the assistant: the daily cap is per pod"; exit 1
+            fi
+            tokens=$(deployed "$env" MAX_TOKENS); timeout=$(deployed "$env" REQUEST_TIMEOUT_SECONDS)
+            rate=$(deployed "$env" RATE_PER_MINUTE); cap=$(deployed "$env" DAILY_QUESTION_CAP)
+            for v in "$tokens" "$timeout" "$rate" "$cap"; do
+              [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::${env}: an assistant limit is missing or not a number (MAX_TOKENS=${tokens} REQUEST_TIMEOUT_SECONDS=${timeout} RATE_PER_MINUTE=${rate} DAILY_QUESTION_CAP=${cap})"; exit 1; }
+            done
+            [ "$tokens" -le 600 ] && [ "$timeout" -le 15 ] && [ "$rate" -ge 1 ] && [ "$rate" -le 10 ] \
+              || { echo "::error::${env}: assistant limits above the reviewed ones (MAX_TOKENS<=600, REQUEST_TIMEOUT_SECONDS<=15, RATE_PER_MINUTE 1-10)"; exit 1; }
+            # The question size and tool steps use the code's defaults (500 characters, 3 steps).
+            for var in MAX_QUESTION_CHARS MAX_TOOL_STEPS; do
+              [ -z "$(deployed "$env" "$var")" ] || { echo "::error::${env}: ${var} is set: review the cost math (values-prod.yaml) first"; exit 1; }
+            done
+            total_cap=$((total_cap + cap))
+            # Egress: DNS, the catalog (gRPC 3550), Bedrock (443), the Pod Identity Agent.
+            egress=$(yq ea -N -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "shoppingassistantservice") | .spec.egress' "$r")
+            for want in '"port":53' '"app":"productcatalogservice"' '"port":3550' '"port":443' '"cidr":"169.254.170.23/32"'; do
+              grep -qF "$want" <<< "$egress" || { echo "::error::${env}: assistant NetworkPolicy egress misses ${want}"; exit 1; }
+            done
+            echo "${env}: ${tf_model} (inference profile: ${tf_profile}), cap ${cap}/day, ${tokens} tokens, ${timeout} s, ${rate}/min"
           done
-          grep -q 'name: ASSISTANT_URL' rendered-dev.yaml \
-            || { echo "::error::dev: the frontend has no ASSISTANT_URL"; exit 1; }
-          # prod stays off until the assistant is tested in dev.
-          if grep -qE 'name: (shoppingassistantservice|ASSISTANT_URL)$' rendered-prod.yaml; then
-            echo "::error::prod renders the shopping assistant: it stays off (values-prod.yaml)"; exit 1
+          [ "$total_cap" -le 400 ] \
+            || { echo "::error::dev + prod daily caps are ${total_cap}: at most 400 (Bedrock budget math in values-prod.yaml)"; exit 1; }
+          echo "daily caps dev + prod: ${total_cap} (at most 400)"
+
+      # Cost guard: the loadgenerator (and the load test) must never ask the AI assistant. A
+      # Locust task on /assistant would spend the daily cap (and Bedrock money) on synthetic traffic.
+      - name: Loadgenerator never calls the assistant
+        run: |
+          if grep -rniE 'assistant|/ask\b' src/loadgenerator deploy/load --include=*.py; then
+            echo "::error::a Locust file mentions the assistant: synthetic traffic must never call /assistant"; exit 1
           fi
-          echo "dev: ${tf_model} (inference profile: ${tf_profile}); prod: off"
+          for env in dev prod; do
+            if yq ea -N 'select(.metadata.name == "loadgenerator" and (.kind == "Deployment")) | .spec.template.spec.containers[].env[] | .value // ""' "rendered-${env}.yaml" | grep -qi assistant; then
+              echo "::error::${env}: the loadgenerator's environment points at the assistant"; exit 1
+            fi
+          done
+          echo "no Locust task or loadgenerator setting targets the assistant"
 
       # Tracing switch (ADR 0010, steps 2 and 4): on in dev for exactly the 12 traced services,
       # off in prod (no tracing env, no 4317 egress). Uses the rendered files of the step above.
