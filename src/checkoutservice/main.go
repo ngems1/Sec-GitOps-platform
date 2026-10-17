@@ -214,17 +214,18 @@ func (cs *checkoutService) Watch(req *healthpb.HealthCheckRequest, ws healthpb.H
 }
 
 func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest) (*pb.PlaceOrderResponse, error) {
-	log.Infof("[PlaceOrder] user_id=%q user_currency=%q", req.UserId, req.UserCurrency)
-
+	// Never the user ID (the shopper's session ID), email, address or card: the order ID only.
 	orderID, err := uuid.NewUUID()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate order uuid")
 	}
+	olog := log.WithField("orderId", orderID.String())
+	olog.Infof("[PlaceOrder] user_currency=%q", req.UserCurrency)
 
 	prep, err := cs.prepareOrderItemsAndShippingQuoteFromCart(ctx, req.UserId, req.UserCurrency, req.Address)
 	if err != nil {
 		if isEmptyCart(err) {
-			log.Warnf("[PlaceOrder] rejected for user_id=%q: the cart is empty", req.UserId)
+			olog.Warn("[PlaceOrder] rejected: the cart is empty")
 			return nil, status.Errorf(codes.InvalidArgument, "cannot place the order: the cart is empty")
 		}
 		return nil, status.Error(codes.Internal, err.Error())
@@ -243,7 +244,7 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to charge card: %+v", err)
 	}
-	log.Infof("payment went through (transaction_id: %s)", txID)
+	olog.Infof("payment went through (transaction_id: %s)", txID)
 
 	shippingTrackingID, err := cs.shipOrder(ctx, req.Address, prep.cartItems)
 	if err != nil {
@@ -276,9 +277,9 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 	// order, so a customer is never told "confirmed" for an item that is out of stock.
 	if !cs.ordersWanted {
 		if err := cs.sendOrderConfirmation(ctx, req.Email, orderResult); err != nil {
-			log.Warnf("failed to send order confirmation to %q: %+v", req.Email, err)
+			olog.Warnf("failed to send order confirmation: %+v", err)
 		} else {
-			log.Infof("order confirmation email sent to %q", req.Email)
+			olog.Info("order confirmation email sent")
 		}
 	}
 	resp := &pb.PlaceOrderResponse{Order: orderResult}
