@@ -612,7 +612,12 @@ and durations.
   - It doesn't see fields added on another line, which is why the tests exist too.
 
 **Old lines:** lines written before the fix stay in CloudWatch until the log group's
-retention removes them (14 days once ADR 0011's PR 2 is merged; no expiry before that).
+retention removes them.
+
+- **Now:** the application group is at **1 day** (`terraform-aws/logs.tf`, ADR 0011 PR 2) to
+  purge them. CloudWatch deletes expired lines, usually within 72 hours of the apply.
+- **After the follow-up PR:** **14 days**.
+- **Before PR 2:** no expiry at all.
 
 ## Incident log (things that actually happened)
 
