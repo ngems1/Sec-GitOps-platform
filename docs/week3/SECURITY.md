@@ -47,7 +47,7 @@ merge to `main`.
 
 One AWS account (D-07), so the controls that a multi-account setup would give by separation are
 added inside it. What this project owns is in `terraform-bootstrap/` (never destroyed; `terraform-aws/`
-is destroyed daily and Object Lock would block that) and applied by the `bootstrap` workflow.
+is destroyed by every manual `infra` destroy, and Object Lock would block that) and applied by the `bootstrap` workflow.
 
 The account also hosts another project, which already runs the services AWS allows only once per
 account and region: **GuardDuty, the AWS Config recorder (and its delivery channel) and Security Hub**.
@@ -75,7 +75,7 @@ can do only what both its policies and its boundary allow. The lists come from e
 
 Tag-based conditions use `aws:ResourceTag/Project`, `aws:ResourceTag/ManagedBy` and
 `aws:RequestTag/Project` on the services that support them. Resources with no `Project` tag (made by
-EKS or the Load Balancer Controller) stay usable, so the daily destroy still works.
+EKS or the Load Balancer Controller) stay usable, so an `infra` destroy still works.
 
 ## 3. Network
 
@@ -134,7 +134,7 @@ read-only disk (`preinstall_disabled` keeps it from trying to write plugins).
 | Admin-only cluster access | No per-namespace roles | EKS access entries: edit in dev, view in prod |
 | Checkov in soft-fail | Findings don't block | Fix or explicitly skip each finding, then make it blocking |
 | No WAF on the ALBs | No managed-rule filtering | AWS WAF with managed rule groups on the prod ALB |
-| RDS `deletion_protection = false` | Accidental deletion | Kept off so the daily `destroy` works; turn on for a real prod |
+| RDS `deletion_protection = false` | Accidental deletion | Kept off so an `infra` `destroy` works; turn on for a real prod |
 | SES in sandbox | Only verified recipients | Request production access when real customers exist |
 | Deploy role can create a role without a boundary and give it broad inline rights | Privilege escalation inside the account (admin-level managed policies and IAM users are already denied) | Require a permission boundary on every role terraform-aws creates (`iam:PermissionsBoundary` condition on `iam:CreateRole`) |
 | Account-level security services not owned | GuardDuty, the Config recorder and Security Hub belong to another project in the same account: their settings (protection plans, recorded types, standards) and their lifetime are not under this project's control | A separate AWS account for this project (AWS Organizations, D-07 revisit) with its own detector, recorder and hub |

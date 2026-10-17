@@ -3,13 +3,22 @@
 Status: proposed (Phase 3, OpenTelemetry tracing). Date: 2026-10-16. Investigation only: nothing
 is implemented by this ADR.
 
+> **Update 2026-10-17:** this ADR first said `terraform-aws` is destroyed and re-created every day.
+> It is not: nothing destroys it on a schedule. Only a manual `infra` workflow run with
+> `action = destroy` does (SETUP.md suggests it at the end of a working day), and the cluster
+> can run for days. Prometheus and Tempo lose their in-pod history when their pod is replaced,
+> not on a timetable. The decisions below are unchanged. The reasons and estimates that
+> relied on a daily rebuild are corrected in place.
+
 ## Context
 
 Phase 3 adds distributed tracing: one shopper request (ALB, frontend, then the gRPC services and
 the AWS calls) seen as one trace in Grafana, next to the metrics we already have. Today the stack
 has Prometheus and Grafana (kube-prometheus-stack, `monitoring` namespace, 24 h retention in the
 pod), CloudWatch Container Insights for container logs, and no trace backend. The cluster is
-small (t3.medium nodes) and `terraform-aws` is destroyed and re-created every day (BOOTSTRAP.md).
+small (t3.medium nodes). `terraform-aws` is destroyed only by a manual `infra` run with
+`action = destroy`, often at the end of a working day but not on a schedule. Prometheus keeps its
+history in the pod, so it loses it when the pod is replaced (a node change, an upgrade, a destroy).
 
 ### What the code already has (inventory, 2026-10-16)
 
@@ -90,8 +99,8 @@ On the receiving side:
      change to the CI roles' permission boundaries.
    - Cloud-neutral, so the same chart runs on AKS or GKE.
 2. **AWS X-Ray** (collector `awsxray` exporter, or OTLP to X-Ray's endpoint with SigV4).
-   - Fully managed and kept 30 days, so it survives the daily destroy. It also has the CloudWatch
-     service map.
+   - Fully managed and kept 30 days, so it survives pod restarts and an `infra` destroy. It also
+     has the CloudWatch service map.
    - It needs:
      - a Pod Identity role for the collector (`xray:PutTraceSegments`, `xray:PutTelemetryRecords`);
      - `xray` added to the CI permission boundaries (`terraform-bootstrap/boundaries.tf`) and a
@@ -143,10 +152,13 @@ On the receiving side:
   (values comments). One shop page is about 10 spans; the home page converts nine prices.
 - **Dev:** about 15 spans/s, so about 54,000 spans an hour, or about 0.5 million on a 10-hour
   day. That is a few hundred MB in Tempo before compression, fine on local disk with 24 h
-  retention.
+  retention. The cluster can also run all day (no scheduled destroy): then about 1.3 million
+  spans a day, 2.4 times more; Tempo still keeps only 24 h. Watch the 2 GiB disk if dev runs at that
+  rate for days.
 - **With X-Ray:** about 2.3 traces/s across both environments over 10 hours a day is about
   2.5 million traces a month. Sampling everything would cost about USD 12 a month; keeping 10%
-  of prod plus errors would cost about USD 1 to 3.
+  of prod plus errors would cost about USD 1 to 3. Running 24 h a day, it is about 6 million
+  traces and USD 30 a month at 100%.
 - **With Tempo:** USD 0 extra (existing nodes); with S3, cents per month.
 
 ### Later phases
@@ -191,9 +203,11 @@ Reasons:
    plugin. TraceQL, service graph and exemplars come from the same tool as our dashboards.
 2. **No new AWS service.** No IAM role, no permission-boundary change, no bootstrap run, no
    per-trace bill; the data stays in the cluster.
-3. **Same lifetime as our metrics.** Prometheus already keeps 24 h in the pod and the cluster is
-   rebuilt daily, so traces kept 30 days add little for a lab. S3 storage is one values change
-   when needed.
+3. **Same lifetime as our metrics.** Prometheus keeps 24 h in the pod and loses it when the pod is
+   replaced; traces kept the same way are consistent with it. A lab needs the last hours of
+   traces to debug a deploy or a canary, not weeks: traces kept 30 days add little. S3 storage is
+   one values change when needed. (Corrected 2026-10-17: this reason first relied on a daily
+   rebuild of the cluster, which does not exist.)
 4. **Portable** to Phase 4 (waypoint spans over OTLP to the same collector) and Phase 6 (same
    chart on any cloud; the exporter is configuration).
 5. **The collector chart, not the Operator:** one Deployment instead of CRDs and webhooks. We
@@ -256,9 +270,10 @@ Current headroom, from the repo. These are requests, which is what the scheduler
 
 - **Dev, now:** Tempo stores blocks on the pod's local disk (`emptyDir`, the chart default
   `persistence.enabled: false`).
-  - Traces are lost when the Tempo pod restarts or moves to another node, as well as at the
-    daily destroy.
-  - That is acceptable for dev: Prometheus already keeps its 24 h in the pod the same way.
+  - Traces are lost when the Tempo pod restarts or moves to another node, and when the cluster is
+    destroyed (a manual `infra` destroy).
+  - That is acceptable for dev: Prometheus already keeps its 24 h in the pod the same way, and a
+    trace is mostly read within hours of the request.
 - **Prod option, decided later:** the Tempo S3 backend.
   - One bucket for traces only (encrypted, a lifecycle rule matching the retention, public
     access blocked).
@@ -266,7 +281,7 @@ Current headroom, from the repo. These are requests, which is what the scheduler
     account in `monitoring`, with the namespace-tag condition used for the other pod roles.
   - Today the deploy role may only use the Terraform state bucket in S3 (`terraform-bootstrap/boundaries.tf`).
     A traces bucket needs a boundary change and a bootstrap run, or the bucket in
-    `terraform-bootstrap/` if traces must survive the daily destroy.
+    `terraform-bootstrap/` if traces must survive an `infra` destroy.
   - Decided when prod tracing is turned on (step 7) or when traces must outlive a pod restart.
 
 ### Install method and versions
@@ -383,7 +398,8 @@ until step 7.
 
 ## Revisit when
 
-- Traces must survive the daily destroy or be kept longer than a day: Tempo on S3, or X-Ray.
+- Traces must survive a pod restart or an `infra` destroy, or be kept longer than a day: Tempo on
+  S3, or X-Ray.
 - The cluster grows past one collector replica: a load-balancing tier, or the Operator if many
   teams need auto-instrumentation.
 - Phase 4 lands: point Istio's Telemetry API at the same collector.
