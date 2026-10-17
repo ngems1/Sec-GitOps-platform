@@ -92,6 +92,8 @@ jobs:
             "$RUNNER_TEMP/venv-$s/bin/pip" install --quiet -r "$RUNNER_TEMP/req-$s.txt"
             (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing)
           done
+          # emailservice's message spans (messagetrace.py, ADR 0010 step 5)
+          (cd src/emailservice && "$RUNNER_TEMP/venv-emailservice/bin/python" -m unittest -v test_messagetrace)
 
   # The Go and C# unit tests (they existed but never ran in CI).
   go-tests:

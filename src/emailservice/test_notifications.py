@@ -5,6 +5,7 @@ In-memory fakes for DynamoDB, SQS and the logger: no AWS account or boto3 needed
 import json
 import unittest
 
+import messagetrace
 import notifications as n
 
 
@@ -140,6 +141,22 @@ class ConsumerTest(unittest.TestCase):
         self.assertEqual(consumer.poll_once(wait_seconds=0), ["sent", "invalid", "duplicate"])
         self.assertEqual(sqs.deleted, ["r0", "r2"])  # the invalid one stays: retried, then DLQ
         self.assertTrue(consumer.healthy())
+
+    def test_trace_field_is_removed_before_processing(self):
+        tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        traced = json.loads(status_event())
+        traced["detail"]["_trace"] = {"traceparent": tp}
+        body, carrier = messagetrace.take_trace(json.dumps(traced))
+        self.assertEqual((json.loads(body), carrier), (json.loads(status_event()), {"traceparent": tp}))
+        self.assertEqual(messagetrace.take_trace(status_event()), (status_event(), {}))  # old events unchanged
+        self.assertEqual(messagetrace.take_trace("garbage"), ("garbage", {}))
+        # Processed and deleted, with or without the field (and with a broken one)
+        broken = json.loads(status_event())
+        broken["detail"].update(orderId="o2", _trace="x")
+        sqs = FakeSqs([json.dumps(traced), json.dumps(broken)])
+        consumer = n.Consumer(sqs, "q", n.NotificationLog(FakeDynamo(), "t"), FakeLogger())
+        self.assertEqual(consumer.poll_once(wait_seconds=0), ["sent", "sent"])
+        self.assertEqual(sqs.deleted, ["r0", "r1"])
 
     def test_aws_error_keeps_message(self):
         sqs = FakeSqs([status_event()])
