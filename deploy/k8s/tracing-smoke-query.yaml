@@ -1,0 +1,75 @@
+# Tracing smoke test, part 2 (deploy/tracing-smoke.sh, ADR 0010): searches Tempo for the error
+# trace sent by part 1. Through Grafana's Tempo data source (Grafana's API, admin login from the
+# grafana-admin Secret, never printed): Tempo accepts queries from Grafana only, and this also
+# proves the data source works. envsubst fills in the service name and the curl image.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tracing-smoke-query
+  namespace: monitoring
+  labels:
+    app: tracing-smoke-query
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 360
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: tracing-smoke-query
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: query
+        image: ${CURL_IMAGE}
+        env:
+        - name: SMOKE_SERVICE
+          value: "${SMOKE_SERVICE}"
+        - name: GRAFANA_USER
+          valueFrom:
+            secretKeyRef: { name: grafana-admin, key: admin-user }
+        - name: GRAFANA_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: grafana-admin, key: admin-password }
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -u
+          url="http://monitoring-grafana.monitoring.svc/api/datasources/proxy/uid/tempo/api/search"
+          query="{ resource.service.name = \"$SMOKE_SERVICE\" && status = error }"
+          now=$(date +%s); start=$((now - 1800)); end=$((now + 600))
+          # Tempo indexes a trace some seconds after the collector's 10 s sampling decision.
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /tmp/search.json -w '%{http_code}' -G -u "$GRAFANA_USER:$GRAFANA_PASSWORD" "$url" \
+              --data-urlencode "q=$query" --data-urlencode "start=$start" --data-urlencode "end=$end") || code=000
+            if [ "$code" = 200 ] && grep -q '"traceID"' /tmp/search.json; then
+              echo "OK: the error trace of $SMOKE_SERVICE is in Tempo (searched through Grafana's Tempo data source)"
+              exit 0
+            fi
+            echo "not found yet (HTTP $code, try $i/30)"
+            sleep 10
+          done
+          echo "FAIL: no error trace of $SMOKE_SERVICE in Tempo after 5 minutes"
+          exit 1
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        resources:
+          requests: { cpu: 10m, memory: 16Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Mi

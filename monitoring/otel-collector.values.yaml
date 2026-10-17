@@ -1,0 +1,154 @@
+# OpenTelemetry Collector (open-telemetry/opentelemetry-collector, version OTEL_COLLECTOR_CHART_VERSION
+# in deploy.yml), installed by deploy/monitoring.sh into "monitoring". ADR 0010, rollout step 1.
+#
+# One replica on purpose: the tail sampling rules (keep errors, keep slow traces) need every span
+# of a trace on the same instance. Scaling out needs a loadbalancing exporter tier keyed on the
+# trace ID in front, never more replicas behind this Service (ADR 0010).
+#
+# Pipeline (traces only): otlp -> memory_limiter -> k8s_attributes -> tail_sampling -> batch -> Tempo.
+# Who may send: pods in boutique-dev and boutique-prod (monitoring/tracing-networkpolicies.yaml).
+
+mode: deployment
+replicaCount: 1
+fullnameOverride: otel-collector   # Service otel-collector.monitoring.svc:4317 (gRPC) / 4318 (HTTP)
+
+image:
+  repository: otel/opentelemetry-collector-contrib   # tail_sampling and k8s_attributes are contrib
+command:
+  name: otelcol-contrib
+
+# ADR 0010 "Capacity". GOMEMLIMIT = 80% of the memory limit; memory_limiter refuses data before it.
+useGOMEMLIMIT: true
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 512Mi }
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile: { type: RuntimeDefault }
+
+# Only what k8s_attributes needs: pods (and their namespace), and ReplicaSets to find the
+# Deployment name. No preset: it would add more rules and put k8s_attributes before memory_limiter.
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: [pods, namespaces]
+      verbs: [get, list, watch]
+    - apiGroups: [apps]
+      resources: [replicasets]
+      verbs: [get, list, watch]
+
+# OTLP only.
+ports:
+  jaeger-compact: { enabled: false }
+  jaeger-thrift: { enabled: false }
+  jaeger-grpc: { enabled: false }
+  zipkin: { enabled: false }
+
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null   # the collector's own metrics stay on :8888, not scraped yet (step 6)
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: null
+      spike_limit_percentage: null
+      limit_mib: 400
+      spike_limit_mib: 100
+
+    # Who sent the span: matched by the sender pod's IP (the services send straight here).
+    k8s_attributes:
+      passthrough: false
+      pod_association:
+        - sources:
+            - from: resource_attribute
+              name: k8s.pod.ip
+        - sources:
+            - from: connection
+      extract:
+        metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+          - k8s.replicaset.name
+          - k8s.statefulset.name
+          - k8s.job.name
+
+    # A trace is kept when one policy keeps it; the drop policy wins over all of them.
+    tail_sampling:
+      decision_wait: 10s
+      num_traces: 20000
+      expected_new_traces_per_sec: 50
+      policies:
+        - name: drop-health-checks
+          type: drop
+          drop:
+            drop_sub_policy:
+              - name: health-check-spans
+                type: ottl_condition
+                ottl_condition:
+                  error_mode: ignore
+                  span:
+                    - 'span.attributes["rpc.service"] == "grpc.health.v1.Health"'
+                    - 'span.attributes["http.target"] == "/_healthz"'
+                    - 'span.attributes["url.path"] == "/_healthz"'
+        - name: keep-errors
+          type: status_code
+          status_code: { status_codes: [ERROR] }
+        - name: keep-slow
+          type: latency
+          latency: { threshold_ms: 1000 }   # the shop's latency SLO
+        - name: dev-all
+          type: and
+          and:
+            and_sub_policy:
+              - name: namespace-boutique-dev
+                type: string_attribute
+                string_attribute: { key: k8s.namespace.name, values: [boutique-dev] }
+              - name: dev-100-percent
+                type: probabilistic
+                probabilistic: { sampling_percentage: 100 }
+        - name: prod-10-percent
+          type: and
+          and:
+            and_sub_policy:
+              - name: namespace-boutique-prod
+                type: string_attribute
+                string_attribute: { key: k8s.namespace.name, values: [boutique-prod] }
+              - name: prod-10-percent
+                type: probabilistic
+                probabilistic: { sampling_percentage: 10 }
+
+    batch: {}
+
+  exporters:
+    debug: null
+    otlp_grpc/tempo:
+      endpoint: tempo.monitoring.svc:4317
+      tls:
+        insecure: true   # inside the cluster; Tempo accepts from this collector only (NetworkPolicy)
+
+  service:
+    pipelines:
+      logs: null
+      metrics: null
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, tail_sampling, batch]
+        exporters: [otlp_grpc/tempo]

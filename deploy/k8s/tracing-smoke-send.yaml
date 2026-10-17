@@ -1,0 +1,77 @@
+# Tracing smoke test, part 1 (deploy/tracing-smoke.sh, ADR 0010): telemetrygen sends a few test
+# traces from boutique-dev to the OTel Collector, one of them with an error. envsubst fills in
+# the service name (unique per run) and the telemetrygen image (pinned in deploy.yml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tracing-smoke-send
+spec:
+  # The namespace has a deny-all policy: let this Job reach DNS and the collector only.
+  podSelector:
+    matchLabels:
+      app: tracing-smoke-send
+  policyTypes:
+  - Ingress
+  - Egress
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: opentelemetry-collector
+          app.kubernetes.io/instance: otel-collector
+    ports:
+    - port: 4317
+      protocol: TCP
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tracing-smoke-send
+  labels:
+    app: tracing-smoke-send
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: tracing-smoke-send
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      # 3 normal traces (a root span and 2 children each)
+      - name: ok
+        image: ${TELEMETRYGEN_IMAGE}
+        args: ["traces", "--otlp-endpoint=otel-collector.monitoring.svc:4317", "--otlp-insecure",
+               "--traces=3", "--child-spans=2", "--service=${SMOKE_SERVICE}"]
+        securityContext: &restricted
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: { cpu: 10m, memory: 32Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+      # 1 trace with an error status: the collector's tail sampling must keep it
+      - name: error
+        image: ${TELEMETRYGEN_IMAGE}
+        args: ["traces", "--otlp-endpoint=otel-collector.monitoring.svc:4317", "--otlp-insecure",
+               "--traces=1", "--status-code=Error", "--service=${SMOKE_SERVICE}"]
+        securityContext: *restricted
+        resources: *small

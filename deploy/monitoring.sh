@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Installs or updates the monitoring stack in namespace "monitoring":
 #   kube-prometheus-stack (Prometheus + Grafana, monitoring/kube-prometheus-stack.values.yaml),
+#   the tracing backend: Tempo and the OTel Collector (monitoring/tempo.values.yaml,
+#   monitoring/otel-collector.values.yaml, monitoring/tracing-networkpolicies.yaml; ADR 0010),
 #   the "Boutique" dashboard (monitoring/dashboards/*.json), and Grafana's own ALB
 #   restricted to MONITORING_ALLOWED_CIDR (monitoring/grafana-ingress.yaml).
 # Needs kubectl + helm on the cluster and:
 #   GRAFANA_ADMIN_PASSWORD   Grafana login (GitHub secret). Required.
 #   MONITORING_ALLOWED_CIDR  e.g. 203.0.113.7/32 (GitHub variable). Empty = Grafana not exposed.
 #   KPS_VERSION              kube-prometheus-stack chart version (constraint)
+#   TEMPO_CHART_VERSION, OTEL_COLLECTOR_CHART_VERSION  exact chart versions of the tracing backend (ADR 0010)
+#   VPC_CIDR                 the VPC range (Terraform output), for the collector's egress to the API server
 set -euo pipefail
-: "${GRAFANA_ADMIN_PASSWORD:?}" "${KPS_VERSION:?}"
+: "${GRAFANA_ADMIN_PASSWORD:?}" "${KPS_VERSION:?}" "${TEMPO_CHART_VERSION:?}" "${OTEL_COLLECTOR_CHART_VERSION:?}" "${VPC_CIDR:?}"
 NS=monitoring
 MONITORING_ALLOWED_CIDR=${MONITORING_ALLOWED_CIDR:-}
 # People's IPs, and the Actions logs are public: masked, never printed.
@@ -43,6 +47,29 @@ if ! helm upgrade --install monitoring kube-prometheus-stack \
   exit 1
 fi
 echo "kube-prometheus-stack: $(helm -n "$NS" list -f '^monitoring$' -o json | jq -r '.[0].chart')"
+
+# Tracing backend (ADR 0010, step 1): Tempo, and the OTel Collector that sends to it. Shared by
+# dev and prod, like Prometheus. The NetworkPolicies come first, so neither pod ever runs without
+# them; they select only these pods (no default deny in this namespace).
+if ! [[ "$VPC_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+  echo "::error::VPC_CIDR is not an IPv4 CIDR"
+  exit 1
+fi
+K8S_API_IP=$(kubectl -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')
+export VPC_CIDR K8S_API_IP
+envsubst '${VPC_CIDR} ${K8S_API_IP}' < monitoring/tracing-networkpolicies.yaml | kubectl apply -f -
+install_chart() { # release chart repo version values
+  if ! helm upgrade --install "$1" "$2" --repo "$3" --version "$4" \
+    --namespace "$NS" -f "$5" --wait=watcher --timeout 5m; then
+    bash deploy/diagnose.sh "$NS"
+    exit 1
+  fi
+  echo "$1: $(helm -n "$NS" list -f "^$1\$" -o json | jq -r '.[0].chart')"
+}
+install_chart tempo tempo https://grafana-community.github.io/helm-charts \
+  "$TEMPO_CHART_VERSION" monitoring/tempo.values.yaml
+install_chart otel-collector opentelemetry-collector https://open-telemetry.github.io/opentelemetry-helm-charts \
+  "$OTEL_COLLECTOR_CHART_VERSION" monitoring/otel-collector.values.yaml
 # Restart Grafana so it always loads the current data sources (and its Pod Identity
 # credentials, if the IAM link was created after the pod). A few seconds of downtime.
 kubectl -n "$NS" rollout restart deployment -l app.kubernetes.io/name=grafana

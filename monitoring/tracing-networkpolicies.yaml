@@ -1,0 +1,93 @@
+# NetworkPolicies of the tracing backend (ADR 0010), applied by deploy/monitoring.sh with envsubst
+# (${VPC_CIDR}, ${K8S_API_IP}). Each one selects ONLY the collector or Tempo pods: the "monitoring"
+# namespace has no default deny, so Prometheus and Grafana keep working as before.
+
+# OTel Collector: receives OTLP from the shop namespaces only; sends to Tempo, DNS and the
+# Kubernetes API (k8s_attributes reads pods, namespaces and ReplicaSets).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opentelemetry-collector
+      app.kubernetes.io/instance: otel-collector
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: [boutique-dev, boutique-prod]
+    ports:
+    - port: 4317
+      protocol: TCP
+    - port: 4318
+      protocol: TCP
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: tempo
+          app.kubernetes.io/instance: tempo
+    ports:
+    - port: 4317
+      protocol: TCP
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # The API server: its Service IP and, behind it, the EKS control-plane network interfaces in
+  # the VPC. HTTPS only.
+  - to:
+    - ipBlock:
+        cidr: ${K8S_API_IP}/32
+    - ipBlock:
+        cidr: ${VPC_CIDR}
+    ports:
+    - port: 443
+      protocol: TCP
+---
+# Tempo: OTLP from the collector only; queries (3200) from Grafana only; DNS out, nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+      app.kubernetes.io/instance: tempo
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: opentelemetry-collector
+          app.kubernetes.io/instance: otel-collector
+    ports:
+    - port: 4317
+      protocol: TCP
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: grafana
+          app.kubernetes.io/instance: monitoring
+    ports:
+    - port: 3200
+      protocol: TCP
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP

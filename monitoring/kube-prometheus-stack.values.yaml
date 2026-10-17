@@ -7,7 +7,7 @@
 #               inventoryservice, productcatalogservice, frontend: frontend_http_*, used
 #               by the Argo Rollouts canary analysis, ADR 0008).
 #   Grafana     dashboards: the "Boutique" dashboard (monitoring/dashboards) plus the
-#               chart's Kubernetes dashboards. Data sources: Prometheus, and CloudWatch
+#               chart's Kubernetes dashboards. Data sources: Prometheus, Tempo (traces, ADR 0010) and CloudWatch
 #               (ALB, SQS, RDS) through a read-only Pod Identity role (terraform-aws/monitoring.tf).
 #
 # Alertmanager is off: alerts already go CloudWatch -> SNS -> Slack (#boutique-alerts).
@@ -131,6 +131,13 @@ grafana:
       isDefault: true
       jsonData:
         timeInterval: 30s          # = scrapeInterval
+    # Traces (ADR 0010): Tempo, installed by deploy/monitoring.sh next to this chart. Tempo is a
+    # core Grafana data source (no plugin). Its NetworkPolicy lets only Grafana query it (3200).
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.monitoring.svc:3200
     - name: CloudWatch
       uid: cloudwatch
       type: cloudwatch

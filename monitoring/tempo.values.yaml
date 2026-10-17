@@ -1,0 +1,74 @@
+# Grafana Tempo, single binary (grafana-community/tempo, version TEMPO_CHART_VERSION in deploy.yml),
+# installed by deploy/monitoring.sh into "monitoring". ADR 0010, rollout step 1.
+#
+# Receives traces from the OTel Collector only (OTLP gRPC 4317 / HTTP 4318); Grafana queries it
+# on 3200 (monitoring/tracing-networkpolicies.yaml). Local storage: an emptyDir of 2 GiB, 24 h of
+# traces, lost when the pod restarts or moves (acceptable for dev; S3 is the prod option, ADR 0010).
+
+replicas: 1
+
+tempo:
+  reportingEnabled: false     # no usage reports to Grafana Labs (like Grafana's analytics)
+  memBallastSizeMbs: 0        # no ballast: GOMEMLIMIT below keeps Go under the memory limit
+  retention: 24h
+  # ADR 0010 "Capacity"
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { memory: 1Gi }
+  extraEnv:
+    - name: GOMEMLIMIT
+      value: 900MiB
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: { drop: [ALL] }
+  # Traces and WAL on the emptyDir below (the chart mounts nothing at /var/tempo without persistence).
+  extraVolumeMounts:
+    - name: tempo-data
+      mountPath: /var/tempo
+
+securityContext:              # pod (chart default user 10001, plus the RuntimeDefault seccomp profile)
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  runAsNonRoot: true
+  seccompProfile: { type: RuntimeDefault }
+
+persistence:
+  enabled: false
+extraVolumes:
+  - name: tempo-data
+    emptyDir:
+      sizeLimit: 2Gi
+
+# The whole Tempo configuration, so it has OTLP receivers only (the chart's default config also
+# opens Jaeger receivers). Same layout as the chart's own template.
+config: |
+  stream_over_http_enabled: false
+  multitenancy_enabled: false
+  memberlist:
+    cluster_label: "{{ .Release.Name }}.{{ .Release.Namespace }}"
+  usage_report:
+    reporting_enabled: false
+  server:
+    http_listen_port: 3200
+  distributor:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+  compactor:
+    compaction:
+      block_retention: {{ .Values.tempo.retention }}
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  overrides:
+    per_tenant_override_config: /conf/overrides.yaml
