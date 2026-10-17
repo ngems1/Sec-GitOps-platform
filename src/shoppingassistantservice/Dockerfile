@@ -9,7 +9,7 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 COPY --from=builder /install /usr/local
-COPY assistant.py bedrock.py catalog.py metrics.py server.py demo_pb2.py demo_pb2_grpc.py ./
+COPY assistant.py bedrock.py catalog.py metrics.py server.py tracing.py demo_pb2.py demo_pb2_grpc.py ./
 USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["python", "server.py"]
