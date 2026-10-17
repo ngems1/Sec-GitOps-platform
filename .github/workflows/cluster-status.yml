@@ -47,6 +47,69 @@ jobs:
           kubectl get pods -A --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort | uniq -c | sed 's/^/  pods running on /'
           kubectl top nodes 2>/dev/null || true
 
+      # Read-only (describe). What the scheduler counts: requests (and limits) against each
+      # node's allocatable CPU and memory, per node and in total. Measures the capacity
+      # estimates of ADR 0010 (section "Capacity") before and after a change.
+      - name: Node capacity
+        run: |
+          {
+            echo "### Node capacity (requests, what the scheduler counts)"
+            echo '```'
+            kubectl describe nodes | awk '
+              function cpu(v) { return v ~ /m$/ ? substr(v, 1, length(v) - 1) + 0 : v * 1000 }
+              function mib(v) {
+                if (v ~ /Ki$/) return substr(v, 1, length(v) - 2) / 1024
+                if (v ~ /Mi$/) return substr(v, 1, length(v) - 2) + 0
+                if (v ~ /Gi$/) return substr(v, 1, length(v) - 2) * 1024
+                if (v ~ /k$/)  return substr(v, 1, length(v) - 1) * 1000 / 1048576
+                if (v ~ /M$/)  return substr(v, 1, length(v) - 1) * 1000000 / 1048576
+                if (v ~ /G$/)  return substr(v, 1, length(v) - 1) * 1000000000 / 1048576
+                return v / 1048576
+              }
+              function row() {
+                if (node == "") return
+                printf "%-46s %6dm %6dm %3d%% %6dm | %6dMi %6dMi %3d%% %6dMi\n", node, acpu, rcpu, (acpu ? 100 * rcpu / acpu : 0), lcpu, amem, rmem, (amem ? 100 * rmem / amem : 0), lmem
+                tacpu += acpu; trcpu += rcpu; tlcpu += lcpu; tamem += amem; trmem += rmem; tlmem += lmem
+              }
+              BEGIN { printf "%-46s %7s %7s %4s %7s | %8s %8s %4s %8s\n", "NODE", "CPU", "REQ", "%", "LIMITS", "MEMORY", "REQ", "%", "LIMITS" }
+              /^Name:/ { row(); node = $2; sec = ""; acpu = rcpu = lcpu = amem = rmem = lmem = 0 }
+              /^Allocatable:/ { sec = "alloc"; next }
+              /^Allocated resources:/ { sec = "used"; next }
+              /^[A-Z]/ { if ($0 !~ /^(Allocatable|Allocated)/) sec = "" }
+              sec == "alloc" && $1 == "cpu:" { acpu = cpu($2) }
+              sec == "alloc" && $1 == "memory:" { amem = mib($2) }
+              sec == "used" && $1 == "cpu" { rcpu = cpu($2); lcpu = cpu($4) }
+              sec == "used" && $1 == "memory" { rmem = mib($2); lmem = mib($4) }
+              END {
+                row()
+                printf "%-46s %6dm %6dm %3d%% %6dm | %6dMi %6dMi %3d%% %6dMi\n", "TOTAL", tacpu, trcpu, (tacpu ? 100 * trcpu / tacpu : 0), tlcpu, tamem, trmem, (tamem ? 100 * trmem / tamem : 0), tlmem
+                printf "Headroom (allocatable - requests): CPU %dm, memory %dMi\n", tacpu - trcpu, tamem - trmem
+              }'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Read-only (get, top). The tracing backend in "monitoring" (ADR 0010): the OTel Collector
+      # and Tempo pods, their restarts and usage, and their chart versions.
+      - name: Tracing backend
+        run: |
+          {
+            echo "### Tracing backend (monitoring)"
+            echo '```'
+            sel='app.kubernetes.io/instance in (otel-collector,tempo)'
+            echo "\$ kubectl -n monitoring get pods -l '${sel}' -o wide"
+            kubectl -n monitoring get pods -l "$sel" -o wide 2>&1 || true
+            echo
+            kubectl -n monitoring get pods -l "$sel" \
+              -o custom-columns='POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount,LAST_TERMINATION:.status.containerStatuses[0].lastState.terminated.reason' 2>&1 || true
+            echo
+            kubectl -n monitoring top pods -l "$sel" 2>/dev/null || echo "(kubectl top: metrics-server not answering)"
+            echo
+            helm -n monitoring list -f '^(otel-collector|tempo)$' 2>/dev/null || true
+            echo
+            kubectl -n monitoring get networkpolicy otel-collector tempo 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Read-only (list-addons, describe-addon). The EKS add-ons and the exact versions they
       # run, for pinning them in terraform-aws/eks.tf (addon_version, never most_recent:
       # RUNBOOK "Upgrade an EKS add-on"). Add-ons running but not in eks.tf are flagged.
