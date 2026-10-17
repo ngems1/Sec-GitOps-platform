@@ -61,20 +61,20 @@ func (lh *logHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	rr := &responseRecorder{w: w}
+	// Request logs (ADR 0011): the path without its query string, the method and a random
+	// request ID. Never the session ID, the user agent, the client IP, headers or cookies, at
+	// any level.
 	log := lh.log.WithFields(logrus.Fields{
 		"http.req.path":   r.URL.Path,
 		"http.req.method": r.Method,
 		"http.req.id":     requestID.String(),
 	})
-	if v, ok := r.Context().Value(ctxKeySessionID{}).(string); ok {
-		log = log.WithField("session", v)
-	}
 	log.Debug("request started")
 	defer func() {
 		log.WithFields(logrus.Fields{
 			"http.resp.took_ms": int64(time.Since(start) / time.Millisecond),
 			"http.resp.status":  rr.status,
-			"http.resp.bytes":   rr.b}).Debugf("request complete")
+			"http.resp.bytes":   rr.b}).Info("request complete")
 	}()
 
 	ctx = context.WithValue(ctx, ctxKeyLog{}, log)
