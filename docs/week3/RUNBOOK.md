@@ -461,6 +461,45 @@ Only kept traces are there: health checks are dropped, and in prod only 10% of n
 (plus all errors and slow ones). A query that finds nothing for an old time range may just be
 past Tempo's 24 h, or a Tempo restart.
 
+**One order, one trace (EventBridge and SQS, ADR 0010 step 5).** The async flow
+(`terraform-aws/modules/environment/events.tf`, one bus `<prefix>-events`; every queue has a DLQ
+after 3 tries):
+
+1. checkoutservice publishes `OrderCreated` (`boutique.checkout`) → `inventory-q` →
+   inventoryservice.
+2. inventoryservice publishes `InventoryReserved` / `InventoryFailed` (`boutique.inventory`) →
+   `order-status-q` → the order-status Lambda.
+3. The Lambda publishes `OrderStatusUpdated` (`boutique.orderstatus`) → `notification-q` →
+   emailservice.
+
+EventBridge has no message attributes, so the W3C context travels in the event detail:
+`"_trace": {"traceparent": "00-…", "tracestate": "…"}`.
+
+- **Who adds it.** Each publisher adds the field only while tracing is on (so never in prod).
+- **Spans.** Each publish is a PRODUCER span (`publish <event>`), and each message a CONSUMER
+  span (`process <event>`) that is a child of that publish span.
+- **The Lambda.** It has no OpenTelemetry. It only copies the field to `OrderStatusUpdated`, so
+  the email span is a child of inventory's publish span, with no Lambda span in between.
+- **Consumers.** They remove the field before parsing the event. Events without it, or with a
+  broken one, are processed as before, in a new trace.
+- **Polling.** The 20 s SQS long polls are not spans.
+- **Span attributes.** The order ID (`boutique.order_id`) and messaging fields only, never the
+  email address.
+
+| Looking for | TraceQL |
+|---|---|
+| Orders that went all the way to the email | `{ span.rpc.method = "PlaceOrder" } >> { resource.service.name = "inventoryservice" && name = "process OrderCreated" } >> { resource.service.name = "emailservice" && name = "process OrderStatusUpdated" }` |
+| One order, by ID (the producer and consumer spans) | `{ span.boutique.order_id = "<order id>" }` |
+| Failed message processing (retried, then DLQ) | `{ kind = consumer && status = error }` |
+
+If an order's trace stops at checkout or at inventory, the next consumer has not processed the
+message yet, or the message is being retried or is in the DLQ: check the queue and DLQ alarms.
+The trace is not the place to read the queue state.
+
+Late spans: the collector decides on a trace 10 s after its first span (`decision_wait`). A
+consumer span that comes later (a retried message, a slow Lambda) may be missing from the trace
+or kept on its own.
+
 **Turn tracing off for dev** (for example if a dev deploy misbehaves after this switch):
 
 1. Set `tracing.enabled: false` in `helm-chart/values-dev.yaml` and merge. Argo CD rolls the 12
