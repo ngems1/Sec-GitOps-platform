@@ -50,10 +50,13 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
+        {{- /* One pinned redis, from Docker Hub (publicRepository) or from images.repository
+               (GKE: the Artifact Registry mirror, deploy/mirror-images.sh copies this digest). */}}
+        {{- $redis := "redis:alpine@sha256:fd5de2340bc46cbc2241975ab027797c350dec6fd86349e3ac384e3a41be6fee" }}
         {{- if .Values.cartDatabase.inClusterRedis.publicRepository }}
-        image: redis:alpine@sha256:fd5de2340bc46cbc2241975ab027797c350dec6fd86349e3ac384e3a41be6fee
+        image: {{ $redis }}
         {{- else }}
-        image: {{ .Values.images.repository }}/redis:alpine
+        image: {{ .Values.images.repository }}/{{ $redis }}
         {{- end }}
         ports:
         - containerPort: 6379

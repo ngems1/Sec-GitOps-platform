@@ -241,7 +241,11 @@ loadGenerator:
   create: true
   name: loadgenerator
   checkFrontendInitContainer: true
-  users: 10                # simulated shoppers (each ~1 request every 1-10 s)
+  # Where the init container's pinned busybox comes from: Docker Hub by default (EKS, local);
+  # the Artifact Registry mirror on GKE (set by deploy/argocd-gke.sh, ADR 0014).
+  busybox:
+    repository: busybox
+  users: 10               # simulated shoppers (each ~1 request every 1-10 s)
   browseOnly: false        # true = no cart writes and no orders (LOADGEN_BROWSE_ONLY)
   # Full URL to shop through (e.g. https://dev.example.com, the ALB). Empty = the in-cluster
   # frontend Service, which never reaches an Argo Rollouts canary.
