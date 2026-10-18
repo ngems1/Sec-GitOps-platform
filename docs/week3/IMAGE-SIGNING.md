@@ -2,7 +2,8 @@
 
 Every image the `deploy` workflow builds is signed with **cosign keyless** and gets a signed
 **SPDX SBOM attestation**. Both are made by image digest and stored in ECR, next to the image. The
-Kyverno policy (Phase 5, PR 2) must check exactly the values below.
+Kyverno policy `deploy/kyverno/image-signatures.yaml` (ADR 0013, audit only for now) checks exactly
+the values below; CI keeps them equal (`deploy/tests/kyverno-check.sh`).
 
 ## Verification values
 
@@ -23,8 +24,8 @@ Kyverno policy (Phase 5, PR 2) must check exactly the values below.
 - **The values change only when the repo or the workflow does:** a renamed repository, a moved
   `deploy.yml`, or signing from another branch or workflow. Change it in three places together:
   `SIGNER_IDENTITY` in `.github/workflows/deploy.yml`, this page, and the Kyverno policy.
-- **Classic format, not the cosign v3 bundle:** a Kyverno `verifyImages` rule must use the classic
-  cosign signature and attestation lookup (tags, not OCI 1.1 referrers). Why: ADR 0012.
+- **Classic format, not the cosign v3 bundle:** the Kyverno policy reads the classic
+  cosign signature and the `intoto` attestation (tags, not OCI 1.1 referrers). Why: ADR 0012.
 
 ## Check an image by hand
 

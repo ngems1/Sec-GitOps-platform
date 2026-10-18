@@ -115,7 +115,9 @@ Proven by the isolation test after every prod deploy ([ISOLATION.md](ISOLATION.m
   built-in scanner needs no third-party code running with AWS credentials.
 - **Signed images with SBOMs** (ADR 0012): every pushed image is signed with cosign keyless (GitHub
   OIDC, public Sigstore) and carries a signed SPDX SBOM attestation, by digest, verified in the
-  same job ([IMAGE-SIGNING.md](IMAGE-SIGNING.md)). Not enforced in the cluster yet (Kyverno, next).
+  same job ([IMAGE-SIGNING.md](IMAGE-SIGNING.md)). In the cluster, Kyverno audits every pod's images
+  from our ECR in boutique-dev and boutique-prod and reports unsigned ones; it does not block yet
+  (ADR 0013, RUNBOOK section 16).
 - **Checkov** scans `terraform-aws/` on every infra run (soft-fail: results in the run log, reviewed
   here).
 - **Pinned base images and dependencies** per service.

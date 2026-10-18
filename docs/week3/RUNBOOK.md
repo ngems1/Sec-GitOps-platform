@@ -1063,6 +1063,50 @@ Dev works the same way, with `values-dev.yaml`. Revert the values change to turn
     `assistant_bedrock_errors_total{type}`.
   - **The frontend canary never calls Bedrock.**
 
+## 16. Image signatures in the cluster (Kyverno, audit only, ADR 0013)
+
+Kyverno checks every pod in `boutique-dev` and `boutique-prod`: each image from our ECR
+(`.../boutique/<service>`) must have a cosign keyless signature and an SPDX SBOM attestation from
+`deploy.yml` on `main` (ADR 0012). **It only reports. It never blocks or changes a pod**, and it
+lets pods in when it's down.
+
+- **Installed by:** the deploy workflow, job `policies` (`deploy/kyverno.sh`), on every deploy
+  run: chart `kyverno` 3.9.1 (Kyverno v1.19.1) in namespace `kyverno`, and the policy
+  `boutique-image-signatures` (`deploy/kyverno/image-signatures.yaml`). Nothing waits for it.
+- **Not checked:** third-party images (`public.ecr.aws` mysql, `ghcr.io` telemetrygen, the
+  isolation probe's python) and every other namespace.
+
+**See the results:**
+
+1. Actions > **cluster-status** > Run workflow > `boutique-prod` (then `boutique-dev`).
+2. On the run's Summary page, open **Image signatures (Kyverno audit)**:
+   - Kyverno's two pods (`kyverno-admission-controller`, `kyverno-reports-controller`) are
+     Running;
+   - `boutique-image-signatures` shows `READY true`;
+   - the counts: `pass`, `fail`, `error`, one result per pod;
+   - every result that is not `pass`, with the pod and the message.
+3. Expect every pod to be `pass`. Results appear when a pod is created and with the hourly
+   background scan, so right after the first install it can take up to an hour.
+
+**What a result means:**
+
+| Result | Meaning | What to do |
+|---|---|---|
+| `pass` | All its images from our ECR are signed and have the SBOM, by `deploy.yml` on `main` | Nothing |
+| `fail` "no valid cosign signature" | An image of ours without our signature: built before signing (ADR 0012), a rollback to such a tag (`image_tag`), or pushed by something else | Find the image tag on the pod. An old tag: redeploy a current one. An unknown image: treat it as an incident (who pushed it?) |
+| `fail` "no valid SPDX SBOM attestation" | Signed, but no SBOM attestation from the same identity | Check the build's sign step (`deploy/sign-image.sh`) for that tag |
+| `error` | Kyverno could not check: ECR access (`401`/`403`), Rekor or the TUF root unreachable | Not a verdict on the image. ECR errors: Kyverno reads ECR with the node role through instance metadata (ADR 0013, "Credentials"); a dedicated Pod Identity role is a Terraform follow-up |
+| (no results) | Kyverno not installed yet, or no scan yet | Check the deploy run's `policies` job |
+
+**Turn it off** (nothing depends on it):
+
+```bash
+kubectl delete imagevalidatingpolicy boutique-image-signatures   # stops the checks at once
+helm -n kyverno uninstall kyverno                                # removes Kyverno (its pre-delete hook removes the webhooks)
+```
+
+Then remove the `policies` job from `deploy.yml`, or the next deploy installs it again.
+
 ## Incident log (things that actually happened)
 
 | Incident | Root cause | Fix |
