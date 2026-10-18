@@ -123,6 +123,15 @@ jobs:
       IMAGE: ${{ needs.setup.outputs.registry }}/${{ matrix.service }}:${{ needs.setup.outputs.tag }}
       REPO: ${{ matrix.service }}
       TAG: ${{ needs.setup.outputs.tag }}
+      # Supply chain (ADR 0012): exact versions, checked by SHA-256 (the release's checksums file).
+      COSIGN_VERSION: "3.1.3"
+      COSIGN_SHA256: 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71 # cosign-linux-amd64
+      SYFT_VERSION: "1.54.1"
+      SYFT_SHA256: c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47   # syft_1.54.1_linux_amd64.tar.gz
+      # Who signs: this workflow on main (the deploy role only trusts main). Kyverno checks the same
+      # values (docs/week3/IMAGE-SIGNING.md).
+      SIGNER_IDENTITY: https://github.com/ngems1/Sec-GitOps-platform/.github/workflows/deploy.yml@refs/heads/main
+      SIGNER_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - uses: actions/checkout@v5
 
@@ -197,6 +206,63 @@ jobs:
             fi
             echo "::warning::${REPO}: ${critical} CRITICAL vulnerabilities (SCAN_BLOCKING=false, not blocking)."
           fi
+
+      # Supply chain (ADR 0012): an SBOM, a keyless signature and the SBOM as a signed attestation,
+      # all by digest, after the scan gate (only images that passed it are signed). Also on a
+      # re-run of an image that already exists: what is already signed is left as it is.
+      - name: Install cosign and Syft
+        run: |
+          d="$RUNNER_TEMP/bin"; mkdir -p "$d"; cd "$d"
+          curl -sSfLo cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  cosign" | sha256sum -c -
+          curl -sSfLo syft.tgz "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256}  syft.tgz" | sha256sum -c -
+          tar -xzf syft.tgz syft && rm syft.tgz
+          chmod +x cosign syft
+          echo "$d" >> "$GITHUB_PATH"
+
+      # The digest ECR holds for this tag: what the clusters pull, and what gets signed.
+      - name: Image digest
+        id: digest
+        env:
+          REGISTRY: ${{ needs.setup.outputs.registry }}
+        run: |
+          digest=$(aws ecr describe-images --repository-name "${REGISTRY#*/}/${REPO}" \
+            --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG}: no image digest in ECR (got '${digest}')"; exit 1; }
+          echo "ref=${REGISTRY}/${REPO}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "${REPO}:${TAG} = ${digest}"
+
+      - name: SBOM (Syft, SPDX JSON)
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: |
+          syft scan "registry:${REF}" -q -o "spdx-json=sbom-${REPO}.spdx.json"
+          echo "SBOM: $(jq '.packages | length' "sbom-${REPO}.spdx.json") packages"
+
+      - name: Sign the image and attest the SBOM (cosign keyless)
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: |
+          # The certificate will name this workflow and ref: they must be what Kyverno expects.
+          [ "$SIGNER_IDENTITY" = "https://github.com/${GITHUB_WORKFLOW_REF}" ] \
+            || { echo "::error::this run would sign as https://github.com/${GITHUB_WORKFLOW_REF}, not ${SIGNER_IDENTITY}"; exit 1; }
+          bash deploy/sign-image.sh sign "$REF" "sbom-${REPO}.spdx.json"
+
+      # Fails the build when the signature or the attestation does not verify with the exact
+      # identity and issuer, so a broken signing setup cannot pass silently.
+      - name: Verify the signature and the SBOM attestation
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: bash deploy/sign-image.sh verify "$REF"
+
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@v5
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.spdx.json
+          if-no-files-found: error
+          retention-days: 30
 
   deploy-dev:
     # After monitoring: the frontend canary analysis queries its Prometheus, and deploy-env

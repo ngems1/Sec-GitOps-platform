@@ -31,6 +31,7 @@ Prod always waits for a reviewer on the `prod` environment. If your repo can't h
 
 1. **Image tag = commit SHA.** ECR tags are immutable, so a tag always means the same code. Prod gets exactly the images that passed in dev.
 2. **Scan gate.** ECR scans every image on push. A CRITICAL finding stops the run before anything reaches the cluster. Set the repository variable `SCAN_BLOCKING=false` to only report. ECR's scanner is used instead of a third-party scanner action, so no extra code runs with AWS credentials (see the Trivy GitHub Actions compromise of March 2026, CVE-2026-33634).
+   **Then sign.** Each image that passed gets an SPDX SBOM (Syft), a cosign keyless signature and the SBOM as a signed attestation, all by digest, then both are verified with the exact signer identity. A failure stops the run. Values and checks: [IMAGE-SIGNING.md](IMAGE-SIGNING.md), ADR 0012.
 3. **Load Balancer Controller.** One copy in `kube-system`, shared by both environments. Its AWS rights come from Pod Identity (Terraform).
 4. **Database migrations.** RDS is private, so a Kubernetes Job runs them inside the VPC. The password goes from Secrets Manager to a Secret that is deleted right after. The connection uses TLS with certificate checks. The SQL is safe to run again.
 5. **Helm.** `helm upgrade --install --rollback-on-failure`: if the new pods don't become ready within 10 minutes, Helm restores the previous version by itself.
