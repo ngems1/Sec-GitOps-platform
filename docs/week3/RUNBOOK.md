@@ -506,7 +506,7 @@ log line written during a traced request. The names are the same in every langua
 | .NET | cart | `CartLog.cs`, JSON lines for the cart's request logs |
 
 - **When the fields are absent:**
-  - while tracing is off (prod today), whatever `traceparent` a request carries;
+  - while tracing is off (`tracing.enabled: false`), whatever `traceparent` a request carries;
   - on lines written outside a request.
 - **Finding a trace's lines:** Logs Insights on the application log group:
   `filter @message like "<trace id>"`.
@@ -519,7 +519,8 @@ log line written during a traced request. The names are the same in every langua
 - **What does the job:** provisioned correlations (Explore) and the dashboard **Boutique: logs and
   traces** (`monitoring/dashboards/logs-traces.json`).
 - **Data:** the logs are the application log group (1 day), the traces are Tempo (24 h).
-- **Dev only:** prod logs no IDs while tracing is off there.
+- **Dev and prod** (prod since 2026-10-18, ADR 0010 step 7). In prod, Tempo keeps errors, traces
+  over 1 s and 10% of the rest, so a prod log line's `trace_id` often has no trace in Tempo.
 
 *Dashboard* (Dashboards > Boutique: logs and traces):
 
@@ -581,8 +582,8 @@ a client through the ALB no longer continues: each request gets a new root span,
 
 - **The client's context:** kept only as a **span link** on the frontend's server span. In
   Tempo's span view, under Links.
-- **Dropped at the edge:** inbound `baggage` always. While tracing is off (prod),
-  `traceparent` and `tracestate` too.
+- **Dropped at the edge:** inbound `baggage` always. While tracing is off
+  (`tracing.enabled: false`), `traceparent` and `tracestate` too.
 - **For you:** search by our trace ID (the logs' `trace_id`), never by a client's.
 
 **Span metrics and the service graph (ADR 0011, PR 5).**
@@ -597,7 +598,8 @@ a client through the ALB no longer continues: each request gets a new root span,
   - no pod, instance, user, session, IP or URL.
 - **Buckets:** 5 ms to 5 s.
 - **Exemplars:** trace IDs on the histograms (OpenMetrics), linked to Tempo in Grafana (below).
-- **Dev only for now:** prod sends no spans while tracing is off there.
+- **Dev and prod** (prod since 2026-10-18): `k8s_namespace_name` tells them apart. They count
+  every span, also the 90% of normal prod traces that Tempo does not keep.
 
 | Metric | What | PromQL example |
 |---|---|---|
@@ -710,7 +712,8 @@ Prometheus), not from the sampled traces in Tempo.
     `user -> frontend` now counts only real requests. Old series fade out within 10 minutes
     (`metrics_expiration`). The panels under the graph keep their
     `span_name!~".*grpc.health.v1.Health/.*|.*/_healthz"` as a second line.
-  - **Prod is not there:** prod sends no spans while tracing is off.
+  - **Prod:** the dashboard row is dev only. In Explore, filter on
+    `client_k8s_namespace_name="boutique-prod"` for prod's graph.
 - **From a slow edge to the logs:**
   1. In the graph, find the arrow with the highest average time, for example `frontend ->
      checkoutservice`. Click it > **Request classic histogram** to see its p90 over time.
@@ -792,6 +795,71 @@ or kept on its own.
 3. Faster but temporary: `kubectl -n boutique-dev set env deploy/<service> ENABLE_TRACING-`
    (not on the frontend: that starts a canary). Argo CD self-heal puts it back within minutes,
    so use it only to test.
+
+**Tracing in prod (ADR 0010 step 7, since 2026-10-18).** The same 12 services as dev, the same
+collector and Tempo.
+
+- **Sampling:** the collector keeps errors, traces over 1 s and 10% of the rest for
+  `k8s.namespace.name = boutique-prod` (dev: 100%). The decision comes 30 s after a trace's first
+  span.
+  - **Checked locally** (collector 0.161.0 and Tempo 2.10.8, 1,000 prod traces): all 37 errors,
+    all 24 slow traces and 98 of the other 939 (10.4%) were kept.
+- **What Tempo holds:** about 10 to 15% of prod requests. Span metrics and the service graph
+  still count every prod span.
+
+**After turning it on, check** (within an hour of the prod deploy):
+
+1. **The prod frontend canary passed:** the deploy run, or cluster-status > `boutique-prod` >
+   Rollouts.
+   - Its p95 should stay well under the 1 s gate. Each span costs microseconds, and export runs
+     in the background, so expect the p95 within a few milliseconds of before.
+   - The services' status codes and request path don't change. The frontend's tracing handler
+     runs with tracing off too; with it on, it only records spans and keeps a client's
+     `traceparent` as a link.
+2. **Prod traces in Tempo, about 10%:**
+   - Explore > Tempo > TraceQL `{ resource.k8s.namespace.name = "boutique-prod" }`, last 1 h.
+   - Compare with the prod frontend's requests in the same hour:
+     `sum(increase(traces_spanmetrics_calls_total{k8s_namespace_name="boutique-prod", service_name="frontend", span_kind="SPAN_KIND_SERVER"}[1h]))`.
+   - Expect 10 to 15% (errors and slow traces come on top of the 10%). 0 means the prod pods
+     don't reach the collector: check their `ENABLE_TRACING`, and NetworkPolicy `otel-collector`
+     in `monitoring`.
+3. **Collector memory:** cluster-status > `monitoring` (`kubectl top`). It should stay under its
+   450Mi soft limit (`memory_limiter` refuses data above it); the limit is 768Mi. It now gets
+   about twice dev's spans (prod's traffic is the same 15 users).
+4. **Tempo:**
+   - **Restarts or `Evicted`:** in cluster-status. Its `emptyDir` has `sizeLimit: 2Gi`; above
+     it, the kubelet evicts the pod and the traces are lost.
+   - **Disk use** (the image has no shell): `kubectl get --raw
+     "/api/v1/nodes/$(kubectl -n monitoring get pod tempo-0 -o jsonpath='{.spec.nodeName}')/proxy/stats/summary"
+     | jq '.pods[] | select(.podRef.name == "tempo-0") | .volume[] | select(.name == "tempo-data") | .usedBytes'`.
+   - **Expected:** about 0.2 to 0.6 GB after a day (96 bytes per span measured with Tempo 2.10.8;
+     ADR 0010 note 2026-10-18).
+5. **Prod logs:**
+   - Run the Logs Insights query in "From a trace to its logs, and back" with
+     `| filter kubernetes.namespace_name = "boutique-prod"` added.
+   - Request lines now carry `trace_id`, `span_id` and `trace_flags`.
+   - `trace_flags` is `01` on every request: the SDKs record everything, and the 10% is decided
+     later, in the collector. So a prod `trace_id` is often not in Tempo.
+   - Still no personal data (section 14).
+
+**Turn prod tracing off fast** (a prod canary fails because of tracing, or the collector or Tempo
+can't keep up):
+
+1. PR: `tracing.enabled: false` in `helm-chart/values-prod.yaml` (keep the adservice memory
+   request), then merge to `main`.
+2. The deploy workflow deploys dev (no change there), then waits for the prod approval. Approve
+   it; it moves `env/prod`, and Argo CD rolls the 12 prod Deployments without the tracing
+   variables. The frontend goes through its canary, a few minutes.
+3. What to expect:
+   - prod spans stop;
+   - Tempo's prod traces age out within 24 h;
+   - the prod span-metric series stop within 10 minutes (`metrics_expiration`);
+   - prod log lines lose their `trace_id`.
+4. **No rush if only the collector or Tempo is down:** the services don't wait for them. Spans are
+   dropped (checked for each service in ADR 0010), so prod keeps serving while you prepare the
+   PR.
+5. **Never `kubectl set env` in prod:** Argo CD's self-heal undoes it, and on the frontend it
+   starts a canary.
 
 **Remove** (for example to free capacity). Then delete the Tempo entry from
 `additionalDataSources` in `monitoring/kube-prometheus-stack.values.yaml`, and remove the

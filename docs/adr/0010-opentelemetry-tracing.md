@@ -399,6 +399,44 @@ until step 7.
      prod frontend canary must pass.
    - Rollback: revert the values commit.
 
+> **Note 2026-10-18: step 7 done.** `tracing.enabled: true` in `values-prod.yaml` for the same 12
+> services as dev. CI step "Tracing on in dev and prod" checks both environments.
+>
+> - **Sampling, unchanged:** the collector keeps errors, traces over 1 s, all of dev and 10% of
+>   the rest for `k8s.namespace.name = boutique-prod`, deciding 30 s after a trace's first span.
+>   Checked locally (collector 0.161.0, Tempo 2.10.8): of 1,000 prod traces it kept all 37
+>   errors, all 24 slow ones and 98 of the other 939 (10.4%).
+> - **Health checks:** gRPC and HTTP health checks are now dropped in the collector before
+>   anything counts them (span metrics, service graph, Tempo).
+> - **Pre-checks:**
+>   - the frontend is the trace root, and a client's `traceparent` is only a link
+>     (`edge_test.go`);
+>   - 11 services allow all egress, and shoppingassistantservice has its own 4317 rule to the
+>     collector; the collector accepts `boutique-prod`;
+>   - the assistant's spans never carry the question, answer or session (`test_tracing.py`,
+>     not environment-dependent);
+>   - adservice runs the same image and agent switch (`ENABLE_TRACING`) in both environments;
+>   - the log fields and the no-personal-data guard are the same code in dev and prod.
+> - **Capacity:**
+>   - **Services:** the requests from the 2026-10-17 right-sizing are the higher of dev (traced)
+>     and prod, so they already cover the SDKs. The exception is adservice: the Java agent
+>     (about 190 MiB against 110-115) gets the dev memory request in prod, 256Mi instead of
+>     180Mi. No CPU change. Prod at its autoscaling maximum plus one surge pod each: 3,856Mi
+>     of the 5Gi quota (was 3,704Mi).
+>   - **Collector:** about twice dev's spans (prod has the same 15 browse-only users), still a
+>     few tens of spans/s against 150m / 384Mi with `memory_limiter` at 450/600Mi. Span-metric
+>     series about double, to 7,000-8,000; Prometheus's 768Mi request already counted 20-40
+>     MiB for them, so about 40 MiB more stays under its 1200Mi limit.
+>   - **Tempo disk:** 96 bytes per span on disk, measured with Tempo 2.10.8 (one 9.6 MB block
+>     for 100,000 shop-shaped spans). Dev at about 21 spans/s and 100% is about 175 MB a day;
+>     prod at 10-15% about 25 MB. With 3x margin for heavier real spans, about 0.6 GB, inside
+>     the 2Gi `emptyDir`. No change.
+> - **Storage decision (deferred in "Storage"):** prod traces stay on Tempo's local disk, like
+>   dev and like Prometheus's 24 h. They're lost on a Tempo restart. S3 needs a bucket, a Pod
+>   Identity role and a boundary change; revisit when prod traces must outlive a restart.
+> - **Rollback:** `tracing.enabled: false` in `values-prod.yaml` through the prod promotion
+>   (RUNBOOK section 12, "Turn prod tracing off fast").
+
 ## Consequences
 
 - Two more workloads in `monitoring` (200m CPU and 640Mi of requests together, see
