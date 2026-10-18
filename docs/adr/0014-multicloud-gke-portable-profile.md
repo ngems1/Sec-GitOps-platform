@@ -161,8 +161,15 @@ Status: proposed. Date: 2026-10-18. Docs only: nothing is implemented by this AD
     Git (it holds the project ID).
   - **The tag in `gitops/gke/values.yaml` is set by hand after each mirror-images-gcp run** (no
     automatic update yet).
-  - **Nothing is public:** no Ingress or LoadBalancer. It's checked through a port-forward. The
-    `gke.` name, its certificate and the load balancer are a later decision.
+  - **Public since ops/gke-ingress-dns** (decision 6), at `https://gke.<domain>`:
+    - a GKE Ingress, selected by the `kubernetes.io/ingress.class: gce` annotation (GKE ignores
+      `spec.ingressClassName`), on terraform-gcp's global static IP;
+    - a Google-managed certificate, and HTTP redirected to HTTPS;
+    - container-native load balancing, health checked on `/_healthz`;
+    - the frontend NetworkPolicy lets in Google's load balancer ranges only;
+    - the argocd-gke workflow writes the Route 53 A record (`deploy/dns-record.sh upsert-a`);
+    - an infra-gcp destroy removes the record, the Ingress and its load balancer first
+      (`deploy/gke-teardown.sh`).
   - **Cloud NAT stays** until a real run shows no pod pulls from outside Artifact Registry
     (`argocd-gke` reports it).
 - **Why:** no long-lived kubeconfig or service-account token exists to steal. Access is revoked

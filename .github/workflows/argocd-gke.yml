@@ -11,7 +11,9 @@ name: argocd-gke
 # EKS_OIDC_ISSUER (EKS was rebuilt: update the variable, re-run bootstrap-gcp).
 #
 # Registers Application boutique-gke (plain automated sync, no canary), and removes the old
-# connection probe. Nothing is made public: the shop is checked through a port-forward.
+# connection probe. Points gke.<domain> (Route 53) at terraform-gcp's static IP, which the GKE
+# Ingress uses (https, Google-managed certificate). The shop is also checked through a
+# port-forward, independent of DNS and the certificate.
 # The logs are public: no token, no account, project or issuer is printed.
 
 on:
@@ -70,9 +72,15 @@ jobs:
       - name: Connect kubectl to EKS
         run: |
           aws s3 cp "s3://${TF_STATE_BUCKET}/week3/terraform.tfstate" state.json --only-show-errors
-          cluster=$(jq -r '.outputs.cluster_name.value // empty' state.json); rm -f state.json
+          cluster=$(jq -r '.outputs.cluster_name.value // empty' state.json)
+          # The shop's public name on GKE: gke.<domain>, in the Route 53 zone of terraform-aws/dns.tf.
+          domain=$(jq -r '.outputs.tls.value.domain // empty' state.json)
+          zone=$(jq -r '.outputs.tls.value.zone_id // empty' state.json)
+          rm -f state.json
           [ -n "$cluster" ] || { echo "::error::No EKS cluster in the Terraform outputs. Run the infra workflow (apply) first."; exit 1; }
-          echo "EKS_CLUSTER=${cluster}" >> "$GITHUB_ENV"
+          [ -n "$domain" ] && [ -n "$zone" ] || { echo "::error::No domain in the terraform-aws outputs (tls): gke.<domain> needs one (DOMAIN_NAME, then the infra workflow)."; exit 1; }
+          echo "::add-mask::${zone}"
+          { echo "EKS_CLUSTER=${cluster}"; echo "GKE_HOST=gke.${domain}"; echo "DNS_ZONE_ID=${zone}"; } >> "$GITHUB_ENV"
           aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" >/dev/null
 
       # The eks-argocd pool trusts ONE issuer (terraform-gcp-bootstrap/argocd.tf). A rebuilt EKS
@@ -97,7 +105,7 @@ jobs:
         with:
           install_components: gke-gcloud-auth-plugin
 
-      # gha-deploy (container.admin) through the DNS-based endpoint: creates the probe namespace.
+      # gha-deploy (container.admin) through the DNS-based endpoint: creates the shop's namespace.
       - name: Connect kubectl to GKE (DNS-based endpoint)
         run: |
           export KUBECONFIG="$RUNNER_TEMP/gke.kubeconfig"
@@ -108,6 +116,15 @@ jobs:
           [ -n "$endpoint" ] || { echo "::error::boutique-gke has no DNS-based endpoint: run infra-gcp (apply) with this branch's terraform-gcp."; exit 1; }
           echo "::add-mask::${endpoint%%.*}"
           { echo "GKE_KUBECONFIG=${KUBECONFIG}"; echo "GKE_DNS_ENDPOINT=${endpoint}"; } >> "$GITHUB_ENV"
+
+      # gke.<domain> -> the static IP of terraform-gcp (ADR 0014, decision 6), before the sync: the
+      # Google-managed certificate is issued only once the name resolves to the load balancer.
+      - name: Point gke.<domain> at the static IP (Route 53)
+        run: |
+          ip=$(gcloud compute addresses describe boutique-gke-ingress --global --project "$GCP_PROJECT_ID" --format='value(address)' 2>/dev/null || true)
+          [ -n "$ip" ] || { echo "::error::No global address boutique-gke-ingress: run infra-gcp (plan, then apply) with terraform-gcp/network.tf first."; exit 1; }
+          echo "INGRESS_IP=${ip}" >> "$GITHUB_ENV"
+          bash deploy/dns-record.sh upsert-a "$GKE_HOST" "$ip"
 
       - uses: azure/setup-helm@v5
         with:
