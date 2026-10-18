@@ -8,9 +8,20 @@
 loadGenerator:
   users: 15
 
-# OpenTelemetry tracing (ADR 0010): off in prod until it is proven in dev (ADR 0010, step 7).
+# OpenTelemetry tracing (ADR 0010, step 7, 2026-10-18): on in prod, as in dev, for the 12
+# services. The collector keeps errors, traces over 1 s and 10% of the rest for boutique-prod
+# (tail sampling by k8s.namespace.name); span metrics count every span. Off fast: false here,
+# through the prod promotion (RUNBOOK section 12, "Turn prod tracing off fast").
 tracing:
-  enabled: false
+  enabled: true
+
+# adservice with the OpenTelemetry Java agent on: about 190 MiB measured in dev against 110-115
+# MiB without it, so the memory request covers it, as in dev (values-dev.yaml). The limit (512Mi)
+# and the CPU request do not change.
+adService:
+  resources:
+    requests:
+      memory: 256Mi
 
 # AI shopping assistant (ADR 0009): on in prod after 2 days in dev. The frontend gets its
 # /assistant page (ASSISTANT_URL) from this flag. Off fast: create: false here (through the
