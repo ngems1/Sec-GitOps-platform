@@ -113,6 +113,9 @@ Proven by the isolation test after every prod deploy ([ISOLATION.md](ISOLATION.m
   cluster (`SCAN_BLOCKING=false` only reports).
 - **Why not Trivy**: the Trivy GitHub Action was compromised in March 2026 (CVE-2026-33634). ECR's
   built-in scanner needs no third-party code running with AWS credentials.
+- **Signed images with SBOMs** (ADR 0012): every pushed image is signed with cosign keyless (GitHub
+  OIDC, public Sigstore) and carries a signed SPDX SBOM attestation, by digest, verified in the
+  same job ([IMAGE-SIGNING.md](IMAGE-SIGNING.md)). Not enforced in the cluster yet (Kyverno, next).
 - **Checkov** scans `terraform-aws/` on every infra run (soft-fail: results in the run log, reviewed
   here).
 - **Pinned base images and dependencies** per service.
