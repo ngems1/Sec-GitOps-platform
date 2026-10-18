@@ -35,10 +35,15 @@ override_resource {
   }
 }
 
+# Every variable a test depends on is set here: test-file values win over the TF_VAR_*
+# environment variables, which the bootstrap-gcp job sets from the real repository variables
+# (EKS_OIDC_ISSUER, GCP_ENFORCE_NO_KEY_POLICY...). A run that needs another value sets it.
 variables {
-  project_id         = "boutique-test-123456"
-  billing_account_id = "012345-6789AB-CDEF01"
-  monthly_budget_usd = 25.5
+  project_id            = "boutique-test-123456"
+  billing_account_id    = "012345-6789AB-CDEF01"
+  monthly_budget_usd    = 25.5
+  enforce_no_key_policy = true
+  eks_oidc_issuer       = ""
 }
 
 run "trust_is_this_repository_only" {
