@@ -141,15 +141,15 @@ jobs:
           test "$(grep -c '^::error' "$RUNNER_TEMP/gl.txt")" -eq 6
       # The collector's span metrics and service graph see ALL spans (ADR 0011, PR 5): connectors
       # in traces/in, tail sampling only after them, sampling policies unchanged, low-cardinality
-      # dimensions, gRPC health probes filtered before the connectors. The fixture breaks five of
-      # these and must give 5 errors.
+      # dimensions, gRPC and HTTP health checks filtered before the connectors. The fixture breaks six of
+      # these and must give 6 errors.
       - name: Collector pipelines (connectors before tail sampling)
         run: |
           bash deploy/tests/collector-pipelines-check.sh
           if bash deploy/tests/collector-pipelines-check.sh deploy/tests/collector-pipelines/bad-values.yaml > "$RUNNER_TEMP/cp.txt"; then
             echo "::error::the check missed the broken pipelines in deploy/tests/collector-pipelines/bad-values.yaml"; exit 1
           fi
-          test "$(grep -c '^::error' "$RUNNER_TEMP/cp.txt")" -eq 5
+          test "$(grep -c '^::error' "$RUNNER_TEMP/cp.txt")" -eq 6
       # Latency point -> example trace (ADR 0011, PR 6): the collector's exemplars in OpenMetrics,
       # Prometheus exemplar-storage with a small buffer, OpenMetrics still asked for first, and
       # Grafana's Prometheus data source linking trace_id to Tempo. The fixtures must give 6 errors.
