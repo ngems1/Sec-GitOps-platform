@@ -19,6 +19,7 @@ namespace cartservice.tests
 {
     // Tracing (ADR 0010, src/Tracing.cs): off unless ENABLE_TRACING=1, service name from env, and an
     // unreachable collector never blocks a request.
+    [Collection("Console and tracing")]
     public class TracingTests
     {
         private static IHostBuilder Host(Dictionary<string, string> config, List<Activity> exported = null) =>

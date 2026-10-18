@@ -53,7 +53,7 @@ namespace cartservice.cartstore
 
         public async Task AddItemAsync(string userId, string productId, int quantity)
         {
-            Console.WriteLine("AddItemAsync called");
+            CartLog.Info("AddItemAsync called");
             try
             {
                 using SpannerConnection spannerConnection = new(databaseString);
@@ -104,7 +104,7 @@ namespace cartservice.cartstore
 
         public async Task<Hipstershop.Cart> GetCartAsync(string userId)
         {
-            Console.WriteLine("GetCartAsync called");
+            CartLog.Info("GetCartAsync called");
             Hipstershop.Cart cart = new();
             try
             {
@@ -144,7 +144,7 @@ namespace cartservice.cartstore
 
         public async Task EmptyCartAsync(string userId)
         {
-            Console.WriteLine("EmptyCartAsync called");
+            CartLog.Info("EmptyCartAsync called");
 
             try
             {

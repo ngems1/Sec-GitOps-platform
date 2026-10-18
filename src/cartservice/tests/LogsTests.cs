@@ -12,6 +12,7 @@ namespace cartservice.tests
     // The user ID is the shopper's session ID (the frontend's cookie): the cart store must never
     // write it to the logs (ADR 0011). Console is process-wide, so the test only checks that its
     // own unique user ID is absent, whatever other tests write meanwhile.
+    [Collection("Console and tracing")]
     public class LogsTests
     {
         [Fact]
