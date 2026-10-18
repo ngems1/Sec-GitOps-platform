@@ -61,7 +61,9 @@ namespace cartservice.cartstore
             }
             catch (Exception ex)
             {
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage. {ex}"));
+                // The type only: the exception's text can hold the cache key, the user ID (the shopper's
+                // session ID), and the detail is logged here and by checkout and the frontend (ADR 0011).
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 
@@ -76,7 +78,7 @@ namespace cartservice.cartstore
             }
             catch (Exception ex)
             {
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage. {ex}"));
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 
@@ -99,7 +101,7 @@ namespace cartservice.cartstore
             }
             catch (Exception ex)
             {
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage. {ex}"));
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 

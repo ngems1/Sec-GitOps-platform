@@ -89,7 +89,7 @@ namespace cartservice.cartstore
             catch (Exception ex)
             {
                 throw new RpcException(
-                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage at {connectionString}. {ex}"));
+                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 
@@ -125,7 +125,7 @@ namespace cartservice.cartstore
             catch (Exception ex)
             {
                 throw new RpcException(
-                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage at {connectionString}. {ex}"));
+                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
             return cart;
         }
@@ -150,7 +150,7 @@ namespace cartservice.cartstore
             catch (Exception ex)
             {
                 throw new RpcException(
-                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage at {connectionString}. {ex}"));
+                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 

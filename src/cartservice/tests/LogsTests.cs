@@ -37,5 +37,31 @@ namespace cartservice.tests
             Assert.Contains("AddItemAsync called", logs);
             Assert.DoesNotContain(userId, logs);
         }
+
+        // A cache error's text can hold the key (the user ID): the gRPC error detail, which
+        // Grpc.AspNetCore, checkout and the frontend log, carries the exception type only.
+        [Fact]
+        public async Task CartStoreErrorDetailHasNoUserId()
+        {
+            string userId = "session-" + Guid.NewGuid().ToString("N");
+            var store = new RedisCartStore(new FailingCache());
+            var error = await Assert.ThrowsAsync<Grpc.Core.RpcException>(() => store.GetCartAsync(userId));
+            Assert.Equal("Can't access cart storage (TimeoutException)", error.Status.Detail);
+            Assert.DoesNotContain(userId, error.Status.Detail);
+            Assert.DoesNotContain(userId, error.Message);
+        }
+
+        private sealed class FailingCache : IDistributedCache
+        {
+            private static Exception Fail(string key) => new TimeoutException($"Timeout performing HGET (5000ms), key: {key}");
+            public byte[] Get(string key) => throw Fail(key);
+            public Task<byte[]> GetAsync(string key, System.Threading.CancellationToken token = default) => throw Fail(key);
+            public void Refresh(string key) => throw Fail(key);
+            public Task RefreshAsync(string key, System.Threading.CancellationToken token = default) => throw Fail(key);
+            public void Remove(string key) => throw Fail(key);
+            public Task RemoveAsync(string key, System.Threading.CancellationToken token = default) => throw Fail(key);
+            public void Set(string key, byte[] value, DistributedCacheEntryOptions options) => throw Fail(key);
+            public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, System.Threading.CancellationToken token = default) => throw Fail(key);
+        }
     }
 }
