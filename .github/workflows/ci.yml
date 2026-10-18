@@ -134,6 +134,16 @@ jobs:
             echo "::error::the check missed the broken links in deploy/tests/grafana-links/bad-values.yaml"; exit 1
           fi
           test "$(grep -c '^::error' "$RUNNER_TEMP/gl.txt")" -eq 3
+      # The collector's span metrics and service graph see ALL spans (ADR 0011, PR 5): connectors
+      # in traces/in, tail sampling only after them, sampling policies unchanged, low-cardinality
+      # dimensions. The fixture breaks four of these and must give 4 errors.
+      - name: Collector pipelines (connectors before tail sampling)
+        run: |
+          bash deploy/tests/collector-pipelines-check.sh
+          if bash deploy/tests/collector-pipelines-check.sh deploy/tests/collector-pipelines/bad-values.yaml > "$RUNNER_TEMP/cp.txt"; then
+            echo "::error::the check missed the broken pipelines in deploy/tests/collector-pipelines/bad-values.yaml"; exit 1
+          fi
+          test "$(grep -c '^::error' "$RUNNER_TEMP/cp.txt")" -eq 4
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |
@@ -509,7 +519,7 @@ jobs:
 
           # Start both with the rendered config. k8s_attributes needs a cluster: left out here.
           yq ea -N 'select(.kind == "ConfigMap" and .metadata.name == "otel-collector") | .data.relay' otel.yaml \
-            | yq 'del(.processors.k8s_attributes) | .service.pipelines.traces.processors -= ["k8s_attributes"]' > relay.yaml
+            | yq 'del(.processors.k8s_attributes) | .service.pipelines["traces/in"].processors -= ["k8s_attributes"]' > relay.yaml
           otel_image=$(yq ea -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].image' otel.yaml)
           tempo_image=$(yq ea -N 'select(.kind == "StatefulSet") | .spec.template.spec.containers[0].image' tempo.yaml)
           docker run -d --name tempo-check -v "$PWD/tempo-config.yaml:/conf/tempo.yaml:ro" \
