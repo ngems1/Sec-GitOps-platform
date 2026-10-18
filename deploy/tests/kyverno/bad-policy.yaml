@@ -1,0 +1,75 @@
+# Fixture for deploy/tests/kyverno-check.sh (must fail, 6 errors): not Audit alone, fail-closed, mutating, wrong
+# identity, every image, wrong SBOM type.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: boutique-image-signatures
+  annotations:
+    policies.kyverno.io/title: Signed images with an SBOM (audit)
+    policies.kyverno.io/description: >-
+      Every image from the shop's ECR repositories must carry a cosign keyless signature and an
+      SPDX SBOM attestation made by the deploy workflow on main. Audit only.
+spec:
+  validationActions: [Audit, Warn]
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 10
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: [boutique-dev, boutique-prod]
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [pods]
+        operations: [CREATE, UPDATE]
+  # Pods only, one report per running pod (no Deployment/Job copies of the rule).
+  autogen:
+    podControllers:
+      controllers: []
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: true # the hourly background scan also reports pods that started before this policy
+  matchImageReferences:
+    - glob: "*"
+  # Audit: report only. No tag -> digest rewrite of the pods (Argo CD and the canary own them),
+  # and tags are allowed (the shop deploys by tag; the signature itself is checked by digest).
+  validationConfigurations:
+    mutateDigest: true
+    verifyDigest: false
+    required: true
+  # ECR read through the AWS SDK's default chain in Kyverno's pods (ADR 0013, "Credentials").
+  credentials:
+    providers: [amazon]
+  attestors:
+    - name: deployWorkflow
+      cosign:
+        keyless:
+          identities:
+            - subject: https://github.com/ngems1/Sec-GitOps-platform/.github/workflows/deploy.yml@refs/heads/feature
+              issuer: https://token.actions.githubusercontent.com
+        ctlog:
+          url: https://rekor.sigstore.dev
+  attestations:
+    - name: sbom
+      intoto:
+        type: https://cyclonedx.org/bom
+  variables:
+    # Only our images: an image outside matchImageReferences counts as 0 verified signatures, so
+    # third-party images are filtered out here rather than reported as unsigned.
+    - name: ours
+      expression: >-
+        (images.containers + images.initContainers).filter(i, i.startsWith('${ECR_REGISTRY}/'))
+  validations:
+    - expression: >-
+        variables.ours.all(i, verifyImageSignatures(i, [attestors.deployWorkflow]) > 0)
+      message: >-
+        an image from the shop's ECR has no valid cosign signature from the deploy workflow on main
+    - expression: >-
+        variables.ours.all(i, verifyAttestationSignatures(i, attestations.sbom, [attestors.deployWorkflow]) > 0)
+      message: >-
+        an image from the shop's ECR has no valid SPDX SBOM attestation from the deploy workflow on main
