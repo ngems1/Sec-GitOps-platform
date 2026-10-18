@@ -236,7 +236,9 @@ does not fail the deploy. It fails when the Rollout is aborted or Degraded, or t
 fails or errors.
 
 **Needs:** argocd-install has run (it installs the Rollouts controller, namespace `argo-rollouts`),
-and Prometheus runs (deploy workflow, job "monitoring"). Without Prometheus every canary aborts.
+and Prometheus runs (deploy workflow, job "monitoring"). Without Prometheus every canary aborts,
+and a Prometheus restart can abort a canary in flight: merge changes that restart it only with no
+Rollout progressing (section 12, "Changes that restart Prometheus").
 Traffic: a browse-only **loadgenerator** in each namespace (no orders, no cart writes) shops
 through the ALB name (`dev.` / `shop.<domain>`) all the time: 15 users in each environment, about
 2.1 requests/s, so the canary always gets its share. Without a domain it cannot reach the ALB, and every
@@ -588,7 +590,7 @@ a client through the ALB no longer continues: each request gets a new root span,
   - the service graph's `client`, `server`, `connection_type`;
   - no pod, instance, user, session, IP or URL.
 - **Buckets:** 5 ms to 5 s.
-- **Exemplars:** trace IDs on the histograms (OpenMetrics), for Grafana in PR 6.
+- **Exemplars:** trace IDs on the histograms (OpenMetrics), linked to Tempo in Grafana (below).
 - **Dev only for now:** prod sends no spans while tracing is off there.
 
 | Metric | What | PromQL example |
@@ -609,6 +611,61 @@ For that, the collector does two things:
 - renames its duration histogram to `latency` with no unit (the values stay in seconds).
 
 CI checks both.
+
+**Exemplars: from a latency point to an example trace (ADR 0011, PR 6).** On every
+`traces_spanmetrics_latency_bucket` series the collector attaches a few example spans, as
+`trace_id` and `span_id` labels. Prometheus keeps them, and Grafana opens a `trace_id` in Tempo.
+
+- **See them:**
+  1. Explore > **Prometheus**.
+  2. Run a latency histogram query, for example the p95 of the frontend's routes in dev:
+     `histogram_quantile(0.95, sum by (le, span_name) (rate(traces_spanmetrics_latency_bucket{service_name="frontend", span_kind="SPAN_KIND_SERVER", k8s_namespace_name="boutique-dev"}[5m])))`
+  3. Turn on **Exemplars** under the query (Options), then run it again. Diamonds appear on the
+     graph.
+  4. Hover over a diamond, then click **Query with Tempo**. The trace opens in a split pane.
+- **Not every diamond's trace is in Tempo.** The exemplars come from ALL spans, before tail
+  sampling; Tempo keeps errors, traces slower than 1 s and 100% of dev. In dev every trace is
+  kept (until its 24 h retention); in prod, 10% of the fast ones (once prod traces).
+- **Where they are kept:** Prometheus `exemplar-storage`, a ring buffer of 100,000 exemplars in
+  memory (`exemplars.maxSize`). The oldest are overwritten first, and a Prometheus restart
+  empties it. `prometheus_tsdb_exemplar_exemplars_in_storage` reaches 100,000 when it is full;
+  how far back it goes then is the age of the oldest diamond in Explore.
+- **Memory:** about 18 MiB of heap when the buffer is full (measured with Prometheus 3.14.0:
+  100,000 exemplars on 5,000 series, 47 MB in use against 29 MB without the flag).
+- **The link:** the Prometheus data source's `exemplarTraceIdDestinations`
+  (`name: trace_id`, `datasourceUid: tempo`), in `monitoring/kube-prometheus-stack.values.yaml`.
+- **Scrape format:** exemplars exist only in OpenMetrics (and protobuf), never in the classic
+  text format. Prometheus 3.14 asks for OpenMetrics first by default, so no `scrapeProtocols`
+  is set. A feature flag that prefers protobuf (`created-timestamp-zero-ingestion`,
+  `st-storage`) needs `scrapeProtocols` with `OpenMetricsText1.0.0` first.
+- CI step "Exemplars (Prometheus and Grafana)" checks all of it.
+
+**Changes that restart Prometheus** (exemplar-storage, other `enableFeatures`, its resources or
+version):
+
+- **What restarts:** the Prometheus pod (`prometheus-monitoring-kube-prometheus-prometheus-0`).
+  The operator passes `enableFeatures` as a container argument, so the StatefulSet changes and
+  the pod is replaced. Its 24 h of metrics are in an `emptyDir`, so they're lost. Grafana
+  restarts too, as on every monitoring run (`deploy/monitoring.sh`). Nothing else: the
+  operator, kube-state-metrics, node-exporter, Tempo and the collector keep running.
+- **Why not during a canary:** the frontend canary analysis reads Prometheus (section 10).
+  A restart under a running AnalysisRun can abort it:
+  - while Prometheus is down, its queries error;
+  - after the restart, the old data is gone, so the 2-minute request-volume check finds too
+    few requests;
+  - `failureLimit: 1` means the second failed measurement aborts the canary.
+- **The first deploys after it still work.** The analysis reads only the canary's own pods,
+  which start after Prometheus is back, and over short windows:
+  - success rate and p95 over `rate(...[1m])`;
+  - request volume over `increase(...[2m])`;
+  - the first check 90 s after the canary starts (`initialDelay`).
+
+  Data from before the restart is never needed. The `monitoring` job runs before `deploy-dev`
+  and waits for the release, so the same run's dev canary starts on the restarted Prometheus.
+- **Before merging** (also in the PR template): cluster-status shows no Rollout progressing in
+  `boutique-dev` or `boutique-prod`, and no prod approval is pending.
+- **Also lost:** the resource usage report (section 13) reads 24 h of data. After the restart
+  it shows `SHORT-DATA` for a day.
 
 **Service graph details:**
 
