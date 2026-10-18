@@ -1,0 +1,16 @@
+# Argo CD project of the GKE shop (ADR 0014, decision 4): this repository only, the
+# boutique-gke namespace of the GKE cluster only (by cluster name: the endpoint is not in Git),
+# no cluster-wide objects. deploy/argocd-gke.sh fills in the repository URL.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: boutique-gcp
+  namespace: argocd
+spec:
+  description: Online Boutique on GKE, portable profile (ADR 0014)
+  sourceRepos:
+    - ${REPO_URL}
+  destinations:
+    - name: boutique-gke
+      namespace: boutique-gke
+  clusterResourceWhitelist: []
