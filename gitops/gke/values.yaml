@@ -1,0 +1,12 @@
+# Helm values of boutique-gke, deployed by Argo CD (deploy/argocd/gke/boutique-gke.yaml).
+# The image tag only: the tag the last mirror-images-gcp run copied to Artifact Registry (the
+# tag prod ran then, gitops/prod/values.yaml on env/prod). The registry path is set by
+# deploy/argocd-gke.sh, outside Git (it holds the project ID).
+#
+# Edited BY HAND for now, after each mirror-images-gcp run: set the tag that run copied (its
+# summary), and only a tag that run reported as copied and verified. No automatic update yet.
+{
+  "images": {
+    "tag": "2c920d479e31"
+  }
+}

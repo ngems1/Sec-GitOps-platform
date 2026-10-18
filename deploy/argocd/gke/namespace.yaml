@@ -1,0 +1,36 @@
+# Applied to GKE (not EKS) by deploy/argocd-gke.sh, as gha-deploy. The namespace of the shop
+# and what argocd-hub (Argo CD on EKS, terraform-gcp-bootstrap/argocd.tf) may do there: all of
+# it, in this namespace only. Nothing cluster-wide: the namespace itself and the shop's
+# PriorityClass are gha-deploy's, never Argo CD's (its cluster Secret has clusterResources
+# false, and IAM gives argocd-hub no Kubernetes access at all). ${ARGOCD_SA} is argocd-hub's
+# email (GKE names IAM users by email).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boutique-gke
+  labels:
+    app.kubernetes.io/part-of: boutique
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-manage
+  namespace: boutique-gke
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"] # syncs the chart's Deployments, Services, NetworkPolicies, quota... here only
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-hub-manage
+  namespace: boutique-gke
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-manage
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: ${ARGOCD_SA}

@@ -149,8 +149,22 @@ Status: proposed. Date: 2026-10-18. Docs only: nothing is implemented by this AD
     `EKS_OIDC_ISSUER`, and bootstrap-gcp is re-run after a rebuild
     (`terraform-gcp-bootstrap/README.md`).
   - **Proof of the connection:** Argo CD reports a cluster that no Application uses as
-    "Unknown". A throwaway probe Application with nothing to deploy (`deploy/argocd/gke/`) gets
-    Argo CD's own status until the real one exists.
+    "Unknown". A throwaway probe Application with nothing to deploy got Argo CD's own status
+    until the real one existed. It was removed with the portable profile (below).
+- **The portable profile, as implemented (ops/gke-portable-profile):**
+  - **What deploys it:** Application `boutique-gke` (project `boutique-gcp`,
+    `deploy/argocd/gke/`): `helm-chart` with `values-gcp.yaml` and `gitops/gke/values.yaml`, plain
+    automated sync, no canary. `deploy/argocd-gke.sh` creates the namespace, `argocd-hub`'s Role
+    there and the PriorityClass as `gha-deploy`; Argo CD gets nothing cluster-wide.
+  - **Images:** all from the Artifact Registry mirror, redis and busybox included (chart
+    values, defaults unchanged for EKS). The registry path is an Application parameter, outside
+    Git (it holds the project ID).
+  - **The tag in `gitops/gke/values.yaml` is set by hand after each mirror-images-gcp run** (no
+    automatic update yet).
+  - **Nothing is public:** no Ingress or LoadBalancer. It's checked through a port-forward. The
+    `gke.` name, its certificate and the load balancer are a later decision.
+  - **Cloud NAT stays** until a real run shows no pod pulls from outside Artifact Registry
+    (`argocd-gke` reports it).
 - **Why:** no long-lived kubeconfig or service-account token exists to steal. Access is revoked
   by removing one IAM binding.
 - **Alternatives:**

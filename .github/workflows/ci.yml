@@ -360,6 +360,56 @@ jobs:
               || { echo "::error::${env}: no boutique-${env} PriorityClass for deploy-env.yml"; exit 1; }
           done
 
+      # GKE portable profile (ADR 0014): what Argo CD deploys as boutique-gke
+      # (deploy/argocd/gke/boutique-gke.yaml), with a placeholder Artifact Registry path. Only the
+      # profile's 12 workloads, every image from the mirror (nothing from Docker Hub or ECR),
+      # nothing public, no cluster-wide object, and the same hardening as EKS.
+      - name: Render the GKE portable profile
+        run: |
+          ar=us-east1-docker.pkg.dev/ci-project/boutique
+          helm template boutique ./helm-chart --namespace boutique-gke \
+            -f helm-chart/values-gcp.yaml -f gitops/gke/values.yaml \
+            --set images.repository="$ar" --set loadGenerator.busybox.repository="$ar/busybox" > rendered-gke.yaml
+          echo "gke: $(grep -c '^kind:' rendered-gke.yaml) objects"
+          grep '^kind:' rendered-gke.yaml | sort | uniq -c
+          fail() { echo "::error::gke: $1"; exit 1; }
+          want="adservice cartservice checkoutservice currencyservice emailservice frontend loadgenerator paymentservice productcatalogservice recommendationservice redis-cart shippingservice"
+          got=$(yq ea -N 'select(.kind == "Deployment") | .metadata.name' rendered-gke.yaml | sort | xargs)
+          [ "$got" = "$want" ] || fail "Deployments are '${got}', expected the portable profile: ${want}"
+          outside=$(yq ea -N 'select(.kind == "Deployment") | .spec.template.spec | ((.initContainers // []) + .containers) | .[].image' rendered-gke.yaml | grep -v "^${ar}/" || true)
+          [ -z "$outside" ] || fail "images not from Artifact Registry: ${outside}"
+          tag=$(sed '/^#/d' gitops/gke/values.yaml | jq -r '.images.tag')
+          [ "$(yq ea -N 'select(.kind == "Deployment" and .metadata.name == "frontend") | .spec.template.spec.containers[0].image' rendered-gke.yaml)" = "${ar}/frontend:${tag}" ] \
+            || fail "the frontend image is not ${ar}/frontend:${tag} (gitops/gke/values.yaml)"
+          for kind in Rollout Ingress HorizontalPodAutoscaler PriorityClass Namespace ClusterRole ClusterRoleBinding; do
+            ! grep -q "^kind: ${kind}$" rendered-gke.yaml || fail "renders a ${kind} (not in the GKE profile, or cluster-scoped)"
+          done
+          [ -z "$(yq ea -N 'select(.kind == "Service" and .spec.type == "LoadBalancer") | .metadata.name' rendered-gke.yaml)" ] \
+            || fail "a LoadBalancer Service: nothing is public on GKE yet"
+          for kind in NetworkPolicy ResourceQuota LimitRange PodDisruptionBudget; do
+            grep -q "^kind: ${kind}$" rendered-gke.yaml || fail "no ${kind} rendered (values-gcp.yaml hardening)"
+          done
+          missing=$(comm -23 <(yq ea -N 'select(.kind == "Deployment") | .metadata.name' rendered-gke.yaml | sort) \
+                             <(yq ea -N 'select(.kind == "NetworkPolicy") | .spec.podSelector.matchLabels.app' rendered-gke.yaml | sort) | xargs)
+          [ -z "$missing" ] || fail "no NetworkPolicy for: ${missing}"
+          [ -z "$(yq ea -N 'select(.kind == "Deployment" and .spec.template.spec.securityContext.seccompProfile.type != "RuntimeDefault") | .metadata.name' rendered-gke.yaml)" ] \
+            || fail "a pod without the RuntimeDefault seccomp profile"
+          [ -z "$(yq ea -N 'select(.kind == "Deployment" and .spec.template.spec.serviceAccountName == "default") | .metadata.name' rendered-gke.yaml)" ] \
+            || fail "a pod on the default service account"
+          # deploy/argocd-gke.sh applies the PriorityClass alone, as gha-deploy.
+          helm template boutique ./helm-chart --namespace boutique-gke -f helm-chart/values-gcp.yaml \
+            --set guardrails.priority.render=true --show-only templates/priorityclass.yaml | grep -q '^  name: boutique-gke$' \
+            || fail "no boutique-gke PriorityClass for deploy/argocd-gke.sh"
+          # Same right-sized requests as EKS: every service values-aws.yaml sizes, values-gcp.yaml
+          # sizes the same (inventoryService is EKS-only).
+          for svc in $(yq '[to_entries[] | select(.value.resources.requests != null) | .key] | .[]' helm-chart/values-aws.yaml); do
+            [ "$svc" = inventoryService ] && continue
+            aws=$(yq -o=json -I=0 ".${svc}.resources.requests" helm-chart/values-aws.yaml)
+            gcp=$(yq -o=json -I=0 ".${svc}.resources.requests" helm-chart/values-gcp.yaml)
+            [ "$aws" = "$gcp" ] || fail "${svc} requests ${gcp} in values-gcp.yaml, ${aws} in values-aws.yaml: keep them equal"
+          done
+          echo "gke: the portable profile, all from ${ar}, tag ${tag}"
+
       # AI shopping assistant (ADR 0009), on in dev and prod. In each environment it must call
       # exactly the model its Pod Identity role allows (terraform-aws/variables.tf), or every
       # question is denied, and keep its cost guards: one pod (the daily cap is per pod), the

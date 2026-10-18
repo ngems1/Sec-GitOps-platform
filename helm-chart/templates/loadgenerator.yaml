@@ -67,7 +67,10 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
-        image: busybox:latest@sha256:3fbc632167424a6d997e74f52b878d7cc478225cffac6bc977eedfe51c7f4e79
+        {{- /* The pinned busybox; only where it is pulled from changes (loadGenerator.busybox:
+               Docker Hub by default, Artifact Registry on GKE). deploy/mirror-images.sh copies
+               this exact digest. */}}
+        image: {{ .Values.loadGenerator.busybox.repository }}:latest@sha256:3fbc632167424a6d997e74f52b878d7cc478225cffac6bc977eedfe51c7f4e79
         env:
         - name: FRONTEND_ADDR
           value: "{{ .Values.frontend.name }}:80"

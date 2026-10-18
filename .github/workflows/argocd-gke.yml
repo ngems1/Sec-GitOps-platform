@@ -1,16 +1,17 @@
 name: argocd-gke
 
-# Registers the GKE cluster (terraform-gcp) in Argo CD on EKS and proves Argo CD reaches it
-# (ADR 0014, decision 4; deploy/argocd-gke.sh). Manual: Actions > argocd-gke > Run workflow,
-# from main, after:
+# Deploys the shop's portable profile to GKE (terraform-gcp) through Argo CD on EKS, and checks
+# it (ADR 0014, decisions 1 and 4; deploy/argocd-gke.sh). Manual: Actions > argocd-gke > Run
+# workflow, from main, after:
 #   - infra (EKS) and argocd-install, which mounts Argo CD's GCP token (deploy/argocd/values.yaml);
 #   - infra-gcp apply (the cluster and its DNS-based endpoint);
-#   - bootstrap-gcp apply with EKS_OIDC_ISSUER set (the eks-argocd pool, argocd-hub).
+#   - bootstrap-gcp apply with EKS_OIDC_ISSUER set (the eks-argocd pool, argocd-hub);
+#   - mirror-images-gcp, then gitops/gke/values.yaml set to the tag it copied (by hand).
 # It stops with an error, before touching anything, when the EKS cluster's issuer is no longer
 # EKS_OIDC_ISSUER (EKS was rebuilt: update the variable, re-run bootstrap-gcp).
 #
-# It registers a THROWAWAY probe (namespace argocd-probe, an Application with nothing to
-# deploy), to be deleted with the first real GKE Application.
+# Registers Application boutique-gke (plain automated sync, no canary), and removes the old
+# connection probe. Nothing is made public: the shop is checked through a port-forward.
 # The logs are public: no token, no account, project or issuer is printed.
 
 on:
@@ -29,9 +30,9 @@ env:
 
 jobs:
   register:
-    name: Register GKE in Argo CD and check the connection
+    name: Deploy boutique-gke through Argo CD and check it
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35 # Autopilot starts nodes for the shop's pods (the script waits up to 15 minutes)
     # The AWS deploy role and gha-deploy trust main and the dev/prod environments (like
     # argocd-install).
     environment: dev
@@ -108,20 +109,26 @@ jobs:
           echo "::add-mask::${endpoint%%.*}"
           { echo "GKE_KUBECONFIG=${KUBECONFIG}"; echo "GKE_DNS_ENDPOINT=${endpoint}"; } >> "$GITHUB_ENV"
 
-      - name: Register and check the connection
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0 # as argocd-install: renders the PriorityClass
+
+      - name: Deploy and check boutique-gke
         env:
           REPO_URL: git@github.com:${{ github.repository }}.git
+          AR_REGISTRY: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/boutique
         run: bash deploy/argocd-gke.sh
 
       - name: Summary
         if: always()
         run: |
           {
-            echo "### Argo CD -> GKE"
+            echo "### Argo CD -> GKE (boutique-gke)"
             echo
             echo '```'
-            kubectl -n argocd get application gke-connection-probe \
-              -o custom-columns=APP:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status 2>/dev/null || echo "probe not registered"
+            kubectl -n argocd get application boutique-gke \
+              -o custom-columns=APP:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision 2>/dev/null || echo "not registered"
+            kubectl --kubeconfig "$GKE_KUBECONFIG" -n boutique-gke get deployments 2>/dev/null || true
             echo '```'
-            echo "Throwaway probe: delete deploy/argocd/gke/probe* with the first real GKE Application."
+            echo "Image tag: $(sed '/^#/d' gitops/gke/values.yaml | jq -r '.images.tag') (gitops/gke/values.yaml, set by hand after each mirror-images-gcp run)."
           } >> "$GITHUB_STEP_SUMMARY"

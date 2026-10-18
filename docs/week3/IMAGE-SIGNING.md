@@ -112,3 +112,7 @@ Artifact Registry repository `boutique` (`terraform-gcp/registry.tf`), with
 
 **Re-runs** copy nothing new, and check everything again. **The logs** show no digests, and the
 AWS account and GCP project IDs are masked.
+
+**Then, by hand:** set `images.tag` in `gitops/gke/values.yaml` to the tag the run copied (its
+summary). Argo CD deploys that tag to GKE (`boutique-gke`). There's no automatic update yet: GKE
+keeps the previous tag until that file changes.

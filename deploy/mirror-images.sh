@@ -76,12 +76,13 @@ done
 
 # Public images: the exact references the chart pins (name:tag@sha256:...).
 chart="${here}/../helm-chart/templates"
+# busybox's repository is a value (loadGenerator.busybox.repository): its tag and digest are not.
 public_images=(
   "$(grep -oE 'redis:alpine@sha256:[0-9a-f]{64}' "${chart}/redis.yaml" | head -1)"
-  "$(grep -oE 'busybox:[a-z0-9.-]+@sha256:[0-9a-f]{64}' "${chart}/loadgenerator.yaml" | head -1)"
+  "busybox$(grep -oE '\}\}:latest@sha256:[0-9a-f]{64}' "${chart}/loadgenerator.yaml" | head -1 | cut -c3-)"
 )
 for ref in "${public_images[@]}"; do
-  [ -n "$ref" ] || { fail "public image" "pinned reference not found in the chart"; continue; }
+  [[ "$ref" =~ ^[a-z]+:[a-z0-9.-]+@sha256:[0-9a-f]{64}$ ]] || { fail "public image" "pinned reference not found in the chart"; continue; }
   name=${ref%%@*} d=${ref#*@}          # redis:alpine, sha256:...
   tag_free_or_same "${dst}/${name}" "$d" \
     || { fail "$name" "${name} in Artifact Registry is another image (tags are immutable)"; continue; }

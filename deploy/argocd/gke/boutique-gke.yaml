@@ -1,0 +1,37 @@
+# The shop on GKE: the portable profile (helm-chart/values-gcp.yaml), from main, with plain
+# automated sync. No Argo Rollouts canary (GKE has one environment and no traffic to shift), so
+# none of boutique-dev's ignoreDifferences.
+# Filled in by deploy/argocd-gke.sh: ${REPO_URL}, and ${AR_REGISTRY}, the Artifact Registry
+# mirror (<region>-docker.pkg.dev/<project>/boutique), kept out of Git because of the project
+# ID. The image tag: gitops/gke/values.yaml (edited by hand after each mirror run, for now).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-gke
+  namespace: argocd
+spec:
+  project: boutique-gcp
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: main
+    path: helm-chart
+    helm:
+      releaseName: boutique
+      valueFiles:
+        - values-gcp.yaml
+        - ../gitops/gke/values.yaml
+      parameters:
+        - name: images.repository
+          value: ${AR_REGISTRY}
+        - name: loadGenerator.busybox.repository
+          value: ${AR_REGISTRY}/busybox
+  destination:
+    name: boutique-gke
+    namespace: boutique-gke
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The namespace and its RBAC belong to deploy/argocd-gke.sh (gha-deploy), not Argo CD.
+      - CreateNamespace=false

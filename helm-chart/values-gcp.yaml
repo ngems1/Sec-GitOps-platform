@@ -1,0 +1,93 @@
+# GKE: the portable profile (ADR 0014, decision 1), on top of values.yaml. Deployed by Argo CD
+# on EKS (Application boutique-gke, deploy/argocd/gke/), with plain sync: no Argo Rollouts
+# canary, no Ingress, nothing public (checked through a port-forward, deploy/argocd-gke.sh).
+#
+# Runs: the 10 services (ad, cart, checkout, currency, email, frontend, payment, catalog,
+# recommendation, shipping), the loadgenerator and an in-cluster Redis. Not here, on purpose:
+# the assistant, inventoryservice and the async order flow, the RDS catalog and orders,
+# tracing, Prometheus/Grafana, Kyverno (values.yaml keeps them off: no AWS name is set).
+#
+# Images: the signed ECR images mirrored to Artifact Registry by digest (mirror-images-gcp).
+# Set outside Git, because the path holds the project ID:
+#   images.repository                  <region>-docker.pkg.dev/<project>/boutique
+#   loadGenerator.busybox.repository   <region>-docker.pkg.dev/<project>/boutique/busybox
+# (Application parameters written by deploy/argocd-gke.sh). The tag: gitops/gke/values.yaml.
+
+# Baseline hardening (ADR 0014: guardrails, NetworkPolicies, seccomp), as on EKS (values-aws.yaml).
+serviceAccounts:
+  create: true             # one Kubernetes service account per service, none shares "default"
+networkPolicies:
+  create: true             # one per service; Autopilot's Dataplane V2 enforces them
+seccompProfile:
+  enable: true
+  type: RuntimeDefault
+
+frontend:
+  externalService: false   # no LoadBalancer Service: no public address (a later decision)
+  platform: gcp            # the shop's banner
+  ingress:
+    enabled: false
+  canary:
+    enabled: false         # plain Deployment: no Argo Rollouts on GKE
+  resources:
+    requests: { cpu: 55m } # as EKS (values-aws.yaml), see "Requests" below
+
+# Requests: the same right-sized requests as EKS (values-aws.yaml, RUNBOOK section 13; CI
+# checks the two stay equal). Autopilot bills the requests, after raising each pod to its
+# minimums (50m CPU, 52 MiB, at least 1 GiB per vCPU). Limits stay those of values.yaml.
+# adservice and redis-cart have no EKS override: values.yaml and the redis template. The
+# frontend's is in its block above.
+currencyService:
+  resources:
+    requests: { cpu: 45m, memory: 112Mi }
+productCatalogService:
+  resources:
+    requests: { cpu: 60m }
+cartService:
+  resources:
+    requests: { cpu: 60m, memory: 96Mi }
+recommendationService:
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+checkoutService:
+  resources:
+    requests: { cpu: 25m }
+shippingService:
+  resources:
+    requests: { cpu: 25m }
+emailService:
+  resources:
+    requests: { cpu: 25m, memory: 112Mi }
+paymentService:
+  resources:
+    requests: { cpu: 25m, memory: 80Mi }
+loadGenerator:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+
+# Carts in the in-cluster Redis, pulled from the mirror (images.repository), not Docker Hub.
+cartDatabase:
+  type: redis
+  inClusterRedis:
+    create: true
+    publicRepository: false
+
+# Guardrails (templates/guardrails.yaml, _helpers.tpl): quota, default and maximum container
+# sizes, PodDisruptionBudgets, zone/node spread, the namespace's PriorityClass.
+guardrails:
+  enabled: true
+  priority:
+    # Cluster-scoped: never in the release (Argo CD's project allows no cluster-wide objects).
+    # deploy/argocd-gke.sh renders and applies it as gha-deploy, like deploy-env.yml on EKS.
+    render: false
+    value: 1000
+    preemptionPolicy: Never  # the only application on the cluster: nothing to preempt
+  # At least twice what the release requests and limits (after Autopilot's minimums: about
+  # 0.8 vCPU / 1.3 GiB requested, 4.9 vCPU / 2.7 GiB limits, 12 pods), so a sync that rolls
+  # every Deployment at once still fits. Also a cost ceiling: Autopilot bills the requests.
+  quota:
+    requests.cpu: "4"
+    requests.memory: 5Gi
+    limits.cpu: "12"
+    limits.memory: 8Gi
+    pods: "40"
