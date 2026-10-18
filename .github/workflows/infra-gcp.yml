@@ -5,12 +5,13 @@ name: infra-gcp
 # (terraform-gcp-bootstrap).
 #
 #   pull request -> fmt / test / plan as gha-plan (nothing is changed)
-#   manual run   -> plan, apply or destroy as gha-deploy, from main only
+#   manual run   -> plan, plan-destroy, apply or destroy as gha-deploy, from main only
 #                   (Actions tab > infra-gcp > Run workflow); apply and destroy wait for the
-#                   prod environment's reviewers
+#                   prod environment's reviewers, the two plans don't
 #
-# Unlike the AWS infra workflow, a merge applies nothing: run "plan", read it, then "apply"
-# (or "destroy", whose own plan is in the run's summary).
+# Unlike the AWS infra workflow, a merge applies nothing: run "plan", read it, then "apply".
+# To tear down: run "plan-destroy", read what it removes, then "destroy" (the reviewer approves
+# only after that plan was read: the destroy run's own plan comes after the approval).
 # The repository and its logs are public: no plan values and no outputs are printed, only which
 # resources change.
 
@@ -22,7 +23,7 @@ on:
       action:
         description: "What to do"
         type: choice
-        options: [plan, apply, destroy]
+        options: [plan, plan-destroy, apply, destroy]
         default: plan
 
 permissions:
@@ -54,7 +55,7 @@ jobs:
     name: GCP infra (${{ inputs.action || 'plan' }})
     needs: approval
     # Runs after an approval, or when there is none to wait for (plans). Never after a rejection.
-    if: ${{ !cancelled() && (needs.approval.result == 'success' || (needs.approval.result == 'skipped' && (github.event_name == 'pull_request' || inputs.action == 'plan'))) }}
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || (needs.approval.result == 'skipped' && (github.event_name == 'pull_request' || inputs.action == 'plan' || inputs.action == 'plan-destroy'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45 # creating or deleting an Autopilot cluster takes 10-20 minutes
     defaults:
@@ -133,7 +134,8 @@ jobs:
       - name: terraform plan
         if: env.CAN_SIGN_IN == 'true'
         run: |
-          mode=""; [ "$ACTION" = destroy ] && mode="-destroy"
+          # plan-destroy: the same destroy plan, nothing applied (no approval needed to read it).
+          mode=""; case "$ACTION" in destroy|plan-destroy) mode="-destroy" ;; esac
           terraform plan ${mode} -input=false -no-color -out=tfplan > plan.log 2>&1 \
             || { grep -E "^(Error|│ Error)" -A6 plan.log | head -40; exit 1; }
           changes=$(terraform show -json tfplan | jq -r '.resource_changes[]? | select(.change.actions != ["no-op"]) | "\(.change.actions | join("+"))\t\(.address)"')

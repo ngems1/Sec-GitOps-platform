@@ -29,8 +29,10 @@ Actions > **infra-gcp** > Run workflow, on `main`:
   subnet, router, NAT, cluster, registry, the nodes' read on it).
 - **apply:** waits for a `prod` reviewer, then plans again and applies that plan. About 10-15
   minutes for the cluster.
-- **destroy:** waits for a `prod` reviewer, then removes everything here, the registry's images
-  included. The bootstrap root (federation, state, budget) stays.
+- **plan-destroy:** shows what a destroy would remove, and changes nothing. No approval.
+- **destroy:** run `plan-destroy` first and read it: the reviewer approves the destroy before
+  its own plan is computed. Then it waits for a `prod` reviewer and removes everything here,
+  the registry's images included. The bootstrap root (federation, state, budget) stays.
 
 Pull requests that touch `terraform-gcp/` get the tests and a plan as `gha-plan`. A merge
 applies nothing. State: the bootstrap bucket, prefix `gcp-infra`.
