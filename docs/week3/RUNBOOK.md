@@ -479,16 +479,23 @@ Only kept traces are there: health checks are dropped, and in prod only 10% of n
 (plus all errors and slow ones). A query that finds nothing for an old time range may just be
 past Tempo's 24 h, or a Tempo restart.
 
-**Trace IDs in the logs (ADR 0011, step 6).** The Go services (frontend, checkout, catalog,
-shipping) add `trace_id`, `span_id` (lower-case hex, as in `traceparent`) and `trace_flags`
-(`"01"` sampled, `"00"` not) to every log line written during a traced request. These are the
-names in all languages (ADR 0011).
+**Trace IDs in the logs (ADR 0011, step 6).** All 12 services add `trace_id`, `span_id`
+(lower-case hex, as in `traceparent`) and `trace_flags` (`"01"` sampled, `"00"` not) to every
+log line written during a traced request. The names are the same in every language (ADR 0011).
 
-- **When the fields are absent:** while tracing is off (prod today), whatever `traceparent` a
-  request carries, and on lines written outside a request.
+| Language | Services | Where |
+|---|---|---|
+| Go | frontend, checkout, catalog, shipping | `logtrace.go`, a logrus hook |
+| Node | currency, payment | `tracing.js` `logTraceFields`, pino `mixin` |
+| Python | email, recommendation, assistant, inventory | `tracing.py` `log_trace_fields`, in each JSON formatter |
+| Java | adservice | the OTel agent's context data, mapped by `boutique-log.json` (JsonTemplateLayout); `TraceFlagsResolverFactory` keeps only the sampled bit (the agent writes `"03"`) |
+| .NET | cart | `CartLog.cs`, JSON lines for the cart's request logs |
+
+- **When the fields are absent:**
+  - while tracing is off (prod today), whatever `traceparent` a request carries;
+  - on lines written outside a request.
 - **Finding a trace's lines:** Logs Insights on the application log group:
   `filter @message like "<trace id>"`.
-- **Other languages:** Node, Python, Java and .NET follow in separate PRs.
 
 **The frontend starts every trace (since 2026-10-17, ADR 0010 note).** A `traceparent` sent by
 a client through the ALB no longer continues: each request gets a new root span, sampled by us.
