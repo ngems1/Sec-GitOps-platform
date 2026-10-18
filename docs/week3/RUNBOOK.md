@@ -527,16 +527,23 @@ log line written during a traced request. The names are the same in every langua
      use the dashboard box above, or the query below.
 2. **Logs to trace:**
    - Explore > **CloudWatch** > **Logs**, log group `/aws/containerinsights/week3-boutique-eks/application`.
-   - Run a query that returns a `trace_id` field (this one, or any query with the first `parse`):
+   - Run a query that returns a `trace_id` field (this one, or any query with its `trace_id`
+     `parse`):
 
      ```
-     fields @timestamp, kubernetes.container_name as service, @message
+     parse kubernetes.pod_name /^(?<pod_service>.+)-[a-z0-9]{6,10}-[a-z0-9]{5}$/
      | parse @message /trace_id\W+(?<trace_id>[0-9a-f]{32})/
      | parse @message /span_id\W+(?<span_id>[0-9a-f]{16})/
      | filter ispresent(trace_id)
+     | fields @timestamp, coalesce(pod_service, kubernetes.pod_name) as service, trace_id, span_id, @message
      | sort @timestamp desc
      | limit 100
      ```
+
+   - `service` comes from the pod name: every container is named `server`, so
+     `kubernetes.container_name` doesn't tell the services apart. A Deployment's or Rollout's pod
+     is `<service>-<replica set hash>-<5 characters>` (`frontend-7b9fdd8467-95m7d` becomes
+     `frontend`). Any other pod name is shown in full.
 
    - Click a `trace_id` value > **Open this trace (Tempo)**.
    - The link appears only on a field named exactly `trace_id`, so keep the `parse`.
