@@ -20,6 +20,20 @@ for c in spanmetrics servicegraph forward; do
 done
 [ "$(q '.config.service.pipelines.traces')" = null ] || err "the old single 'traces' pipeline must be null (traces/in + traces/sampled)"
 
+# gRPC health probes are dropped before the connectors (they made user -> service edges), on
+# rpc.service and on the span name (with or without the leading "/"), and the filter runs in traces/in.
+filt='.config.processors["filter/otlp-export"].traces.span'
+[ "$(q "[${filt}[]] | any_c(. == \"span.attributes[\\\"rpc.service\\\"] == \\\"grpc.health.v1.Health\\\"\")")" = true ] \
+  && [ "$(q "[${filt}[]] | any_c(test(\"IsMatch\\\\(span.name, .*grpc.*health.*Health/\\\\(Check\\\\|Watch\\\\)\"))")" = true ] \
+  || err "filter/otlp-export must drop gRPC health probe spans (rpc.service grpc.health.v1.Health, and span name .../Health/(Check|Watch))"
+# HTTP health checks too (frontend /_healthz: kubelet and ALB; /healthz, /readyz), by route and path.
+for a in http.route url.path; do
+  [ "$(q "[${filt}[]] | any_c(test(\"IsMatch\\\\(span.attributes\\\\[\\\"${a}\\\"\\\\].*_healthz\\\\|healthz\\\\|readyz\"))")" = true ] \
+    || { err "filter/otlp-export must drop HTTP health checks by ${a} (/_healthz, /healthz, /readyz)"; break; }
+done
+[ "$(q '.config.service.pipelines["traces/in"].processors | any_c(. == "filter/otlp-export")')" = true ] \
+  || err "traces/in must run filter/otlp-export before the connectors"
+
 # traces/in: every span, no sampling, into the three connectors.
 [ "$(q '.config.service.pipelines["traces/in"].receivers')" = '["otlp"]' ] || err "traces/in must receive otlp"
 [ "$(q '.config.service.pipelines["traces/in"].processors | any_c(. == "tail_sampling")')" = false ] \

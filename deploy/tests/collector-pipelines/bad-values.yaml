@@ -1,5 +1,6 @@
 # Fixture for deploy/tests/collector-pipelines-check.sh (must fail): tail_sampling before the connectors,
-# a URL dimension, decision_wait changed. Generated from monitoring/otel-collector.values.yaml.
+# a URL dimension, decision_wait changed, and the filter without the gRPC and HTTP health rules (6 errors).
+# Generated from monitoring/otel-collector.values.yaml.
 # OpenTelemetry Collector (open-telemetry/opentelemetry-collector, version OTEL_COLLECTOR_CHART_VERSION
 # in deploy.yml), installed by deploy/monitoring.sh into "monitoring". ADR 0010, rollout step 1.
 #
