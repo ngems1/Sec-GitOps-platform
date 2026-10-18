@@ -4,19 +4,19 @@
 # the higher-trust path (the owner, or gha-bootstrap in the protected prod environment).
 #
 # Not the Compute Engine default service account (editor on the project by default): this one
-# holds only GKE's minimum node role (logs, metrics, monitoring) and image pulls.
+# holds only GKE's minimum node role (logs, metrics, monitoring). Image pulls: reader on the
+# "boutique" repository only, granted in terraform-gcp/registry.tf with the repository.
 
 resource "google_service_account" "gke_nodes" {
   project      = var.project_id
   account_id   = "gke-nodes"
   display_name = "GKE Autopilot nodes (terraform-gcp)"
-  description  = "terraform-gcp-bootstrap (ADR 0014): runs the GKE nodes. GKE default node role and image pulls. No keys, no federation."
+  description  = "terraform-gcp-bootstrap (ADR 0014): runs the GKE nodes. GKE default node role; image pulls on the boutique repository only. No keys, no federation."
 }
 
 locals {
   gke_node_roles = [
     "roles/container.defaultNodeServiceAccount", # GKE's minimum for nodes: logs, metrics, monitoring
-    "roles/artifactregistry.reader",             # pull the mirrored images (ADR 0014, decision 5); not in the role above
   ]
 }
 

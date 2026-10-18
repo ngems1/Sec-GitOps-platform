@@ -113,6 +113,12 @@ jobs:
             echo "::error::roles/iam.workloadIdentityUser outside federation.tf: GitHub must not sign in as that account"
             exit 1
           fi
+          # No account of this root gets project IAM admin or firewall admin, in any resource
+          # (the tests see only the ones they know): every project role is granted here.
+          if grep -nE 'roles/(resourcemanager\.projectIamAdmin|iam\.securityAdmin|compute\.securityAdmin)' ./*.tf; then
+            echo "::error::Project IAM admin or firewall admin granted: gha-deploy must not hold them (terraform-gcp-bootstrap/README.md)"
+            exit 1
+          fi
 
       - name: terraform plan
         run: |

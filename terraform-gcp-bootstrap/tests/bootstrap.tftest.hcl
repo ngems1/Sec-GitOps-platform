@@ -84,16 +84,20 @@ run "no_key_or_impersonation_rights_for_ci" {
     condition = length([for k, m in google_project_iam_member.gha : k if !startswith(k, "bootstrap ") && contains([
       "roles/owner", "roles/editor", "roles/iam.serviceAccountUser", "roles/iam.serviceAccountTokenCreator",
       "roles/iam.serviceAccountKeyAdmin", "roles/iam.serviceAccountAdmin", "roles/iam.workloadIdentityPoolAdmin",
+      "roles/resourcemanager.projectIamAdmin", "roles/iam.securityAdmin",
     ], m.role)]) == 0
-    error_message = "plan and deploy must not get owner/editor, act-as, token-creator, key or pool admin roles"
+    error_message = "plan and deploy must not get owner/editor, act-as, token-creator, key, pool or project IAM admin roles"
   }
   assert {
     condition     = length([for k, m in google_project_iam_member.gha : k if startswith(k, "plan ") && !contains(["roles/viewer", "roles/iam.securityReviewer"], m.role)]) == 0
     error_message = "plan is read-only"
   }
   assert {
-    condition     = strcontains(google_project_iam_member.deploy_grants.condition[0].expression, "modifiedGrantsByRole") && !strcontains(google_project_iam_member.deploy_grants.condition[0].expression, "roles/owner")
-    error_message = "deploy's project IAM admin must be limited to an allow-list"
+    condition = toset([for k, m in google_project_iam_member.gha : m.role if startswith(k, "deploy ")]) == toset([
+      "roles/compute.networkAdmin", "roles/container.admin", "roles/artifactregistry.admin",
+      "roles/serviceusage.serviceUsageViewer", "roles/iam.securityReviewer",
+    ])
+    error_message = "deploy gets exactly what terraform-gcp needs: network, GKE, Artifact Registry admin, read-only service usage and IAM (no firewall admin, no project IAM admin)"
   }
 }
 
@@ -103,6 +107,14 @@ run "no_key_policies_and_budget" {
   assert {
     condition     = toset(keys(google_org_policy_policy.no_key_creation)) == toset(["iam.disableServiceAccountKeyCreation", "iam.disableServiceAccountKeyUpload"])
     error_message = "both key policies must be enforced by default"
+  }
+  assert {
+    condition     = length(google_org_policy_policy.no_default_sa_editor) == 1 && endswith(google_org_policy_policy.no_default_sa_editor[0].name, "/policies/iam.automaticIamGrantsForDefaultServiceAccounts") && google_org_policy_policy.no_default_sa_editor[0].spec[0].rules[0].enforce == "TRUE"
+    error_message = "the default service accounts get no automatic Editor grant, by default"
+  }
+  assert {
+    condition     = toset(keys(google_project_service.gke_apis)) == toset(["compute.googleapis.com", "container.googleapis.com", "artifactregistry.googleapis.com"]) && length(setintersection(keys(google_project_service.apis), keys(google_project_service.gke_apis))) == 0
+    error_message = "Compute Engine, GKE and Artifact Registry are enabled only through gke_apis (after the Editor policy)"
   }
   assert {
     condition     = [for t in google_billing_budget.project.threshold_rules : t.threshold_percent] == [0.5, 1.0]
@@ -125,7 +137,7 @@ run "project_without_organization" {
   }
 
   assert {
-    condition     = length(google_org_policy_policy.no_key_creation) == 0 && !contains(keys(google_project_service.apis), "orgpolicy.googleapis.com")
+    condition     = length(google_org_policy_policy.no_key_creation) == 0 && length(google_org_policy_policy.no_default_sa_editor) == 0 && !contains(keys(google_project_service.apis), "orgpolicy.googleapis.com")
     error_message = "without an organization: no org policy and no orgpolicy API"
   }
 }
@@ -134,10 +146,8 @@ run "gke_nodes_least_privilege" {
   command = plan
 
   assert {
-    condition = toset([for m in google_project_iam_member.gke_nodes : m.role]) == toset([
-      "roles/container.defaultNodeServiceAccount", "roles/artifactregistry.reader",
-    ])
-    error_message = "the GKE node service account gets exactly: GKE's default node role, Artifact Registry reader"
+    condition     = toset([for m in google_project_iam_member.gke_nodes : m.role]) == toset(["roles/container.defaultNodeServiceAccount"])
+    error_message = "the GKE node service account gets exactly GKE's default node role on the project (image pulls: on the repository, terraform-gcp)"
   }
   assert {
     condition     = google_service_account.gke_nodes.account_id == "gke-nodes"
