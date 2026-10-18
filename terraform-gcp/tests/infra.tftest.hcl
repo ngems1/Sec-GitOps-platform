@@ -23,8 +23,12 @@ mock_provider "google" {
   }
 }
 
+# Every variable a test depends on is set here: test-file values win over the TF_VAR_*
+# environment variables, which the infra-gcp job sets from the real repository variables
+# (GCP_REGION...). A run that needs another value sets it.
 variables {
   project_id           = "boutique-test-123456"
+  region               = "us-east1"
   node_service_account = "gke-nodes@boutique-test-123456.iam.gserviceaccount.com"
 }
 
