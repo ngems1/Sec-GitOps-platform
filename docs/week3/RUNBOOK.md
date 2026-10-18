@@ -92,7 +92,7 @@ Symptoms: Slack `#boutique-alerts` "...-backlog" (oldest message > 5 min for 3 p
 | CloudWatch panels "No data" | Traffic needed (run load-test), time range ≥ 30 min; cluster-status → `monitoring` runs the dashboard queries directly against AWS to separate a Grafana problem from a missing metric (series, a CloudWatch error, or NO series). **SEARCH quoting:** a double-quoted term is an exact match of a whole metric name, dimension name or value, so `"boutique-dev"` never matches `app/boutique-dev/<id>`. Use unquoted token terms (`boutique-dev`, `week3-boutique`); quote only `MetricName="..."`. CI checks it (`deploy/tests/cloudwatch-search-check.sh`) |
 | Panel error "bad_data: ... parse error: unexpected identifier ... in label matching, expected string", or one tile per old ALB | **Quoting differs by query language.** PromQL label values need quotes (`namespace="boutique-prod"`). CloudWatch SEARCH name terms must not have them (`boutique-prod`, quote only `MetricName="..."`). Both are checked in CI ("Dashboard PromQL parses (promtool)", "CloudWatch SEARCH terms"). ALB SEARCH panels wrap the search in `MAX(...)` or `SUM(...)`, so old ALBs from earlier cluster rebuilds (CloudWatch keeps their metrics two weeks) do not add series |
 | CloudWatch "AccessDenied" in Grafana | The Grafana Pod Identity role (`terraform-aws/monitoring.tf`) lacks that read action; add it there, never broader than read-only |
-| A log group's retention reads "Never expire" again, or the infra plan wants to change it | Terraform manages the Container Insights groups (`terraform-aws/logs.tf`): application 1 day for now (the purge of lines written before fix/no-pii-in-logs; then 14), dataplane 14, host 14, performance 7. The add-on's Fluent Bit sets no retention by default; if an add-on upgrade starts setting one, the next infra plan shows the drift. After an `infra` destroy the groups stay (`skip_destroy`) and the next apply adopts them again (the `import` block) |
+| A log group's retention reads "Never expire" again, or the infra plan wants to change it | Terraform manages the Container Insights groups (`terraform-aws/logs.tf`): application 1 day, permanently (ADR 0011, note 2026-10-17: cost and privacy, like Tempo's 24 h of traces), dataplane 14, host 14, performance 7. The add-on's Fluent Bit sets no retention by default; if an add-on upgrade starts setting one, the next infra plan shows the drift. After an `infra` destroy the groups stay (`skip_destroy`) and the next apply adopts them again (the `import` block) |
 | `#boutique-alerts`: ":rotating_light: GuardDuty HIGH/CRITICAL: ..." | GuardDuty found something with severity >= 7 (for example credentials used from outside AWS, a node talking to a known bad address) | Open the finding (link in the message). Do not delete anything first: the CloudTrail files are kept 30 days under Object Lock. Real: rotate what leaked (the CI roles have no keys; check the Pod Identity role named in the finding), then `infra` destroy/apply if a node is suspect. False positive: the detector belongs to another project in this account (shared, SECURITY.md section 2a); ask its owner to archive or suppress it, do not change GuardDuty from here |
 
 ## 6. HTTPS and DNS
@@ -490,6 +490,15 @@ names in all languages (ADR 0011).
   `filter @message like "<trace id>"`.
 - **Other languages:** Node, Python, Java and .NET follow in separate PRs.
 
+**The frontend starts every trace (since 2026-10-17, ADR 0010 note).** A `traceparent` sent by
+a client through the ALB no longer continues: each request gets a new root span, sampled by us.
+
+- **The client's context:** kept only as a **span link** on the frontend's server span. In
+  Tempo's span view, under Links.
+- **Dropped at the edge:** inbound `baggage` always. While tracing is off (prod),
+  `traceparent` and `tracestate` too.
+- **For you:** search by our trace ID (the logs' `trace_id`), never by a client's.
+
 **One order, one trace (EventBridge and SQS, ADR 0010 step 5).** The async flow
 (`terraform-aws/modules/environment/events.tf`, one bus `<prefix>-events`; every queue has a DLQ
 after 3 tries):
@@ -676,9 +685,12 @@ and durations.
 **Old lines:** lines written before the fix stay in CloudWatch until the log group's
 retention removes them.
 
-- **Now:** the application group is at **1 day** (`terraform-aws/logs.tf`, ADR 0011 PR 2) to
-  purge them. CloudWatch deletes expired lines, usually within 72 hours of the apply.
-- **After the follow-up PR:** **14 days**.
+- The application group is at **1 day**, permanently (`terraform-aws/logs.tf`, ADR 0011 PR 2
+  and its 2026-10-17 note). That's for cost and privacy, and it matches Tempo's 24 h of
+  traces.
+  - CloudWatch deletes expired lines, usually within 72 hours, so the pre-fix lines are gone.
+  - There is no 14-day follow-up. Plan investigations around this: lines older than about a
+    day are gone.
 - **Before PR 2:** no expiry at all.
 
 ## 15. The AI shopping assistant in prod (ADR 0009)

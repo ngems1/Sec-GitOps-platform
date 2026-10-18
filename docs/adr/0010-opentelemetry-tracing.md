@@ -215,6 +215,17 @@ Reasons:
 
 Sampling:
 
+> **Note 2026-10-17:** the frontend is now always the trace root.
+>
+> - **Before:** it continued any `traceparent` a client sent through the ALB. A client could
+>   choose the trace ID, or send sampled=00 so its requests left no span in any service.
+>   Inbound baggage was forwarded to every backend, even with tracing off.
+> - **Now:** every request starts a new root span (`otelhttp.WithPublicEndpoint`), sampled by
+>   our sampler, with the client's span context kept as a span link. The frontend drops inbound
+>   `baggage` always, and `traceparent`/`tracestate` while tracing is off
+>   (`src/frontend/tracing.go`, tests in `edge_test.go`).
+> - **Unchanged:** internal hops still continue the frontend's trace (ParentBased below).
+
 - **SDKs:** parent-based, always on (the root is the frontend).
 - **Collector:**
   - `filter`: drop health checks (`/_healthz`, `grpc.health.v1`);
