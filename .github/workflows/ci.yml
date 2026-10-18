@@ -59,6 +59,16 @@ jobs:
       # The Java agent switch (ENABLE_TRACING=1 only), tested on the entrypoint script.
       - name: adservice entrypoint (tracing switch)
         run: bash src/adservice/test-entrypoint.sh
+      # The JSON log layout: trace_id / span_id / trace_flags from the Java agent (ADR 0011).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21" # same as the Dockerfile
+          cache: gradle
+          cache-dependency-path: src/adservice/build.gradle
+      - name: adservice log layout (gradle test)
+        working-directory: src/adservice
+        run: bash gradlew --no-daemon test # gradlew is not executable in git (the Dockerfile chmods it)
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications

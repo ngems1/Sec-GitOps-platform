@@ -41,12 +41,18 @@ dependencies {
                 "io.grpc:grpc-services:${grpcVersion}",
                 "io.grpc:grpc-census:${grpcVersion}",
                 "org.apache.logging.log4j:log4j-core:2.20.0",
+                // JSON log lines with trace_id / span_id / trace_flags (ADR 0011): JsonTemplateLayout
+                "org.apache.logging.log4j:log4j-layout-template-json:2.20.0",
                 "com.google.protobuf:protobuf-java:${protocVersion}"
 
         runtimeOnly "com.fasterxml.jackson.core:jackson-core:${jacksonCoreVersion}",
                 "com.fasterxml.jackson.core:jackson-databind:${jacksonDatabindVersion}",
                 "io.netty:netty-tcnative-boringssl-static:2.0.61.Final"
     }
+    // Log4j plugins (TraceFlagsResolverFactory) are indexed at compile time by log4j-core's
+    // annotation processor; Gradle does not run processors found on the compile classpath.
+    annotationProcessor "org.apache.logging.log4j:log4j-core:2.20.0"
+    testImplementation "junit:junit:4.13.2"
 }
 
 protobuf {
