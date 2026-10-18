@@ -162,3 +162,83 @@ run "gke_nodes_least_privilege" {
     error_message = "GitHub can never sign in as the node service account"
   }
 }
+
+# Argo CD's federation (argocd.tf): own pool, own identity, distinct names so a binding on the
+# wrong pool or account shows.
+override_resource {
+  target          = google_iam_workload_identity_pool.eks_argocd
+  override_during = plan
+  values = {
+    name = "projects/123456789012/locations/global/workloadIdentityPools/eks-argocd"
+  }
+}
+
+override_resource {
+  target          = google_service_account.argocd_hub
+  override_during = plan
+  values = {
+    name   = "projects/boutique-test-123456/serviceAccounts/argocd-hub@boutique-test-123456.iam.gserviceaccount.com"
+    email  = "argocd-hub@boutique-test-123456.iam.gserviceaccount.com"
+    member = "serviceAccount:argocd-hub@boutique-test-123456.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
+  target          = google_project_iam_custom_role.gke_connect
+  override_during = plan
+  values = {
+    name = "projects/boutique-test-123456/roles/gkeConnectOnly"
+  }
+}
+
+run "no_argocd_federation_without_an_issuer" {
+  command = plan
+
+  assert {
+    condition     = length(google_iam_workload_identity_pool.eks_argocd) == 0 && length(google_service_account.argocd_hub) == 0 && length(google_service_account_iam_member.argocd_federation) == 0 && output.GCP_ARGOCD_SA == null
+    error_message = "EKS_OIDC_ISSUER empty: no pool, no argocd-hub, no binding"
+  }
+}
+
+run "argocd_only_from_its_two_service_accounts" {
+  command = plan
+  variables {
+    eks_oidc_issuer = "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF"
+  }
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks_argocd[0].oidc[0].issuer_uri == "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF" && google_iam_workload_identity_pool_provider.eks_argocd[0].oidc[0].allowed_audiences[0] == "eks-argocd" && length(google_iam_workload_identity_pool_provider.eks_argocd[0].oidc[0].allowed_audiences) == 1
+    error_message = "the provider trusts the EKS issuer, for tokens with the eks-argocd audience only"
+  }
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks_argocd[0].attribute_condition == "assertion.sub in ['system:serviceaccount:argocd:argocd-application-controller', 'system:serviceaccount:argocd:argocd-server']"
+    error_message = "only Argo CD's controller and server may exchange a token, no other workload of the cluster"
+  }
+  assert {
+    condition     = toset(keys(google_iam_workload_identity_pool_provider.eks_argocd[0].attribute_mapping)) == toset(["google.subject", "attribute.namespace", "attribute.service_account"])
+    error_message = "Kubernetes attributes only: no GitHub attribute names (event_name, ref, environment, repository_id)"
+  }
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks_argocd[0].workload_identity_pool_id != google_iam_workload_identity_pool.github.workload_identity_pool_id
+    error_message = "a pool of its own, not the GitHub pool"
+  }
+  assert {
+    condition = toset([for b in google_service_account_iam_member.argocd_federation : b.member]) == toset([
+      "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/eks-argocd/subject/system:serviceaccount:argocd:argocd-application-controller",
+      "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/eks-argocd/subject/system:serviceaccount:argocd:argocd-server",
+    ]) && alltrue([for b in google_service_account_iam_member.argocd_federation : b.role == "roles/iam.workloadIdentityUser" && b.service_account_id == google_service_account.argocd_hub[0].name])
+    error_message = "the two subjects, by exact principal, may act as argocd-hub only"
+  }
+  assert {
+    condition     = toset(google_project_iam_custom_role.gke_connect[0].permissions) == toset(["container.clusters.connect", "container.clusters.get"]) && google_project_iam_member.argocd_hub[0].role == google_project_iam_custom_role.gke_connect[0].name && google_project_iam_member.argocd_hub[0].member == google_service_account.argocd_hub[0].member
+    error_message = "argocd-hub gets exactly get + connect on the clusters (custom role), nothing through IAM beyond that"
+  }
+}
+
+run "argocd_issuer_must_be_eks" {
+  command = plan
+  variables {
+    eks_oidc_issuer = "https://token.actions.githubusercontent.com"
+  }
+  expect_failures = [var.eks_oidc_issuer]
+}

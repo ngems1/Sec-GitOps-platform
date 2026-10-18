@@ -11,7 +11,8 @@ What GitHub Actions needs before it can run `terraform-gcp`, and what must outli
 | `gha-plan` | Read-only (`roles/viewer`, `roles/iam.securityReviewer`), pull requests |
 | `gha-deploy` | terraform-gcp and deploys, from `main` or the `dev` / `prod` environments: network, GKE, Artifact Registry admin (it also sets who may read the `boutique` repository). No project IAM, no firewall admin, not editor or owner: every project role is granted here |
 | `gha-bootstrap` | Owner, only for jobs in the protected `prod` environment: the bootstrap-gcp workflow |
-| `gke-nodes` | The identity of the GKE Autopilot nodes (`gke-nodes.tf`). GKE's minimum node role (`roles/container.defaultNodeServiceAccount`: logs, metrics, monitoring) on the project. Image pulls: `roles/artifactregistry.reader` on the `boutique` repository only, granted by `terraform-gcp` with the repository. Not the Compute Engine default account. Here, not in `terraform-gcp`, so `gha-deploy` never needs to create service accounts. `gha-deploy` may only act as this one account (to create the cluster with it). GitHub can never sign in as it (the workflow checks `roles/iam.workloadIdentityUser` appears only in `federation.tf`) |
+| `gke-nodes` | The identity of the GKE Autopilot nodes (`gke-nodes.tf`). GKE's minimum node role (`roles/container.defaultNodeServiceAccount`: logs, metrics, monitoring) on the project. Image pulls: `roles/artifactregistry.reader` on the `boutique` repository only, granted by `terraform-gcp` with the repository. Not the Compute Engine default account. Here, not in `terraform-gcp`, so `gha-deploy` never needs to create service accounts. `gha-deploy` may only act as this one account (to create the cluster with it). GitHub can never sign in as it (the workflow checks `roles/iam.workloadIdentityUser` appears only in `federation.tf` and `argocd.tf`) |
+| Pool `eks-argocd`, provider `eks-hub`, `argocd-hub` | Argo CD on EKS reaches GKE without a static credential (`argocd.tf`, ADR 0014 decision 4). The provider trusts the EKS cluster's OIDC issuer (`EKS_OIDC_ISSUER`), tokens with the audience `eks-argocd`, and only `system:serviceaccount:argocd:argocd-application-controller` and `argocd-server`. They may act as `argocd-hub`, which holds one custom role, `gkeConnectOnly` (`container.clusters.get`, `container.clusters.connect`): it finds the cluster and reaches its DNS-based endpoint, and reads nothing through IAM. Inside GKE, Kubernetes RBAC decides. Its own pool: no attribute or binding shared with GitHub's. Nothing is created while `EKS_OIDC_ISSUER` is empty |
 | Org policies | No service account key can be created or uploaded, and the default service accounts get no automatic Editor role (`policies.tf`), when the project is in an organization. The Compute Engine API is enabled only after that policy |
 | Budget | Monthly, on this project, email at 50% and 100% to the billing account's admins and users (`budgets.tf`) |
 
@@ -126,6 +127,31 @@ in the first run).
     --format='value(bindings.members)'   # no ...-compute@developer.gserviceaccount.com
   ```
 - **Last:** add the output `GCP_GKE_NODE_SA` as a repository variable (`terraform-gcp` reads it).
+
+## Argo CD's federation, and after every EKS rebuild
+
+The `eks-argocd` provider trusts one EKS cluster by its OIDC issuer. **A rebuilt EKS cluster
+(terraform-aws destroy, then apply) has a new issuer**, and Argo CD can no longer reach GKE
+until:
+
+1. **The variable:** set the repository variable `EKS_OIDC_ISSUER` to the new issuer:
+
+   ```bash
+   aws eks describe-cluster --name <cluster> --query cluster.identity.oidc.issuer --output text
+   ```
+
+2. **bootstrap-gcp:** plan (it changes the `eks-argocd` provider's issuer), then apply.
+3. **argocd-gke:** run it again (after argocd-install, on a new cluster).
+
+The argocd-gke workflow checks the first step before anything else, and stops with that
+instruction when the issuer doesn't match. A skipped second step shows up in its token exchange
+check, with the same hint.
+
+- **First time:** steps 1 and 2. Then add the outputs `GCP_ARGOCD_SA` and `GCP_EKS_WIF_PROVIDER`
+  as repository variables. The plan creates the pool, the provider, `argocd-hub`, its two
+  bindings, the custom role and its binding.
+- **The custom role:** `gkeConnectOnly`. A deleted custom role keeps its ID for a while: after a
+  destroy, give it a new `role_id` if the next apply is refused.
 
 - **What the workflow prints:** it runs `terraform test` first (the trust and the rights, with a
   mocked provider). It prints only which resources change, never values or outputs: the logs
