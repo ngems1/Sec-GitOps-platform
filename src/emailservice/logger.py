@@ -18,6 +18,8 @@ import logging
 import sys
 from pythonjsonlogger import jsonlogger
 
+from tracing import log_trace_fields
+
 # TODO(yoshifumi) this class is duplicated since other Python services are
 # not sharing the modules for logging.
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
@@ -29,6 +31,8 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
       log_record['severity'] = log_record['severity'].upper()
     else:
       log_record['severity'] = record.levelname
+    # trace_id, span_id, trace_flags of the current span (tracing.py, ADR 0011)
+    log_record.update(log_trace_fields())
 
 def getJSONLogger(name):
   logger = logging.getLogger(name)

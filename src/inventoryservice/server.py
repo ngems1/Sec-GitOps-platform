@@ -44,6 +44,7 @@ class JsonFormatter(logging.Formatter):
     def format(self, record):
         out = {"ts": self.formatTime(record), "level": record.levelname, "msg": record.getMessage(),
                "service": "inventoryservice"}
+        out.update(tracing.log_trace_fields())  # trace_id, span_id, trace_flags (ADR 0011)
         out.update(getattr(record, "fields", {}))
         if record.exc_info:
             out["error"] = self.formatException(record.exc_info)

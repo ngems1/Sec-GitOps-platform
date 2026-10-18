@@ -61,7 +61,7 @@ namespace cartservice.cartstore
 
         public async Task AddItemAsync(string userId, string productId, int quantity)
         {
-            Console.WriteLine("AddItemAsync called");
+            CartLog.Info("AddItemAsync called");
             try
             {
                 await using var dataSource = NpgsqlDataSource.Create(connectionString);
@@ -89,14 +89,14 @@ namespace cartservice.cartstore
             catch (Exception ex)
             {
                 throw new RpcException(
-                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage at {connectionString}. {ex}"));
+                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 
 
         public async Task<Hipstershop.Cart> GetCartAsync(string userId)
         {
-            Console.WriteLine("GetCartAsync called");
+            CartLog.Info("GetCartAsync called");
             Hipstershop.Cart cart = new();
             cart.UserId = userId;
             try
@@ -125,7 +125,7 @@ namespace cartservice.cartstore
             catch (Exception ex)
             {
                 throw new RpcException(
-                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage at {connectionString}. {ex}"));
+                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
             return cart;
         }
@@ -133,7 +133,7 @@ namespace cartservice.cartstore
 
         public async Task EmptyCartAsync(string userId)
         {
-            Console.WriteLine("EmptyCartAsync called");
+            CartLog.Info("EmptyCartAsync called");
 
             try
             {
@@ -150,7 +150,7 @@ namespace cartservice.cartstore
             catch (Exception ex)
             {
                 throw new RpcException(
-                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage at {connectionString}. {ex}"));
+                    new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 

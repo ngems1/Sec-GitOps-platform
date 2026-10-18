@@ -41,4 +41,26 @@ function startTracing(defaultServiceName, { exporter, env = process.env } = {}) 
   return sdk;
 }
 
-module.exports = { startTracing };
+/*
+ * Trace context for the JSON logs (ADR 0011, step 6): pino's `mixin` option, so every line
+ * logged while a span is active gets
+ *   "trace_id": "4bf92f35...", "span_id": "00f067aa...", "trace_flags": "01"
+ * (lower-case hex as in a W3C traceparent; the names of ADR 0011, the same in all languages).
+ * Nothing is added while tracing is off (no SDK provider: prod today), so a caller's
+ * traceparent can never put IDs in our logs, and nothing outside a valid span.
+ */
+function logTraceFields() {
+  const api = require('@opentelemetry/api');
+  const provider = api.trace.getTracerProvider();
+  const delegate = typeof provider.getDelegate === 'function' ? provider.getDelegate() : provider;
+  if (typeof delegate.getActiveSpanProcessor !== 'function') return {}; // the no-op provider
+  const sc = api.trace.getSpanContext(api.context.active());
+  if (!sc || !api.isSpanContextValid(sc)) return {};
+  return {
+    trace_id: sc.traceId,
+    span_id: sc.spanId,
+    trace_flags: (sc.traceFlags & api.TraceFlags.SAMPLED) ? '01' : '00',
+  };
+}
+
+module.exports = { startTracing, logTraceFields };

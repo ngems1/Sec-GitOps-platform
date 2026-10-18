@@ -32,7 +32,7 @@ namespace cartservice.cartstore
 
         public async Task AddItemAsync(string userId, string productId, int quantity)
         {
-            Console.WriteLine($"AddItemAsync called with productId={productId}, quantity={quantity}");
+            CartLog.Info($"AddItemAsync called with productId={productId}, quantity={quantity}");
 
             try
             {
@@ -61,13 +61,15 @@ namespace cartservice.cartstore
             }
             catch (Exception ex)
             {
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage. {ex}"));
+                // The type only: the exception's text can hold the cache key, the user ID (the shopper's
+                // session ID), and the detail is logged here and by checkout and the frontend (ADR 0011).
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 
         public async Task EmptyCartAsync(string userId)
         {
-            Console.WriteLine("EmptyCartAsync called");
+            CartLog.Info("EmptyCartAsync called");
 
             try
             {
@@ -76,13 +78,13 @@ namespace cartservice.cartstore
             }
             catch (Exception ex)
             {
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage. {ex}"));
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 
         public async Task<Hipstershop.Cart> GetCartAsync(string userId)
         {
-            Console.WriteLine("GetCartAsync called");
+            CartLog.Info("GetCartAsync called");
 
             try
             {
@@ -99,7 +101,7 @@ namespace cartservice.cartstore
             }
             catch (Exception ex)
             {
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage. {ex}"));
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"Can't access cart storage ({ex.GetType().Name})"));
             }
         }
 

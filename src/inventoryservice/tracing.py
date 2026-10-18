@@ -187,3 +187,24 @@ def quiet():
         yield
     finally:
         context.detach(token)
+
+def log_trace_fields():
+    """Trace context for the JSON logs (ADR 0011, step 6): {"trace_id", "span_id", "trace_flags"}
+    of the current span, lower-case hex as in a W3C traceparent (trace_flags "01" sampled, "00"
+    not), the same names in all languages. Empty while tracing is off (no SDK provider: prod
+    today), so a caller's traceparent can never put IDs in our logs, and outside a valid span."""
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+    except ImportError:  # OpenTelemetry not installed (some unit tests): no fields
+        return {}
+    if not isinstance(trace.get_tracer_provider(), TracerProvider):
+        return {}
+    sc = trace.get_current_span().get_span_context()
+    if not sc.is_valid:
+        return {}
+    return {
+        "trace_id": format(sc.trace_id, "032x"),
+        "span_id": format(sc.span_id, "016x"),
+        "trace_flags": "01" if sc.trace_flags.sampled else "00",
+    }

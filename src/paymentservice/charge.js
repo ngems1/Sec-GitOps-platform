@@ -15,10 +15,12 @@
 const cardValidator = require('simple-card-validator');
 const { v4: uuidv4 } = require('uuid');
 const pino = require('pino');
+const { logTraceFields } = require('./tracing');
 
 const logger = pino({
   name: 'paymentservice-charge',
   messageKey: 'message',
+  mixin: logTraceFields, // trace_id, span_id, trace_flags of the active span (tracing.js)
   formatters: {
     level (logLevelString, logLevelNum) {
       return { severity: logLevelString }

@@ -20,6 +20,7 @@
 const path = require('path');
 const grpc = require('grpc');
 const pino = require('pino');
+const { logTraceFields } = require('./tracing');
 
 const PROTO_PATH = path.join(__dirname, './proto/demo.proto');
 const PORT = 7000;
@@ -31,6 +32,7 @@ const client = new shopProto.CurrencyService(`localhost:${PORT}`,
 const logger = pino({
   name: 'currencyservice-client',
   messageKey: 'message',
+  mixin: logTraceFields, // trace_id, span_id, trace_flags of the active span (tracing.js)
   formatters: {
     level (logLevelString, logLevelNum) {
       return { severity: logLevelString }

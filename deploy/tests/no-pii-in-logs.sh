@@ -4,7 +4,7 @@
 #   deploy/tests/no-pii-in-logs.sh [dir...]   default: src terraform-aws/lambda
 #
 # It looks at single lines that call a logger (Go logrus, Python logging and our info()/warn()
-# helpers, pino, console, .NET Console.WriteLine, Log4j) and fails when such a line also names:
+# helpers, pino, console, .NET Console.WriteLine and CartLog, Log4j) and fails when such a line also names:
 # an email, the user or session ID (the cart's userId is the session ID), card fields, the
 # address, the client IP, the user agent, the query string, the whole request, or the
 # assistant's question/answer. Trailing comments are ignored.
@@ -18,7 +18,7 @@ cd "$(dirname "$0")/../.."
 dirs=("$@")
 [ ${#dirs[@]} -gt 0 ] || dirs=(src terraform-aws/lambda)
 
-LOG_CALL='(\b(log|logger|olog|lh\.log)\.(With[A-Za-z]*|Info[a-z]*|Warn[a-z]*|Error[a-z]*|Debug[a-z]*|Print[a-z]*|Fatal[a-z]*|info|warning|warn|error|debug|exception|critical)\(|\bconsole\.(log|info|warn|error|debug)\(|\bConsole\.Write(Line)?\(|(^|[^.A-Za-z_])(info|warn)\()'
+LOG_CALL='(\b(log|logger|olog|lh\.log)\.(With[A-Za-z]*|Info[a-z]*|Warn[a-z]*|Error[a-z]*|Debug[a-z]*|Print[a-z]*|Fatal[a-z]*|info|warning|warn|error|debug|exception|critical)\(|\bconsole\.(log|info|warn|error|debug)\(|\bConsole\.Write(Line)?\(|\bCartLog\.(Info|Warn|Error)\(|(^|[^.A-Za-z_])(info|warn)\()'
 PERSONAL='(\.Email\b|\.email\b|\bemail=|["'"'"']email["'"'"']|\bUserId\b|\buser_id\b|\buserId\b|["'"'"']session["'"'"']|\bsessionID\b|\bsession_id\b|X-Session-Id|hashedSession|credit_card|CreditCard|cardNumber|card_number|\bcvv\b|\.Address\b|street_address|StreetAddress|zip_code|ZipCode|RemoteAddr|client_address|UserAgent|User-Agent|X-Forwarded-For|RawQuery|URL\.Query|JSON\.stringify\(call\.request|question\)|question,|\{question|question\}|\+ ?question|\.question\b|\[["'"'"']question["'"'"']\]|answer\)|\{answer|\.Answer\b|\[["'"'"']answer["'"'"']\])'
 
 hits=$(grep -rnE "$LOG_CALL" "${dirs[@]}" \

@@ -59,6 +59,16 @@ jobs:
       # The Java agent switch (ENABLE_TRACING=1 only), tested on the entrypoint script.
       - name: adservice entrypoint (tracing switch)
         run: bash src/adservice/test-entrypoint.sh
+      # The JSON log layout: trace_id / span_id / trace_flags from the Java agent (ADR 0011).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21" # same as the Dockerfile
+          cache: gradle
+          cache-dependency-path: src/adservice/build.gradle
+      - name: adservice log layout (gradle test)
+        working-directory: src/adservice
+        run: bash gradlew --no-daemon test # gradlew is not executable in git (the Dockerfile chmods it)
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications
@@ -70,7 +80,7 @@ jobs:
           if bash deploy/tests/no-pii-in-logs.sh deploy/tests/no-pii-in-logs > "$RUNNER_TEMP/pii.txt"; then
             echo "::error::the guard missed the known-bad lines in deploy/tests/no-pii-in-logs"; exit 1
           fi
-          test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 11
+          test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 12
       # CloudWatch SEARCH terms are token matches: a quoted term must equal a whole dimension value
       # (RUNBOOK section 5). The fixtures prove the check still catches what it is meant for.
       - name: CloudWatch SEARCH terms (dashboard, diagnose.sh)
@@ -129,7 +139,7 @@ jobs:
             python -m venv "$RUNNER_TEMP/venv-$s"
             grep -v '^google-cloud-profiler' "src/$s/requirements.txt" > "$RUNNER_TEMP/req-$s.txt"
             "$RUNNER_TEMP/venv-$s/bin/pip" install --quiet -r "$RUNNER_TEMP/req-$s.txt"
-            (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing)
+            (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing test_logtrace)
           done
           # emailservice's message spans (messagetrace.py, ADR 0010 step 5) and its gRPC log line
           # (no address, ADR 0011)
