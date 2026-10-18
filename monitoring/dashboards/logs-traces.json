@@ -64,7 +64,7 @@
           "region": "default",
           "id": "",
           "logGroupNames": ["/aws/containerinsights/week3-boutique-eks/application"],
-          "expression": "fields @timestamp, kubernetes.container_name as service, @message\n| parse @message /trace_id\\W+(?<trace_id>[0-9a-f]{32})/\n| parse @message /span_id\\W+(?<span_id>[0-9a-f]{16})/\n| filter trace_id = \"$trace_id\"\n| sort @timestamp asc\n| limit 500",
+          "expression": "parse kubernetes.pod_name /^(?<pod_service>.+)-[a-z0-9]{6,10}-[a-z0-9]{5}$/\n| parse @message /trace_id\\W+(?<trace_id>[0-9a-f]{32})/\n| parse @message /span_id\\W+(?<span_id>[0-9a-f]{16})/\n| filter trace_id = \"$trace_id\"\n| fields @timestamp, coalesce(pod_service, kubernetes.pod_name) as service, trace_id, span_id, @message\n| sort @timestamp asc\n| limit 500",
           "statsGroups": []
         }
       ],
@@ -95,7 +95,7 @@
           "region": "default",
           "id": "",
           "logGroupNames": ["/aws/containerinsights/week3-boutique-eks/application"],
-          "expression": "fields @timestamp, kubernetes.container_name as service, @message\n| parse @message /trace_id\\W+(?<trace_id>[0-9a-f]{32})/\n| filter ispresent(trace_id)\n| sort @timestamp desc\n| limit 100",
+          "expression": "parse kubernetes.pod_name /^(?<pod_service>.+)-[a-z0-9]{6,10}-[a-z0-9]{5}$/\n| parse @message /trace_id\\W+(?<trace_id>[0-9a-f]{32})/\n| filter ispresent(trace_id)\n| fields @timestamp, coalesce(pod_service, kubernetes.pod_name) as service, trace_id, @message\n| sort @timestamp desc\n| limit 100",
           "statsGroups": []
         }
       ],
