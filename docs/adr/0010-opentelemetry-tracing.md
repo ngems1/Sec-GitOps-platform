@@ -434,6 +434,8 @@ until step 7.
 > - **Storage decision (deferred in "Storage"):** prod traces stay on Tempo's local disk, like
 >   dev and like Prometheus's 24 h. They're lost on a Tempo restart. S3 needs a bucket, a Pod
 >   Identity role and a boundary change; revisit when prod traces must outlive a restart.
+> - **Decision:** Tempo stays on local disk (`emptyDir`, 24 h retention). Revisit S3 if Phase 2b
+>   needs longer history.
 > - **Rollback:** `tracing.enabled: false` in `values-prod.yaml` through the prod promotion
 >   (RUNBOOK section 12, "Turn prod tracing off fast").
 
