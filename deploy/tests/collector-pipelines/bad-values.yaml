@@ -174,12 +174,20 @@ config:
     # agent) and SDK details would otherwise make one set of series per pod (and per restart).
     # The connector also labels every point with collector.instance.id (a new value at each
     # collector restart, so a new set of series): dropped too, there is one collector.
+    # The duration histogram is renamed to the name Grafana's Service Graph queries:
+    # traces_spanmetrics_latency_bucket (Grafana 13.2.1, bundled Tempo plugin 13.1.5,
+    # graphTransform.ts: histogram_quantile(.9, sum(rate(traces_spanmetrics_latency_bucket{}...)).
+    # Its unit is cleared so the Prometheus exporter adds no "_seconds"; the values stay in seconds.
     transform/span-metrics-resource:
       error_mode: ignore
       metric_statements:
         - context: resource
           statements:
             - keep_keys(attributes, ["service.name", "k8s.namespace.name"])
+        - context: metric
+          statements:
+            - set(name, "traces.spanmetrics.latency") where name == "traces.spanmetrics.duration"
+            - set(unit, "") where name == "traces.spanmetrics.latency"
         - context: datapoint
           statements:
             - delete_key(attributes, "collector.instance.id")
@@ -189,7 +197,7 @@ config:
     # dimensions), plus the namespace (dev / prod). No request attribute is a dimension: span
     # names are route templates and gRPC methods (no IDs), and nothing personal is a label.
     spanmetrics:
-      namespace: traces.span.metrics
+      namespace: traces.spanmetrics # traces_spanmetrics_calls_total, the name Grafana queries
       histogram:
         unit: s
         explicit:

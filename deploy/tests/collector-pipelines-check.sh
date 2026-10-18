@@ -45,6 +45,17 @@ done
 [ "$(q '.config.service.pipelines["metrics/spans"].receivers | sort')" = '["servicegraph","spanmetrics"]' ] || err "metrics/spans must receive spanmetrics and servicegraph"
 [ "$(q '.config.service.pipelines["metrics/spans"].exporters')" = '["prometheus/span-metrics"]' ] || err "metrics/spans must export to prometheus/span-metrics"
 
+# The names Grafana's Service Graph / RED table query (Grafana 13.2.1, Tempo plugin 13.1.5,
+# graphTransform.ts): traces_spanmetrics_calls_total and traces_spanmetrics_latency_bucket.
+[ "$(q '.config.connectors.spanmetrics.namespace')" = '"traces.spanmetrics"' ] \
+  || err "spanmetrics namespace must be traces.spanmetrics (traces_spanmetrics_calls_total in Grafana)"
+[ "$(q '[.config.processors["transform/span-metrics-resource"].metric_statements[] | select(.context == "metric") | .statements[]] | any_c(test("set\\(name, \"traces.spanmetrics.latency\"\\) where name == \"traces.spanmetrics.duration\""))')" = true ] \
+  || err "the duration histogram must be renamed traces.spanmetrics.latency (traces_spanmetrics_latency_bucket in Grafana)"
+[ "$(q '[.config.processors["transform/span-metrics-resource"].metric_statements[] | select(.context == "metric") | .statements[]] | any_c(test("set\\(unit, \"\"\\) where name == \"traces.spanmetrics.latency\""))')" = true ] \
+  || err "the latency histogram's unit must be cleared (no _seconds suffix)"
+[ "$(q '.config.service.pipelines["metrics/spans"].processors[0]')" = '"transform/span-metrics-resource"' ] \
+  || err "metrics/spans must run transform/span-metrics-resource first (names and labels)"
+
 # Cardinality: the extra span-metric dimension is the namespace only; nothing personal.
 [ "$(q '[.config.connectors.spanmetrics.dimensions[].name]')" = '["k8s.namespace.name"]' ] \
   || err "spanmetrics dimensions must be exactly k8s.namespace.name (plus the defaults)"
