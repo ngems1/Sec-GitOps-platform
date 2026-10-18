@@ -1,0 +1,121 @@
+{
+  "title": "Boutique: logs and traces",
+  "uid": "boutique-logs-traces",
+  "description": "From a trace to its log lines and back (ADR 0011, PR 4; RUNBOOK section 12). Logs: CloudWatch Logs, group /aws/containerinsights/week3-boutique-eks/application (1 day). Traces: Tempo (24 h).",
+  "tags": ["week3", "boutique", "tracing"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "label": "trace_id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "description": "32 lower-case hex characters. Filled by the links below."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Recent traces (Tempo): click a traceID",
+      "description": "traceID: 'Open trace' opens it in Tempo; 'Logs for this trace' fills the panel below.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{}", "limit": 20, "tableType": "traces" }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "traceID" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  { "title": "Logs for this trace", "url": "/d/boutique-logs-traces/boutique-logs-and-traces?var-trace_id=${__value.raw}&${__url_time_range}" },
+                  { "title": "Open trace", "url": "", "internal": { "datasourceUid": "tempo", "datasourceName": "Tempo", "query": { "queryType": "traceql", "query": "${__value.raw}" } } }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Log lines of trace $trace_id (CloudWatch)",
+      "description": "Every service's lines with this trace_id, in time order. Empty until a trace_id is chosen (a link above or below, or the box at the top).",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+          "queryMode": "Logs",
+          "region": "default",
+          "id": "",
+          "logGroupNames": ["/aws/containerinsights/week3-boutique-eks/application"],
+          "expression": "fields @timestamp, kubernetes.container_name as service, @message\n| parse @message /trace_id\\W+(?<trace_id>[0-9a-f]{32})/\n| parse @message /span_id\\W+(?<span_id>[0-9a-f]{16})/\n| filter trace_id = \"$trace_id\"\n| sort @timestamp asc\n| limit 500",
+          "statsGroups": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "noValue": "choose a trace_id" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "trace_id" },
+            "properties": [
+              { "id": "links", "value": [ { "title": "Open trace", "url": "", "internal": { "datasourceUid": "tempo", "datasourceName": "Tempo", "query": { "queryType": "traceql", "query": "${__value.raw}" } } } ] }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Recent log lines with a trace_id (CloudWatch): click a trace_id",
+      "description": "trace_id: 'Open trace' opens it in Tempo; 'Logs for this trace' fills the panel above. Lines carry a trace_id only while tracing is on (dev).",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 19 },
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+          "queryMode": "Logs",
+          "region": "default",
+          "id": "",
+          "logGroupNames": ["/aws/containerinsights/week3-boutique-eks/application"],
+          "expression": "fields @timestamp, kubernetes.container_name as service, @message\n| parse @message /trace_id\\W+(?<trace_id>[0-9a-f]{32})/\n| filter ispresent(trace_id)\n| sort @timestamp desc\n| limit 100",
+          "statsGroups": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "noValue": "no log line with a trace_id (tracing off, or no traffic)" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "trace_id" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  { "title": "Open trace", "url": "", "internal": { "datasourceUid": "tempo", "datasourceName": "Tempo", "query": { "queryType": "traceql", "query": "${__value.raw}" } } },
+                  { "title": "Logs for this trace", "url": "/d/boutique-logs-traces/boutique-logs-and-traces?var-trace_id=${__value.raw}&${__url_time_range}" }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
