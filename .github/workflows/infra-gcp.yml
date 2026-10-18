@@ -1,0 +1,173 @@
+name: infra-gcp
+
+# Terraform for the GCP side (terraform-gcp/, ADR 0014): VPC and subnet, GKE Autopilot cluster,
+# Artifact Registry repository. Keyless: GitHub OIDC -> Workload Identity Federation
+# (terraform-gcp-bootstrap).
+#
+#   pull request -> fmt / test / plan as gha-plan (nothing is changed)
+#   manual run   -> plan, plan-destroy, apply or destroy as gha-deploy, from main only
+#                   (Actions tab > infra-gcp > Run workflow); apply and destroy wait for the
+#                   prod environment's reviewers, the two plans don't
+#
+# Unlike the AWS infra workflow, a merge applies nothing: run "plan", read it, then "apply".
+# To tear down: run "plan-destroy", read what it removes, then "destroy" (the reviewer approves
+# only after that plan was read: the destroy run's own plan comes after the approval).
+# The repository and its logs are public: no plan values and no outputs are printed, only which
+# resources change.
+
+on:
+  pull_request:
+    paths: ["terraform-gcp/**", ".github/workflows/infra-gcp.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        options: [plan, plan-destroy, apply, destroy]
+        default: plan
+
+permissions:
+  id-token: write # GitHub OIDC -> GCP Workload Identity Federation
+  contents: read
+
+concurrency:
+  group: terraform-gcp-state # never two Terraform runs against the same state
+  cancel-in-progress: false
+
+env:
+  STATE_PREFIX: gcp-infra # set in terraform-gcp/versions.tf, shown here for the log line
+  TF_IN_AUTOMATION: "true"
+  ACTION: ${{ inputs.action || 'plan' }}
+
+jobs:
+  # apply and destroy change real resources (destroy deletes the registry's images too): they
+  # wait for a prod reviewer, like bootstrap-gcp. Plans skip this job and need no approval.
+  approval:
+    name: Approve ${{ inputs.action }} (prod reviewers)
+    if: github.event_name == 'workflow_dispatch' && (inputs.action == 'apply' || inputs.action == 'destroy')
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 5
+    steps:
+      - run: echo "terraform ${{ inputs.action }} on terraform-gcp approved."
+
+  terraform:
+    name: GCP infra (${{ inputs.action || 'plan' }})
+    needs: approval
+    # Runs after an approval, or when there is none to wait for (plans). Never after a rejection.
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || (needs.approval.result == 'skipped' && (github.event_name == 'pull_request' || inputs.action == 'plan' || inputs.action == 'plan-destroy'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # creating or deleting an Autopilot cluster takes 10-20 minutes
+    defaults:
+      run:
+        working-directory: terraform-gcp
+    env:
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_SA: ${{ github.event_name == 'pull_request' && vars.GCP_PLAN_SA || vars.GCP_DEPLOY_SA }}
+      GCP_TF_STATE_BUCKET: ${{ vars.GCP_TF_STATE_BUCKET }}
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_region: ${{ vars.GCP_REGION || 'us-east1' }}
+      TF_VAR_node_service_account: ${{ vars.GCP_GKE_NODE_SA }}
+      # Pull requests from forks get no OIDC token: they run the checks without GCP.
+      CAN_SIGN_IN: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # gha-deploy trusts only refs/heads/main (or a dev/prod environment): fail early and clearly.
+      - name: Manual runs only from main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run infra-gcp from main: gha-deploy can't be used from ${GITHUB_REF}."
+          exit 1
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.12.2"
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      # What the root builds, with a mocked provider: no GCP access needed.
+      - name: terraform test (autopilot, private nodes, node account, registry)
+        run: |
+          terraform init -backend=false -input=false -no-color > /dev/null
+          terraform validate -no-color
+          terraform test -no-color
+          # Service accounts and IAM belong to terraform-gcp-bootstrap: gha-deploy must never need
+          # the rights to create accounts or grant project roles. The one exception: the nodes'
+          # read on the boutique repository (registry.tf, within gha-deploy's registry admin).
+          if grep -nE 'resource "google_(service_account|project_iam_|[a-z_]+_iam_(member|binding|policy))' ./*.tf \
+              | grep -vE '^\./registry\.tf:[0-9]+:resource "google_artifact_registry_repository_iam_member" "nodes_pull"'; then
+            echo "::error::Service accounts or IAM bindings in terraform-gcp: they go in terraform-gcp-bootstrap"
+            exit 1
+          fi
+
+      - name: Check the GCP variables are configured
+        if: env.CAN_SIGN_IN == 'true'
+        run: |
+          missing=""
+          for v in GCP_WIF_PROVIDER GCP_SA GCP_TF_STATE_BUCKET TF_VAR_project_id TF_VAR_node_service_account; do
+            [ -n "${!v}" ] || missing="${missing} ${v}"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing:${missing}. Set the GitHub variables from the terraform-gcp-bootstrap outputs (terraform-gcp/README.md)."
+            exit 1
+          fi
+          # Error lines can quote resource paths (projects/<id>/...): hide the project ID.
+          echo "::add-mask::${TF_VAR_project_id}"
+
+      - name: Authenticate to GCP (Workload Identity Federation, no key)
+        if: env.CAN_SIGN_IN == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ github.event_name == 'pull_request' && vars.GCP_PLAN_SA || vars.GCP_DEPLOY_SA }}
+
+      - name: terraform init
+        if: env.CAN_SIGN_IN == 'true'
+        run: |
+          terraform init -reconfigure -input=false -no-color \
+            -backend-config="bucket=${GCP_TF_STATE_BUCKET}" > /dev/null
+          echo "terraform init done (state: gs://<bucket>/${STATE_PREFIX})"
+
+      - name: terraform plan
+        if: env.CAN_SIGN_IN == 'true'
+        run: |
+          # plan-destroy: the same destroy plan, nothing applied (no approval needed to read it).
+          mode=""; case "$ACTION" in destroy|plan-destroy) mode="-destroy" ;; esac
+          terraform plan ${mode} -input=false -no-color -out=tfplan > plan.log 2>&1 \
+            || { grep -E "^(Error|│ Error)" -A6 plan.log | head -40; exit 1; }
+          changes=$(terraform show -json tfplan | jq -r '.resource_changes[]? | select(.change.actions != ["no-op"]) | "\(.change.actions | join("+"))\t\(.address)"')
+          {
+            echo "### GCP infra plan (${ACTION})"
+            echo
+            grep -E '^Plan:|^No changes' plan.log || true
+            echo
+            echo '```'
+            echo "${changes:-no resource changes}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f plan.log
+
+      # Destroy: the GKE Ingress's load balancer and NEGs (a later PR) are created by
+      # Kubernetes, not Terraform: delete the Ingress first, or the VPC can't be removed.
+      - name: terraform apply
+        if: env.CAN_SIGN_IN == 'true' && (env.ACTION == 'apply' || env.ACTION == 'destroy')
+        run: |
+          # Only the result is printed: apply lines carry resource IDs (project, network, cluster).
+          rc=0; terraform apply -input=false -no-color tfplan > apply.log 2>&1 || rc=$?
+          grep -E '^(Apply|Destroy) complete' apply.log || grep -E '^(Error|│ Error)' -A6 apply.log | head -40
+          rm -f apply.log
+          exit "$rc"
+
+      # Applies and destroys change real infrastructure (and the bill): tell the team in Slack.
+      - name: Slack notification
+        if: always() && (env.ACTION == 'apply' || env.ACTION == 'destroy')
+        working-directory: .
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          STATUS: ${{ job.status }}
+        run: |
+          if [ "$STATUS" = success ]; then color=good; else color=danger; fi
+          bash deploy/notify-slack.sh "$color" "GCP infrastructure ${ACTION}: ${STATUS}" "terraform ${ACTION} on the GKE Autopilot cluster, its VPC and Artifact Registry."

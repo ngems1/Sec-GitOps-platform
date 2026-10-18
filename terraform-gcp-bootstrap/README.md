@@ -5,13 +5,14 @@ What GitHub Actions needs before it can run `terraform-gcp`, and what must outli
 
 | Resource | Why |
 |---|---|
-| APIs | IAM, IAM Credentials, STS, Cloud Resource Manager, Service Usage, Cloud Storage, Cloud Billing, Billing Budgets, Org Policy (`main.tf`) |
-| GCS bucket `<project>-tfstate` | Every GCP Terraform state: `bootstrap/` (this root), `gcp/` (terraform-gcp). Versioned, IAM only, public access prevented, protected against `destroy` |
+| APIs | IAM, IAM Credentials, STS, Cloud Resource Manager, Service Usage, Cloud Storage, Cloud Billing, Billing Budgets, Org Policy, and for `terraform-gcp`: Compute Engine, GKE, Artifact Registry (`main.tf`; `gha-deploy` can't enable APIs) |
+| GCS bucket `<project>-tfstate` | Every GCP Terraform state: `bootstrap/` (this root), `gcp-infra/` (terraform-gcp). Versioned, IAM only, public access prevented, protected against `destroy` |
 | Workload identity pool `github-actions`, provider `sec-gitops-platform` | GitHub Actions sign in without a key. Only this repository, by its numeric IDs (`federation.tf`) |
 | `gha-plan` | Read-only (`roles/viewer`, `roles/iam.securityReviewer`), pull requests |
-| `gha-deploy` | terraform-gcp and deploys, from `main` or the `dev` / `prod` environments: network, firewall, GKE, Artifact Registry admin, and project IAM limited to an allow-list (`deploy_grantable_roles`). Not editor or owner |
+| `gha-deploy` | terraform-gcp and deploys, from `main` or the `dev` / `prod` environments: network, GKE, Artifact Registry admin (it also sets who may read the `boutique` repository). No project IAM, no firewall admin, not editor or owner: every project role is granted here |
 | `gha-bootstrap` | Owner, only for jobs in the protected `prod` environment: the bootstrap-gcp workflow |
-| Org policies | No service account key can be created or uploaded (`policies.tf`), when the project is in an organization |
+| `gke-nodes` | The identity of the GKE Autopilot nodes (`gke-nodes.tf`). GKE's minimum node role (`roles/container.defaultNodeServiceAccount`: logs, metrics, monitoring) on the project. Image pulls: `roles/artifactregistry.reader` on the `boutique` repository only, granted by `terraform-gcp` with the repository. Not the Compute Engine default account. Here, not in `terraform-gcp`, so `gha-deploy` never needs to create service accounts. `gha-deploy` may only act as this one account (to create the cluster with it). GitHub can never sign in as it (the workflow checks `roles/iam.workloadIdentityUser` appears only in `federation.tf`) |
+| Org policies | No service account key can be created or uploaded, and the default service accounts get no automatic Editor role (`policies.tf`), when the project is in an organization. The Compute Engine API is enabled only after that policy |
 | Budget | Monthly, on this project, email at 50% and 100% to the billing account's admins and users (`budgets.tf`) |
 
 **No key exists anywhere.** GitHub gets 1-hour tokens through federation.
@@ -104,7 +105,27 @@ the project and **Billing Account Administrator** on its billing account; `gclou
 ## Re-running after a change here
 
 After a merge that changes `terraform-gcp-bootstrap/`: **bootstrap-gcp** with apply unchecked,
-read which resources change, then again with apply checked.
+read which resources change, then again with apply checked. **Merging applies nothing**: like
+any change here, it is live only after that run (or `terraform apply` by the project owner, as
+in the first run).
+
+- **Example:** the `gke-nodes` change plans:
+  - to create: 1 service account, 1 project role binding, 1 act-as binding, 3 APIs (Compute
+    Engine, GKE, Artifact Registry), and 1 organization policy (no automatic Editor);
+  - to destroy: `gha-deploy`'s conditional project IAM admin and `roles/compute.securityAdmin`.
+
+  The organization policy needs Organization Policy Administrator (first run, step 3): with
+  `gha-bootstrap` the apply fails on it, so apply this change by hand (`terraform apply`, as in
+  the first run) with that role. Without an organization (`GCP_ENFORCE_NO_KEY_POLICY=false`)
+  there is no policy, and bootstrap-gcp can apply it.
+- **Then:** check the Compute Engine default account holds no Editor role. The policy is not
+  retroactive: if the Compute Engine API was already on, remove it by hand:
+
+  ```bash
+  gcloud projects get-iam-policy "$P" --flatten=bindings --filter='bindings.role=roles/editor' \
+    --format='value(bindings.members)'   # no ...-compute@developer.gserviceaccount.com
+  ```
+- **Last:** add the output `GCP_GKE_NODE_SA` as a repository variable (`terraform-gcp` reads it).
 
 - **What the workflow prints:** it runs `terraform test` first (the trust and the rights, with a
   mocked provider). It prints only which resources change, never values or outputs: the logs

@@ -40,8 +40,25 @@ resource "google_project_service" "apis" {
   disable_on_destroy = false
 }
 
+# terraform-gcp's APIs: gha-deploy can't enable APIs (serviceUsageViewer only), so they are on
+# here. After the organization policy: enabling Compute Engine creates its default service
+# account, which must not get Editor (policies.tf).
+resource "google_project_service" "gke_apis" {
+  for_each = toset([
+    "compute.googleapis.com",          # VPC, subnet, Cloud NAT
+    "container.googleapis.com",        # the GKE cluster
+    "artifactregistry.googleapis.com", # the mirrored images
+  ])
+
+  project            = var.project_id
+  service            = each.value
+  disable_on_destroy = false
+
+  depends_on = [google_org_policy_policy.no_default_sa_editor]
+}
+
 # ---------------------------------------------------------------------------
-# Terraform state bucket: terraform-gcp under prefix "gcp", this root under "bootstrap".
+# Terraform state bucket: terraform-gcp under prefix "gcp-infra", this root under "bootstrap".
 # ---------------------------------------------------------------------------
 resource "google_storage_bucket" "state" {
   name     = local.bucket_name

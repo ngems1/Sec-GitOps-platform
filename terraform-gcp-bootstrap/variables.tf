@@ -43,21 +43,8 @@ variable "bootstrap_environment" {
   default     = "prod"
 }
 
-variable "deploy_grantable_roles" {
-  description = "The only project roles the deploy service account may grant or revoke (terraform-gcp: the GKE node service account's roles). Anything else, owner included, is refused by the IAM condition."
-  type        = list(string)
-  default = [
-    "roles/container.defaultNodeServiceAccount",
-    "roles/logging.logWriter",
-    "roles/monitoring.metricWriter",
-    "roles/monitoring.viewer",
-    "roles/stackdriver.resourceMetadata.writer",
-    "roles/artifactregistry.reader",
-  ]
-}
-
 variable "enforce_no_key_policy" {
-  description = "Enforce the organization policies that forbid creating or uploading service account keys on this project. They need the project to be in a Google Cloud organization: false when it has none (README.md, step 1)."
+  description = "Enforce the organization policies on this project (policies.tf): no service account key creation or upload, and no automatic Editor grant to the default service accounts. They need the project to be in a Google Cloud organization: false when it has none (README.md, step 1)."
   type        = bool
   default     = true
 }

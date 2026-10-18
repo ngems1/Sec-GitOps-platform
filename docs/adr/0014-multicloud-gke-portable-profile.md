@@ -98,7 +98,7 @@ Status: proposed. Date: 2026-10-18. Docs only: nothing is implemented by this AD
 - **`terraform-gcp`** (destroyable, like `terraform-aws`): the VPC and subnet, Cloud NAT if
   needed, the GKE cluster, the Artifact Registry repository (decision 5), the global static IP of
   the Ingress, and the IAM for Argo CD (decision 4). Its own `infra-gcp` workflow does plans on
-  pull requests and apply/destroy on `main`.
+  pull requests, and plan, apply or destroy by hand from `main` (a merge applies nothing).
 - **Why:** destroying the cluster to save money must never remove the way back in (the
   federation, the state bucket) or the budget alarms.
 - **Alternatives:** one root (a destroy removes the login path); a GCP module inside

@@ -88,10 +88,11 @@ locals {
     plan = ["roles/viewer", "roles/iam.securityReviewer"]
     # terraform-gcp (ADR 0014: VPC, Cloud NAT, Autopilot cluster, Artifact Registry, static IP).
     # Not roles/editor or owner: editor may act as ANY service account of the project (the
-    # bootstrap one is owner) and create service account keys. None of these roles can do either.
+    # bootstrap one is owner) and create service account keys. None of these roles can do either,
+    # and none grants project IAM: service accounts and project roles are all granted here.
+    # No compute.securityAdmin: terraform-gcp creates no firewall rules (GKE makes its own).
     deploy = [
       "roles/compute.networkAdmin",
-      "roles/compute.securityAdmin",
       "roles/container.admin",
       "roles/artifactregistry.admin",
       "roles/serviceusage.serviceUsageViewer",
@@ -108,20 +109,6 @@ resource "google_project_iam_member" "gha" {
   project = var.project_id
   role    = each.value.role
   member  = google_service_account.gha[each.value.sa].member
-}
-
-# The deploy service account may grant only the roles in var.deploy_grantable_roles (the GKE
-# node service account's), the GCP counterpart of the AWS boundary's DenyAdminPolicyAttachments.
-resource "google_project_iam_member" "deploy_grants" {
-  project = var.project_id
-  role    = "roles/resourcemanager.projectIamAdmin"
-  member  = google_service_account.gha["deploy"].member
-
-  condition {
-    title       = "only-node-service-account-roles"
-    description = "Grant or revoke only the roles listed in terraform-gcp-bootstrap var.deploy_grantable_roles"
-    expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", formatlist("'%s'", var.deploy_grantable_roles))}])"
-  }
 }
 
 # State: plan takes the lock (writes the .tflock object), deploy writes the state, bootstrap
