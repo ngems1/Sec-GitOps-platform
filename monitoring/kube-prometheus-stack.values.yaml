@@ -42,6 +42,19 @@ prometheus:
     resources:
       requests: { cpu: 100m, memory: 400Mi }
       limits: { memory: 1200Mi }
+    # Exemplars (ADR 0011, PR 6): the trace IDs the OTel Collector puts on the span-metric
+    # histogram buckets (traces_spanmetrics_latency_bucket), kept so Grafana can link a latency
+    # point to its trace in Tempo (the Prometheus data source below). An in-memory ring buffer
+    # of maxSize exemplars for all series: about 18 MiB of heap when full at 100000 (measured,
+    # RUNBOOK section 12), lost at a restart like the rest of the in-memory data. The flag is a
+    # container argument: changing it restarts Prometheus; maxSize is in the config file
+    # (reloaded, no restart).
+    # Scrape protocol: Prometheus 3.14 asks for OpenMetrics first (its default: no
+    # scrapeProtocols set here); the classic text format has no exemplars. CI checks both.
+    enableFeatures:
+      - exemplar-storage
+    exemplars:
+      maxSize: 100000
     # Scrape every pod that asks for it with prometheus.io/* annotations.
     additionalScrapeConfigs:
       - job_name: kubernetes-pods
@@ -132,6 +145,12 @@ grafana:
       isDefault: true
       jsonData:
         timeInterval: 30s          # = scrapeInterval
+        # Exemplars (ADR 0011, PR 6): an exemplar's trace_id label opens that trace in Tempo
+        # (the "Exemplars" toggle in Explore, RUNBOOK section 12). An internal link by data
+        # source UID: no URL and no ${...} variable here. CI checks this block.
+        exemplarTraceIdDestinations:
+          - name: trace_id
+            datasourceUid: tempo
     # Traces (ADR 0010): Tempo, installed by deploy/monitoring.sh next to this chart. Tempo is a
     # core Grafana data source (no plugin). Its NetworkPolicy lets only Grafana query it (3200).
     - name: Tempo
