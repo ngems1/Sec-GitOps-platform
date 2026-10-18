@@ -1992,7 +1992,7 @@
         "type": "tempo",
         "uid": "tempo"
       },
-      "description": "Calls between services in boutique-dev over the dashboard's time range, from ALL spans (the collector's service graph, before tail sampling). Inside a circle: the average response time and requests per second the service receives; its ring: green = successful share, red = failed share. An arrow: the calls from one service to another, with their average time and rate. user -> service: requests with no traced caller (the ALB and the frontend's /_healthz checks; the collector drops gRPC health probes). Click a node or an edge for its RED queries and traces. \"No data found in response\": no traces (tracing off, or no traffic). RUNBOOK section 12, The Service Graph.",
+      "description": "Calls between services in boutique-dev over the dashboard's time range, from ALL spans (the collector's service graph, before tail sampling). Inside a circle: the average response time and requests per second the service receives; its ring: green = successful share, red = failed share. An arrow: the calls from one service to another, with their average time and rate. user -> service: requests with no traced caller (shoppers through the ALB; the collector drops health checks). Click a node or an edge for its RED queries and traces. \"No data found in response\": no traces (tracing off, or no traffic). RUNBOOK section 12, The Service Graph.",
       "gridPos": {
         "h": 12,
         "w": 24,
