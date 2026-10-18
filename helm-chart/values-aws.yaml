@@ -44,7 +44,9 @@ cartDatabase:
 inventoryService:
   create: true             # table, queue and bus names set by the workflow
   resources:
-    requests: { cpu: 25m } # right-sized (RUNBOOK section 13)
+    # right-sized (RUNBOOK section 13). Memory: 96Mi was under the measured max of 103Mi; the limit
+    # stays 192Mi (values.yaml).
+    requests: { cpu: 25m, memory: 128Mi }
 
 # Right-sized requests for dev and prod (RUNBOOK section 13), from cluster-status "Resource
 # usage" (about 6 h at 15 users). Requests only: Helm merges them over values.yaml, so limits

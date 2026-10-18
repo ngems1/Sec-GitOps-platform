@@ -26,8 +26,13 @@ def to_dict(p):
 
 
 class Catalog:
+    """One gRPC channel to the catalog for the whole process, made once and shared by every
+    question's tool calls (a channel multiplexes concurrent calls over one HTTP/2 connection and
+    reconnects by itself). Closed by close() at shutdown."""
+
     def __init__(self, addr, timeout_seconds=3):
-        self.stub = demo_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(addr))
+        self.channel = grpc.insecure_channel(addr)
+        self.stub = demo_pb2_grpc.ProductCatalogServiceStub(self.channel)
         self.timeout = timeout_seconds
         self.lock = threading.Lock()
         self.products = {}
@@ -55,3 +60,6 @@ class Catalog:
 
     def product_ids(self):
         return set(self._all())
+
+    def close(self):
+        self.channel.close()

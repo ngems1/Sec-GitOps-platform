@@ -7,7 +7,8 @@ DURATION = Histogram("assistant_request_duration_seconds", "Time to answer a que
 BEDROCK_ERRORS = Counter("assistant_bedrock_errors_total", "Failed Bedrock calls by type", ["type"])
 TOKENS = Counter("assistant_tokens_total", "Bedrock tokens by direction", ["direction"])
 TOOL_CALLS = Counter("assistant_tool_calls_total", "Catalog tool calls by tool", ["tool"])
-READY = Gauge("assistant_ready", "1 when the startup Bedrock check passed")
+BEDROCK_CHECK = Gauge("assistant_bedrock_check_ok",
+                      "1 once the startup one-token Bedrock call passed (a diagnostic, not readiness)")
 DAILY_USED = Gauge("assistant_daily_questions_used", "Questions used today in this pod")
 DAILY_CAP = Gauge("assistant_daily_question_cap", "Daily question cap of this pod")
 

@@ -1014,8 +1014,11 @@ retention removes them.
 
 **After turning it on (or any prod deploy that restarts it):**
 
-1. cluster-status (boutique-prod): `shoppingassistantservice` is Ready. Ready means its
-   start-up one-token Bedrock call worked, so the role, model ID and network are fine.
+1. cluster-status (boutique-prod): `shoppingassistantservice` is Ready. Ready means only that
+   its HTTP server answers (since 2026-10-18; never Bedrock). The Bedrock side: its log line
+   `bedrock check passed` (or `bedrock check failed, retrying` with the error type, every
+   minute), and the metric `assistant_bedrock_check_ok` = 1. That one-token call at start proves
+   the role, the model ID and the network.
 2. Actions > **assistant-smoke** > Run workflow (prod). It asks one question through
    `https://shop.<domain>/assistant`, which costs about USD 0.0004 and uses one of the day's
    100 questions.
@@ -1052,10 +1055,13 @@ Dev works the same way, with `values-dev.yaml`. Revert the values change to turn
 
 - **The cap lives in memory.** A pod restart or a rollout's new pod starts from 0, so the
   bound is cap x pods started that day.
-- **Bedrock at pod start.** The pod is Ready only after its first Bedrock call. If Bedrock is
-  down when a deploy restarts it, the Application isn't Healthy and the deploy fails after
-  `argocd-wait`'s timeout (10 min), even though the shop works. The frontend handles an
-  unreachable assistant with a friendly message, and the frontend canary never calls Bedrock.
+- **Bedrock down.** It doesn't affect the pod's readiness or the deploy (since 2026-10-18).
+  - **What shoppers get:** every question gets the "error" outcome, HTTP 502, with "Sorry, the
+    shopping assistant is not available right now", within the Bedrock timeouts (15 s read, 2
+    attempts).
+  - **Where it shows:** `assistant_requests_total{outcome="error"}` and
+    `assistant_bedrock_errors_total{type}`.
+  - **The frontend canary never calls Bedrock.**
 
 ## Incident log (things that actually happened)
 
