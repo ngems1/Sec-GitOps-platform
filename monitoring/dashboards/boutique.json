@@ -1970,6 +1970,213 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "type": "row",
+      "title": "Traces (dev): span metrics and service graph",
+      "id": 34,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 72
+      },
+      "panels": []
+    },
+    {
+      "type": "nodeGraph",
+      "title": "Service graph (dev)",
+      "id": 35,
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Calls between services in boutique-dev over the dashboard's time range, from ALL spans (the collector's service graph, before tail sampling). Inside a circle: the average response time and requests per second the service receives; its ring: green = successful share, red = failed share. An arrow: the calls from one service to another, with their average time and rate. user -> service: requests with no traced caller (the ALB, and the gRPC health probes of checkoutservice and emailservice). Click a node or an edge for its RED queries and traces. \"No data found in response\": no traces (tracing off, or no traffic). RUNBOOK section 12, The Service Graph.",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "refId": "A",
+          "queryType": "serviceMap",
+          "serviceMapQuery": [
+            "{client_k8s_namespace_name=\"boutique-dev\"}",
+            "{server_k8s_namespace_name=\"boutique-dev\"}"
+          ]
+        }
+      ],
+      "options": {
+        "zoomMode": "cooperative"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per second by service (dev, spans)",
+      "id": 36,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "description": "Server and consumer spans per second in boutique-dev, from ALL spans (before tail sampling). Consumer spans: the SQS messages inventoryservice and emailservice process (none while the loadgenerator is browse-only: no orders). Health checks left out.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 85
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "refId": "A",
+          "expr": "sum by (service_name) (rate(traces_spanmetrics_calls_total{k8s_namespace_name=\"boutique-dev\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*grpc.health.v1.Health/.*|.*/_healthz\"}[5m]))",
+          "legendFormat": "{{service_name}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "noValue": "no traces"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error % by service (dev, spans)",
+      "id": 37,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "description": "Share of server and consumer spans with status ERROR in boutique-dev (0 when a service has spans but no errors). Health checks left out.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 85
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "refId": "A",
+          "expr": "100 * (sum by (service_name) (rate(traces_spanmetrics_calls_total{k8s_namespace_name=\"boutique-dev\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*grpc.health.v1.Health/.*|.*/_healthz\", status_code=\"STATUS_CODE_ERROR\"}[5m])) or 0 * sum by (service_name) (rate(traces_spanmetrics_calls_total{k8s_namespace_name=\"boutique-dev\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*grpc.health.v1.Health/.*|.*/_healthz\"}[5m]))) / sum by (service_name) (rate(traces_spanmetrics_calls_total{k8s_namespace_name=\"boutique-dev\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*grpc.health.v1.Health/.*|.*/_healthz\"}[5m]))",
+          "legendFormat": "{{service_name}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "noValue": "no traces"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 latency by service (dev, spans)",
+      "id": 38,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "description": "p95 duration of server and consumer spans in boutique-dev. Diamonds: exemplars, example spans of that latency; hover one and click Query with Tempo to open its trace (it may not be in Tempo: tail sampling keeps errors, slow traces and 100% of dev). Health checks left out.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 85
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_spanmetrics_latency_bucket{k8s_namespace_name=\"boutique-dev\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*grpc.health.v1.Health/.*|.*/_healthz\"}[5m])))",
+          "legendFormat": "p95 {{service_name}}",
+          "range": true,
+          "instant": false,
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "noValue": "no traces"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ],
   "description": "Week 3 retail platform on EKS: SLIs, ALB traffic, application metrics, event flow, Kubernetes and RDS. Built by the deploy workflow from monitoring/dashboards/boutique.json.",
