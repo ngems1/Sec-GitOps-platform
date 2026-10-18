@@ -129,7 +129,7 @@ jobs:
             python -m venv "$RUNNER_TEMP/venv-$s"
             grep -v '^google-cloud-profiler' "src/$s/requirements.txt" > "$RUNNER_TEMP/req-$s.txt"
             "$RUNNER_TEMP/venv-$s/bin/pip" install --quiet -r "$RUNNER_TEMP/req-$s.txt"
-            (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing)
+            (cd "src/$s" && "$RUNNER_TEMP/venv-$s/bin/python" -m unittest -v test_tracing test_logtrace)
           done
           # emailservice's message spans (messagetrace.py, ADR 0010 step 5) and its gRPC log line
           # (no address, ADR 0011)
