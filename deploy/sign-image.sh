@@ -3,6 +3,8 @@
 #
 #   deploy/sign-image.sh sign   <registry/repo@sha256:...> <sbom.spdx.json>
 #   deploy/sign-image.sh verify <registry/repo@sha256:...>
+#   deploy/sign-image.sh status <registry/repo@sha256:...>   exit 0 when already signed AND attested
+#                                                            by the expected identity (quiet; rollbacks)
 #
 # Needs: cosign on PATH, registry credentials (docker login), and in GitHub Actions the
 # id-token: write permission (cosign asks GitHub for an OIDC token, Fulcio turns it into a
@@ -18,7 +20,7 @@
 # Nothing secret is printed: cosign's stdout (payloads, certificates) goes to /dev/null.
 set -euo pipefail
 
-mode=${1:?usage: sign-image.sh sign|verify <image@sha256:digest> [sbom]}
+mode=${1:?usage: sign-image.sh sign|verify|status <image@sha256:digest> [sbom]}
 ref=${2:?image reference by digest}
 : "${SIGNER_IDENTITY:?}" "${SIGNER_ISSUER:?}"
 
@@ -64,6 +66,10 @@ case "$mode" in
     fi
     echo "Verified: signature and SPDX SBOM attestation of ${ref##*@} by ${SIGNER_IDENTITY}."
     ;;
+  status)
+    # Nothing to do for this image? Both checks, nothing printed. Not a substitute for verify.
+    signed && attested
+    ;;
   *)
-    echo "usage: sign-image.sh sign|verify <image@sha256:digest> [sbom]"; exit 2 ;;
+    echo "usage: sign-image.sh sign|verify|status <image@sha256:digest> [sbom]"; exit 2 ;;
 esac
