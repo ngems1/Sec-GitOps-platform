@@ -1,0 +1,16 @@
+# Fixture for deploy/tests/exemplars-check.sh: must give 4 errors (with bad-collector.yaml: 6).
+prometheus:
+  prometheusSpec:
+    enableFeatures: [memory-snapshot-on-shutdown]   # no exemplar-storage
+    exemplars:
+      maxSize: 5000000                              # far too big for memory
+    scrapeProtocols: [PrometheusText0.0.4]          # no exemplars in this format
+grafana:
+  additionalDataSources:
+    - name: Prometheus
+      uid: prometheus
+      type: prometheus
+      jsonData:
+        exemplarTraceIdDestinations:
+          - name: traceID                           # not the collector's label
+            datasourceUid: tempo
