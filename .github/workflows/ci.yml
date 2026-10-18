@@ -80,7 +80,7 @@ jobs:
           if bash deploy/tests/no-pii-in-logs.sh deploy/tests/no-pii-in-logs > "$RUNNER_TEMP/pii.txt"; then
             echo "::error::the guard missed the known-bad lines in deploy/tests/no-pii-in-logs"; exit 1
           fi
-          test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 11
+          test "$(grep -c '^deploy/tests/no-pii-in-logs/' "$RUNNER_TEMP/pii.txt")" -eq 12
       # CloudWatch SEARCH terms are token matches: a quoted term must equal a whole dimension value
       # (RUNBOOK section 5). The fixtures prove the check still catches what it is meant for.
       - name: CloudWatch SEARCH terms (dashboard, diagnose.sh)
