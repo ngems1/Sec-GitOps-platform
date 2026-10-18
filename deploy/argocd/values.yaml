@@ -51,7 +51,38 @@ dex:
 notifications:
   enabled: false
 
+# GKE as a second cluster (ADR 0014, decision 4): the controller (syncs) and the server (UI live
+# view, logs) sign in to GCP with their own Kubernetes service account token. No key, no
+# static token:
+#   - gcp-token: a projected token for the audience eks-argocd, the only one the eks-argocd
+#     pool's provider accepts (terraform-gcp-bootstrap/argocd.tf); the kubelet renews it;
+#   - gcp-credentials: the credential file pointing Google's client library at that token and at
+#     argocd-hub (ConfigMap written by deploy/argocd-gke.sh; nothing secret in it). Optional: the
+#     pods start without it, and only the GKE cluster's argocd-k8s-auth gcp needs it.
+controller:
+  volumes: &gcpVolumes
+    - name: gcp-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: eks-argocd
+              expirationSeconds: 3600
+              path: token
+    - name: gcp-credentials
+      configMap:
+        name: gcp-wif-credentials
+        optional: true
+  volumeMounts: &gcpVolumeMounts
+    - name: gcp-token
+      mountPath: /var/run/secrets/gcp
+      readOnly: true
+    - name: gcp-credentials
+      mountPath: /etc/gcp
+      readOnly: true
+
 server:
+  volumes: *gcpVolumes
+  volumeMounts: *gcpVolumeMounts
   service:
     type: ClusterIP # never a LoadBalancer: the only public way in is the ALB of the Ingress
   ingress:

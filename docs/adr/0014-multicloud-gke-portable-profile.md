@@ -134,6 +134,23 @@ Status: proposed. Date: 2026-10-18. Docs only: nothing is implemented by this AD
 - **To verify in the implementation PR:** `argocd-k8s-auth gcp` with an `external_account` file
   credential, end to end. The fallback is the same federation with `gke-gcloud-auth-plugin` as
   the exec provider.
+- **As implemented (2026-10-18, argocd-gke):**
+  - `argocd-k8s-auth gcp` (v3.5.3) only calls Google's Application Default Credentials, which
+    read an `external_account` file (golang.org/x/oauth2 v0.36.0). The credential path is
+    unchanged; the IAM role and the endpoint differ from the plan above:
+  - **The control plane:** the DNS-based endpoint instead of authorized networks. The EKS NAT
+    address changes with every terraform-aws rebuild, and the DNS endpoint has a Google-signed
+    certificate, so there's no CA in the cluster Secret.
+  - **The IAM role:** that endpoint needs `container.clusters.connect`, which
+    `roles/container.clusterViewer` doesn't hold. `argocd-hub` gets a custom role with
+    `container.clusters.get` and `container.clusters.connect` only. All Kubernetes access is
+    RBAC.
+  - **The issuer changes with every EKS rebuild:** it comes from the GitHub variable
+    `EKS_OIDC_ISSUER`, and bootstrap-gcp is re-run after a rebuild
+    (`terraform-gcp-bootstrap/README.md`).
+  - **Proof of the connection:** Argo CD reports a cluster that no Application uses as
+    "Unknown". A throwaway probe Application with nothing to deploy (`deploy/argocd/gke/`) gets
+    Argo CD's own status until the real one exists.
 - **Why:** no long-lived kubeconfig or service-account token exists to steal. Access is revoked
   by removing one IAM binding.
 - **Alternatives:**

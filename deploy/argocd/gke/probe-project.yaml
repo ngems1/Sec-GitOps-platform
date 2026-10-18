@@ -1,0 +1,17 @@
+# THROWAWAY CONNECTION PROBE: delete with the rest of the probe (probe-rbac.yaml).
+# Argo CD project of the probe: this repository only, the GKE cluster's argocd-probe namespace
+# only (by cluster name: the endpoint is not in Git), no cluster-wide objects.
+# deploy/argocd-gke.sh fills in the repository URL.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: gke-probe
+  namespace: argocd
+spec:
+  description: "Throwaway: proves Argo CD on EKS reaches GKE (ADR 0014). Delete with the first real GKE Application."
+  sourceRepos:
+    - ${REPO_URL}
+  destinations:
+    - name: boutique-gke
+      namespace: argocd-probe
+  clusterResourceWhitelist: []
