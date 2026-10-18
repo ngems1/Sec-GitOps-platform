@@ -160,6 +160,16 @@ grafana:
       type: tempo
       access: proxy
       url: http://tempo.monitoring.svc:3200
+      # Service Graph (ADR 0011, PR 7): Explore > Tempo > Service Graph, and the dashboard's
+      # "Traces (dev)" row. Grafana reads the collector's metrics from Prometheus (PR 5):
+      # traces_service_graph_request_* for the nodes and edges, traces_spanmetrics_calls_total and
+      # traces_spanmetrics_latency_bucket for the RED table. nodeGraph: the node graph above a
+      # trace's spans. Data source UIDs only: no ${...} variable here. CI checks this block.
+      jsonData:
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
       # Trace -> logs (ADR 0011, PR 4). Grafana's own "Logs for this span" link (tracesToLogsV2)
       # does not support CloudWatch: Grafana 13.2 builds it for Loki, Splunk, Elasticsearch,
       # OpenSearch, Falcon LogScale, Google Cloud Logging and VictoriaMetrics Logs only. Instead a
