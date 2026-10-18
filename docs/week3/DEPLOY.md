@@ -23,7 +23,7 @@ push to main ──► build ×12 ──► scan gate ──► deploy dev ─�
 - **Push to `main`** that touches `src/`, `helm-chart/`, `db/`, `deploy/` or the deploy workflows: dev and then prod.
 - **Manually** (Actions > deploy > Run workflow):
   - `target = dev-only` stops after dev.
-  - `image_tag = <12-character commit SHA>` redeploys images that already exist, with no build. This is the **rollback** button.
+  - `image_tag = <12-character commit SHA>` redeploys images that already exist, with no build. This is the **rollback** button. Their 13 images are signed and verified first (job `sign-rollback`, [IMAGE-SIGNING.md](IMAGE-SIGNING.md)); if that fails, nothing is deployed.
 
 Prod always waits for a reviewer on the `prod` environment. If your repo can't have required reviewers (private repo on a free plan), prod deploys straight after dev.
 

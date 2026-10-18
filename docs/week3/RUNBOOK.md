@@ -33,6 +33,21 @@ aws eks update-kubeconfig --name week3-boutique-eks --region us-east-1
 `image_tag` = the 12-character SHA shown in the shop footer or the Slack "Deployed" message,
 `target` = `dev-only` (then `dev-then-prod` once checked). Verify with cluster-status → Helm history.
 
+- **Signing:** the run first signs and verifies that tag's 13 images (job `sign-rollback`,
+  [IMAGE-SIGNING.md](IMAGE-SIGNING.md), "A rollback").
+  - Already-signed images take about half a minute; an image from before signing (ADR 0012), 1
+    to 2 minutes.
+  - Nothing is rebuilt.
+- **If `sign-rollback` fails, nothing was deployed.** Open the failed `sign-rollback (<service>)`
+  job:
+
+| Failed step | Meaning | Do |
+|---|---|---|
+| `Image digest` | That tag doesn't exist in ECR for this service (expired by the lifecycle rule, about 20 builds kept) | Pick a newer tag (the Slack "Deployed" messages) |
+| `Vulnerability scan gate (existing findings)` | The image has CRITICAL findings: its build was stopped at the gate, so it was never deployed | Pick another tag. In an emergency, the repository variable `SCAN_BLOCKING=false` lets it through (reported, signed); set it back after |
+| `Sign ...` | Sigstore (Fulcio, Rekor) unreachable, or a signature already in ECR for that digest that doesn't verify (immutable tags refuse a second one) | Re-run the failed jobs. If it persists: the second case is an incident, someone signed that image with another identity |
+| `Verify ...` | Signed but doesn't verify with the expected identity | Don't work around it: check `SIGNER_IDENTITY` in `deploy.yml` against IMAGE-SIGNING.md |
+
 ## 2. Pods are unhealthy
 
 Check: cluster-status → the namespace. Look at the pod's STATUS and "containers that restarted".
@@ -1093,7 +1108,7 @@ lets pods in when it's down.
 | Result | Meaning | What to do |
 |---|---|---|
 | `pass` | All its images from our ECR are signed and have the SBOM, by `deploy.yml` on `main` | Nothing |
-| `fail` "no valid cosign signature" | An image of ours without our signature: built before signing (ADR 0012), a rollback to such a tag (`image_tag`), or pushed by something else | Find the image tag on the pod. An old tag: redeploy a current one. An unknown image: treat it as an incident (who pushed it?) |
+| `fail` "no valid cosign signature" | An image of ours without our signature: still running from before signing (ADR 0012), or pushed and deployed by something else. Rollbacks sign their images first (section 1) | Find the image tag on the pod. An old tag: redeploy it with `image_tag` (that signs it) or deploy a current one. An unknown image: treat it as an incident (who pushed it?) |
 | `fail` "no valid SPDX SBOM attestation" | Signed, but no SBOM attestation from the same identity | Check the build's sign step (`deploy/sign-image.sh`) for that tag |
 | `error` | Kyverno could not check: ECR access (`401`/`403`), Rekor or the TUF root unreachable | Not a verdict on the image. ECR errors: Kyverno reads ECR with the node role through instance metadata (ADR 0013, "Credentials"); a dedicated Pod Identity role is a Terraform follow-up |
 | (no results) | Kyverno not installed yet, or no scan yet | Check the deploy run's `policies` job |

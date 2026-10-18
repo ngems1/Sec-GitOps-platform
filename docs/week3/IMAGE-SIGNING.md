@@ -68,6 +68,25 @@ cosign verify-attestation --new-bundle-format=false --type spdxjson \
 
 - **A re-run of the same build signs nothing new:** what already verifies is left as it is. ECR's
   immutable tags would refuse a second `.sig` or `.att` push.
-- **An image built before this change is not signed** until a build of its commit runs the steps
-  above. A redeploy with the `image_tag` input (the rollback button) skips the `build` job, so it
-  signs nothing. Images from before ADR 0012 have no signature.
+## A rollback (the `image_tag` input)
+
+A redeploy of an existing tag skips the `build` job (nothing is rebuilt or rescanned). Instead,
+the job **`sign-rollback`** runs before dev, one per image (13), with the same identity, tools
+and checks:
+
+1. **The digest:** read from ECR for that tag. A missing image fails here.
+2. **Already signed and attested?** (`deploy/sign-image.sh status`). Every image built since
+   ADR 0012 is, so it only goes on to the verification (about half a minute).
+3. **If not** (an image built before ADR 0012):
+   - the build's scan gate, on the image's existing ECR findings (no new scan). A CRITICAL
+     finding stops it unless `SCAN_BLOCKING=false`, exactly like the build;
+   - the SBOM (Syft, artifact `sbom-<service>`);
+   - the signature and the attestation.
+4. **Verify:** the same check as the build job and Kyverno.
+
+If any image fails, `deploy-dev` and `deploy-prod` don't run: **a rollback never deploys an
+unsigned image.** The Slack message shows "rollback signing" instead of "build + scan".
+
+- **What a signature on an old image means:** "this workflow on main approved this digest for
+  deployment", the same as for a build.
+- **What the SBOM describes:** what is in the image today, read from the image itself.

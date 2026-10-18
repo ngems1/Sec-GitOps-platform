@@ -88,6 +88,7 @@ Status: accepted. Date: 2026-10-18. Phase 5, PR 2 of 3 (PR 1: ADR 0012 signs; PR
 1. **Rollbacks are signed.** A redeploy with `image_tag` skips the `build` job and signs nothing.
    Images from before ADR 0012 are unsigned, and enforce would reject a rollback to them. Sign
    the images of an `image_tag` run in `deploy.yml` (the same identity) before `deploy-dev`.
+   **Done 2026-10-18:** job `sign-rollback` (ADR 0012, note 2026-10-18).
 2. **Kyverno's own ECR role:**
    - a Pod Identity association for the admission and reports controllers' service accounts,
      with `ecr:GetAuthorizationToken`, `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer` on
