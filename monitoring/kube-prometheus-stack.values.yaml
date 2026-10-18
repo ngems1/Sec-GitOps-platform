@@ -39,8 +39,10 @@ prometheus:
   prometheusSpec:
     retention: 24h            # lab: one day of history, kept in memory/emptyDir
     scrapeInterval: 30s
+    # 2026-10-18 (ADR 0011, PR 6): request 768Mi (was 400Mi, below the measured peak of 736Mi),
+    # for that peak + about 18 MiB of exemplars + 20 to 40 MiB of span-metric series (PR 5).
     resources:
-      requests: { cpu: 100m, memory: 400Mi }
+      requests: { cpu: 100m, memory: 768Mi }
       limits: { memory: 1200Mi }
     # Exemplars (ADR 0011, PR 6): the trace IDs the OTel Collector puts on the span-metric
     # histogram buckets (traces_spanmetrics_latency_bucket), kept so Grafana can link a latency
