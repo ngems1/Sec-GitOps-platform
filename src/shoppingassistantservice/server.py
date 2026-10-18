@@ -1,8 +1,10 @@
 """shoppingassistantservice: the AI shopping assistant's HTTP API (ADR 0009).
 
   POST /ask      {"question": "...", "currency": "EUR"} -> {"outcome", "answer", "products"}
-  GET  /healthz  liveness
-  GET  /readyz   readiness: 200 only after a one-token Bedrock Converse call succeeded
+  GET  /healthz  liveness: the HTTP server answers
+  GET  /readyz   readiness: the HTTP server answers and is not shutting down. Never Bedrock: a
+                 Bedrock outage must not make the pod (and the deploy) unhealthy; questions
+                 then get the "error" outcome (HTTP 502, a short answer for the page)
   GET  /metrics  Prometheus metrics
 
 The frontend calls /ask and sends its session ID in the X-Session-Id header: it is only
@@ -78,17 +80,30 @@ def warn(msg, **fields):
 
 
 # ------------------------------------------------------------------ readiness
-ready = threading.Event()
+# Set at SIGTERM: /readyz then answers 503, so the Service stops sending questions to a pod that
+# is shutting down. Nothing else makes the pod not Ready.
+stopping = threading.Event()
+
+# Questions being answered: at shutdown the catalog channel is closed only after they finish
+# (ThreadingHTTPServer's request threads are daemon threads, server_close does not wait).
+inflight_count = [0]
+inflight_lock = threading.Condition()
+
+
+def wait_for_inflight(seconds):
+    """Waits until no question is being answered, at most `seconds`; True if none is left."""
+    with inflight_lock:
+        return inflight_lock.wait_for(lambda: inflight_count[0] == 0, timeout=seconds)
 
 
 def check_bedrock(bot, stop):
-    """One-token Converse call at startup, retried every minute until it works: the pod
-    becomes Ready only when the role, the model ID and the network to Bedrock all work."""
+    """One-token Converse call at startup, retried every minute until it works. A diagnostic
+    only (the log line and assistant_bedrock_check_ok): it shows whether the role, the model ID
+    and the network to Bedrock work, and never decides readiness."""
     while not stop.is_set():
         try:
             bot.ping()
-            ready.set()
-            m.READY.set(1)
+            m.BEDROCK_CHECK.set(1)
             info("bedrock check passed", model=MODEL_ID)
             return
         except Exception as err:  # noqa: BLE001
@@ -114,7 +129,8 @@ def make_handler(bot):
             if path == "/healthz":
                 return self._send(200, {"status": "ok"})
             if path == "/readyz":
-                return self._send(200 if ready.is_set() else 503, {"ready": ready.is_set()})
+                ok = not stopping.is_set()
+                return self._send(200 if ok else 503, {"ready": ok})
             if path == "/metrics":
                 return self._send(200, generate_latest(), CONTENT_TYPE_LATEST)
             return self._send(404, {"error": "not found"})
@@ -122,12 +138,19 @@ def make_handler(bot):
         def do_POST(self):  # noqa: N802
             if self.path.split("?")[0].rstrip("/") != "/ask":
                 return self._send(404, {"error": "not found"})
-            # One span per question (tracing.py): status, outcome and product count only, never the
-            # question, the answer or the session.
-            with tracing.server_span("POST", "/ask", "/ask", self.headers) as span:
-                code, outcome, products = self._ask()
-                if span is not None:
-                    span.record(code, outcome, products)
+            with inflight_lock:
+                inflight_count[0] += 1
+            try:
+                # One span per question (tracing.py): status, outcome and product count only, never
+                # the question, the answer or the session.
+                with tracing.server_span("POST", "/ask", "/ask", self.headers) as span:
+                    code, outcome, products = self._ask()
+                    if span is not None:
+                        span.record(code, outcome, products)
+            finally:
+                with inflight_lock:
+                    inflight_count[0] -= 1
+                    inflight_lock.notify_all()
 
         def _ask(self):
             """Answers one POST /ask; returns (status code, outcome, number of products)."""
@@ -172,7 +195,9 @@ def main():
     spans = tracing.OtelSpans() if tracing.start_tracing("shoppingassistantservice", log) else None
     import catalog  # gRPC: imported here so a missing address fails fast and clearly
     model = bedrock.BedrockModel(MODEL_ID, REGION, timeout_seconds=TIMEOUT)
-    bot = core.Assistant(model, catalog.Catalog(CATALOG_ADDR), metrics=m.PrometheusMetrics(), spans=spans, **SETTINGS)
+    # One gRPC channel to the catalog for the whole process (catalog.py), closed at shutdown.
+    products = catalog.Catalog(CATALOG_ADDR)
+    bot = core.Assistant(model, products, metrics=m.PrometheusMetrics(), spans=spans, **SETTINGS)
     m.DAILY_CAP.set(SETTINGS["daily_question_cap"])
 
     stop = threading.Event()
@@ -181,6 +206,7 @@ def main():
 
     def shutdown(*_):
         info("shutting down")
+        stopping.set()  # /readyz -> 503 (see "readiness" above)
         stop.set()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
@@ -189,6 +215,13 @@ def main():
     info("listening", port=PORT, model=MODEL_ID, region=REGION, catalog=CATALOG_ADDR,
          dailyCap=SETTINGS["daily_question_cap"], maxTokens=SETTINGS["max_tokens"])
     server.serve_forever()
+    server.server_close()
+    # Let the questions in flight finish (each is bounded by REQUEST_TIMEOUT_SECONDS), then close
+    # the catalog channel. Inside the pod's 30 s termination grace period.
+    if not wait_for_inflight(TIMEOUT + 2):
+        warn("questions still running at shutdown, closing anyway")
+    products.close()
+    info("stopped")
 
 
 if __name__ == "__main__":
