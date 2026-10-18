@@ -326,6 +326,19 @@ deploy run. It loses its in-pod 24 h of metrics.
 - **The CloudWatch to Tempo Correlation** (Section 2).
 - All of it is in `kube-prometheus-stack.values.yaml` and the dashboard JSON, so CI renders it.
 
+> **Note 2026-10-18:** as built (PRs 5 to 7), three points differ from the text above.
+> - **Exemplars carry `trace_id` and `span_id`**, not only the trace ID (Section 3). Both are
+>   random IDs, nothing personal. Grafana links the `trace_id` to Tempo.
+> - **The duration metric is `traces_spanmetrics_latency_bucket`**, not
+>   `traces_spanmetrics_duration_seconds_bucket`: the names Grafana 13.2.1's Service Graph
+>   queries (RUNBOOK section 12). The label is `k8s_namespace_name` (boutique-dev /
+>   boutique-prod), not `deployment.environment`.
+> - **The Service Graph is enabled in PR 7:** Tempo's `serviceMap.datasourceUid: prometheus` and
+>   `nodeGraph.enabled: true`, and a "Traces (dev)" row (Service graph, requests per second,
+>   error % and p95 with exemplars), fixed to boutique-dev while prod sends no traces. Not in
+>   PR 7: `tracesToMetrics`, the env variable, and the top slow routes, assistant and recent slow
+>   traces panels.
+
 ## 5. Resources and PR order
 
 ### Requests and limits
