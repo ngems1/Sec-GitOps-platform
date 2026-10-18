@@ -400,6 +400,14 @@ jobs:
           helm template boutique ./helm-chart --namespace boutique-gke -f helm-chart/values-gcp.yaml \
             --set guardrails.priority.render=true --show-only templates/priorityclass.yaml | grep -q '^  name: boutique-gke$' \
             || fail "no boutique-gke PriorityClass for deploy/argocd-gke.sh"
+          # Same right-sized requests as EKS: every service values-aws.yaml sizes, values-gcp.yaml
+          # sizes the same (inventoryService is EKS-only).
+          for svc in $(yq '[to_entries[] | select(.value.resources.requests != null) | .key] | .[]' helm-chart/values-aws.yaml); do
+            [ "$svc" = inventoryService ] && continue
+            aws=$(yq -o=json -I=0 ".${svc}.resources.requests" helm-chart/values-aws.yaml)
+            gcp=$(yq -o=json -I=0 ".${svc}.resources.requests" helm-chart/values-gcp.yaml)
+            [ "$aws" = "$gcp" ] || fail "${svc} requests ${gcp} in values-gcp.yaml, ${aws} in values-aws.yaml: keep them equal"
+          done
           echo "gke: the portable profile, all from ${ar}, tag ${tag}"
 
       # AI shopping assistant (ADR 0009), on in dev and prod. In each environment it must call
