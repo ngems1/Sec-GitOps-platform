@@ -1,0 +1,9 @@
+# Fixture for deploy/tests/exemplars-check.sh: 2 errors (with bad-kps.yaml: 6).
+config:
+  connectors:
+    spanmetrics:
+      exemplars:
+        enabled: false
+  exporters:
+    prometheus/span-metrics:
+      endpoint: ${env:MY_POD_IP}:8889

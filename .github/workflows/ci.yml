@@ -144,6 +144,16 @@ jobs:
             echo "::error::the check missed the broken pipelines in deploy/tests/collector-pipelines/bad-values.yaml"; exit 1
           fi
           test "$(grep -c '^::error' "$RUNNER_TEMP/cp.txt")" -eq 4
+      # Latency point -> example trace (ADR 0011, PR 6): the collector's exemplars in OpenMetrics,
+      # Prometheus exemplar-storage with a small buffer, OpenMetrics still asked for first, and
+      # Grafana's Prometheus data source linking trace_id to Tempo. The fixtures must give 6 errors.
+      - name: Exemplars (Prometheus and Grafana)
+        run: |
+          bash deploy/tests/exemplars-check.sh
+          if bash deploy/tests/exemplars-check.sh deploy/tests/exemplars/bad-kps.yaml deploy/tests/exemplars/bad-collector.yaml > "$RUNNER_TEMP/ex.txt"; then
+            echo "::error::the check missed the broken settings in deploy/tests/exemplars"; exit 1
+          fi
+          test "$(grep -c '^::error' "$RUNNER_TEMP/ex.txt")" -eq 6
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |

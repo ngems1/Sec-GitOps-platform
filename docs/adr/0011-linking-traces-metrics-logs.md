@@ -340,6 +340,14 @@ The table lists the components that change; no CPU limits, as for the rest of `m
 | Loki and its agent | none | none (not installed) | rejected option: it would add about 300m / 512Mi |
 | **Added requests** | | **+50m CPU, +240Mi** | under 1 point of the 7.6 CPU allocatable |
 
+> **Note 2026-10-18:** changed. The Prometheus memory request is **768Mi**, not the planned
+> 512Mi (CPU 100m and the 1200Mi limit unchanged), set in PR 6 with `exemplar-storage` so it
+> rides on the same restart. The measured peak was already 736Mi, above both 400Mi and 512Mi.
+> On top of it: about 18 MiB for a full 100,000-exemplar buffer (measured with Prometheus
+> 3.14.0: 47 MB of heap against 29 MB without the flag) and 20 to 40 MiB for PR 5's span-metric
+> series, so about 780 to 800Mi, two thirds of the limit. The added requests become +50m CPU
+> and +496Mi (collector +128Mi, Prometheus +368Mi).
+
 ### PR order
 
 Each PR is small and dev first. Prod gets the log changes through the normal promotion (they
