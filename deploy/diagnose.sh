@@ -50,6 +50,34 @@ if [ "$ns" = monitoring ]; then
     kubectl -n "$ns" get "$gpod" -o jsonpath='{range .spec.containers[?(@.name=="grafana")]}securityContext: {.securityContext}{"\n"}{range .volumeMounts[*]}mount: {.mountPath}{" ro="}{.readOnly}{"\n"}{end}{end}' 2>&1
     echo "=== ${gpod}: plugin / error messages ==="
     kubectl -n "$ns" logs "$gpod" -c grafana 2>&1 | grep -iE 'plugin|prometheus|level=(error|warn)' | grep -v 'level=debug' | head -60
+    # Which AWS identity Grafana's CloudWatch data source uses (ADR 0011): its Pod Identity role,
+    # not the node role. Read-only; prints the role name and variable names, never values.
+    #   1. the Pod Identity association of monitoring/grafana and its role;
+    #   2. the Grafana pod has the Pod Identity variables (the AWS SDK's default chain uses them
+    #      before the node's instance metadata);
+    #   3. the pod started after the association (the variables are injected at pod creation).
+    echo "=== Grafana's AWS identity (CloudWatch data source, Pod Identity) ==="
+    cluster=$(kubectl config current-context 2>/dev/null | sed 's#.*/##')
+    assoc=$(aws eks list-pod-identity-associations --cluster-name "$cluster" --namespace "$ns" \
+              --service-account grafana --query 'associations[0].associationId' --output text 2>&1)
+    if [ -z "$assoc" ] || [ "$assoc" = "None" ] || [[ "$assoc" == *rror* ]]; then
+      echo "  NO Pod Identity association for ${ns}/grafana: Grafana would fall back to the node role (${assoc})"
+    else
+      read -r role created < <(aws eks describe-pod-identity-association --cluster-name "$cluster" \
+        --association-id "$assoc" --query 'association.[roleArn, createdAt]' --output text 2>&1)
+      echo "  association ${assoc}: role ${role##*/} (created ${created})"
+      [ "${role##*/}" = "week3-boutique-grafana-cloudwatch" ] || echo "  WARNING: expected role week3-boutique-grafana-cloudwatch"
+      envnames=$(kubectl -n "$ns" get "$gpod" -o jsonpath='{range .spec.containers[?(@.name=="grafana")].env[*]}{.name}{"\n"}{end}' 2>/dev/null)
+      for v in AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE; do
+        if grep -qx "$v" <<< "$envnames"; then echo "  pod env: ${v} set"; else echo "  pod env: ${v} MISSING (restart Grafana)"; fi
+      done
+      started=$(kubectl -n "$ns" get "$gpod" -o jsonpath='{.metadata.creationTimestamp}')
+      if [ "$(date -u -d "$started" +%s 2>/dev/null || echo 0)" -ge "$(date -u -d "$created" +%s 2>/dev/null || echo 0)" ]; then
+        echo "  pod created ${started}, after the association: uses the role above"
+      else
+        echo "  pod created ${started}, BEFORE the association: restart Grafana to pick up the role"
+      fi
+    fi
     # CloudWatch panels empty? Same queries as the dashboard, straight to AWS (workflow role):
     # series found here but not in Grafana = a Grafana problem; none here = no data in AWS.
     # Search terms are unquoted token matches (a quoted term must equal a whole dimension value;
