@@ -490,6 +490,15 @@ names in all languages (ADR 0011).
   `filter @message like "<trace id>"`.
 - **Other languages:** Node, Python, Java and .NET follow in separate PRs.
 
+**The frontend starts every trace (since 2026-10-17, ADR 0010 note).** A `traceparent` sent by
+a client through the ALB no longer continues: each request gets a new root span, sampled by us.
+
+- **The client's context:** kept only as a **span link** on the frontend's server span. In
+  Tempo's span view, under Links.
+- **Dropped at the edge:** inbound `baggage` always. While tracing is off (prod),
+  `traceparent` and `tracestate` too.
+- **For you:** search by our trace ID (the logs' `trace_id`), never by a client's.
+
 **One order, one trace (EventBridge and SQS, ADR 0010 step 5).** The async flow
 (`terraform-aws/modules/environment/events.tf`, one bus `<prefix>-events`; every queue has a DLQ
 after 3 tries):
