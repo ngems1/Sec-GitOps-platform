@@ -124,3 +124,16 @@ run "nodes_read_the_boutique_repository_only" {
     error_message = "on the boutique repository only"
   }
 }
+
+run "dns_endpoint_iam_only" {
+  command = plan
+
+  assert {
+    condition     = google_container_cluster.main.control_plane_endpoints_config[0].dns_endpoint_config[0].allow_external_traffic
+    error_message = "the DNS-based endpoint is reachable from EKS (IAM decides who connects)"
+  }
+  assert {
+    condition     = !google_container_cluster.main.control_plane_endpoints_config[0].dns_endpoint_config[0].enable_k8s_tokens_via_dns && !google_container_cluster.main.control_plane_endpoints_config[0].dns_endpoint_config[0].enable_k8s_certs_via_dns
+    error_message = "IAM credentials only on the DNS endpoint: no Kubernetes tokens or client certificates"
+  }
+}

@@ -17,3 +17,8 @@ output "registry" {
 output "network" {
   value = google_compute_network.main.name
 }
+
+output "cluster_dns_endpoint" {
+  description = "The control plane's DNS-based endpoint (host name): the server of Argo CD's cluster Secret, https://<this>"
+  value       = google_container_cluster.main.control_plane_endpoints_config[0].dns_endpoint_config[0].endpoint
+}
