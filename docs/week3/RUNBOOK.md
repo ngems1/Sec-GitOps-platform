@@ -407,8 +407,11 @@ after `destroy`, would pick up whatever AWS released last.
     - `metrics/spans`: the connectors' metrics on :8889 for Prometheus (span metrics below).
   - **Resources:** 150m / 384Mi, limit 768Mi. `GOMEMLIMIT` is 614MiB, and `memory_limiter`
     refuses data from 450Mi (soft) and 600Mi (hard).
-  - The filter drops spans of an OTLP export itself (`rpc.service` =
-    `opentelemetry.proto.collector.trace.v1.TraceService`), a defence against self-tracing.
+  - The filter drops, before anything counts them:
+    - spans of an OTLP export itself (`rpc.service` =
+      `opentelemetry.proto.collector.trace.v1.TraceService`), a defence against self-tracing;
+    - gRPC health probes (since 2026-10-18): `rpc.service` = `grpc.health.v1.Health`, or a span
+      named `[/]grpc.health.v1.Health/Check` or `/Watch`, server and client side.
   - Tail sampling drops health checks (gRPC health, and `/_healthz` by path or by the frontend's
     route) and keeps errors, traces over 1 s, all of dev and 10% of prod.
   - It decides 30 s after a trace's first span (`decision_wait`; 10 s until 2026-10-17). An
@@ -693,10 +696,14 @@ Prometheus), not from the sampled traces in Tempo.
     (its HTTP probes are not traced; nothing calls its `/stock` API), so it is missing from the
     graph and from `traces_spanmetrics_calls_total` until someone orders
     (`deploy/order-flow.sh`, or an order in the shop).
-  - **`user -> checkoutservice` and `user -> emailservice`:** the kubelet's gRPC health probes (2
-    probes every 10 s and every 5 s, so 0.2/s and 0.4/s). They're root spans, so they look like
-    users. The service graph metrics have no span name, so they can't be filtered out there; the
-    panels under the graph leave them out (`span_name!~".*grpc.health.v1.Health/.*|.*/_healthz"`).
+  - **No gRPC health probes:** the kubelet's probes of checkoutservice and emailservice (0.2/s and
+    0.4/s) used to show as `user -> checkoutservice` / `user -> emailservice` edges. The collector
+    now drops every `grpc.health.v1.Health/Check` and `/Watch` span, server and client side,
+    before the span metrics and the service graph (`filter/otlp-export`; CI step "Collector
+    pipelines" checks it). Old series fade out within 10 minutes (`metrics_expiration`).
+  - **HTTP health checks** (the frontend's `/_healthz`) are still dropped by tail sampling only,
+    so they still count in `user -> frontend` and the span metrics. The panels under the graph
+    leave them out (`span_name!~".*grpc.health.v1.Health/.*|.*/_healthz"`).
   - **Prod is not there:** prod sends no spans while tracing is off.
 - **From a slow edge to the logs:**
   1. In the graph, find the arrow with the highest average time, for example `frontend ->
