@@ -80,6 +80,18 @@ Status: accepted. Date: 2026-10-18. Phase 5, PR 1 of 3 (PR 2: Kyverno verifies; 
   is a Terraform change, outside this PR.
 - **Images built before this ADR are unsigned:** including those running in dev and prod today,
   and rollbacks to them (`image_tag`). They must be signed (or rebuilt) before Kyverno enforces.
+  > **Note 2026-10-18: rollback signing is implemented.** A run with `image_tag` skips the
+  > build, and the job `sign-rollback` signs and attests the tag's 13 images before `deploy-dev`.
+  > - **Same as a build:** the same identity, tools and verification.
+  > - **Nothing rebuilt or rescanned:** images already signed are only verified; older ones get
+  >   the build's scan gate on their existing ECR findings, an SBOM, a signature and an
+  >   attestation.
+  > - **Fails closed:** if one can't be signed or verified, nothing is deployed.
+  > - **Normal deploys unchanged:** cosign, Syft and `SIGNER_*` moved to the workflow `env`
+  >   (same values), and `deploy-dev` waits for `sign-rollback` only when it runs.
+  > - **Coverage:** any image still in ECR can be signed this way, built before or after this
+  >   ADR. ECR keeps about 20 builds per repository (lifecycle rule); older tags are gone.
+  > - docs/week3/IMAGE-SIGNING.md, "A rollback"; RUNBOOK section 1.
 
 ## Revisit when
 

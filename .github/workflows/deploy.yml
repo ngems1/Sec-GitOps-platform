@@ -42,6 +42,16 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  # Supply chain (ADR 0012), for the build job and the rollback signing job: exact versions,
+  # checked by SHA-256 (the release's checksums file).
+  COSIGN_VERSION: "3.1.3"
+  COSIGN_SHA256: 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71 # cosign-linux-amd64
+  SYFT_VERSION: "1.54.1"
+  SYFT_SHA256: c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47   # syft_1.54.1_linux_amd64.tar.gz
+  # Who signs: this workflow on main (the deploy role only trusts main). Kyverno checks the same
+  # values (docs/week3/IMAGE-SIGNING.md).
+  SIGNER_IDENTITY: https://github.com/ngems1/Sec-GitOps-platform/.github/workflows/deploy.yml@refs/heads/main
+  SIGNER_ISSUER: https://token.actions.githubusercontent.com
 
 jobs:
   # Picks the image tag and checks the AWS side exists.
@@ -123,15 +133,6 @@ jobs:
       IMAGE: ${{ needs.setup.outputs.registry }}/${{ matrix.service }}:${{ needs.setup.outputs.tag }}
       REPO: ${{ matrix.service }}
       TAG: ${{ needs.setup.outputs.tag }}
-      # Supply chain (ADR 0012): exact versions, checked by SHA-256 (the release's checksums file).
-      COSIGN_VERSION: "3.1.3"
-      COSIGN_SHA256: 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71 # cosign-linux-amd64
-      SYFT_VERSION: "1.54.1"
-      SYFT_SHA256: c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47   # syft_1.54.1_linux_amd64.tar.gz
-      # Who signs: this workflow on main (the deploy role only trusts main). Kyverno checks the same
-      # values (docs/week3/IMAGE-SIGNING.md).
-      SIGNER_IDENTITY: https://github.com/ngems1/Sec-GitOps-platform/.github/workflows/deploy.yml@refs/heads/main
-      SIGNER_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - uses: actions/checkout@v5
 
@@ -264,13 +265,150 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Rollback / redeploy of an existing tag (image_tag input, no build): signs and attests the 13
+  # images of that tag with the same identity as a build, before anything is deployed (ADR 0012,
+  # note 2026-10-18). Nothing is rebuilt or rescanned:
+  #   already signed and attested (any image built since ADR 0012): verified, nothing else;
+  #   not yet (older images): the build's scan gate on the image's existing ECR findings, then
+  #     the SBOM, the signature, the attestation and the same verification as the build job.
+  # A tag that cannot be signed or verified fails here, and dev and prod are not deployed.
+  sign-rollback:
+    needs: setup
+    if: needs.setup.outputs.build == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [adservice, cartservice, checkoutservice, currencyservice, emailservice, frontend,
+                  inventoryservice, loadgenerator, paymentservice, productcatalogservice,
+                  recommendationservice, shippingservice, shoppingassistantservice]
+    env:
+      REPO: ${{ matrix.service }}
+      TAG: ${{ needs.setup.outputs.tag }}
+      REGISTRY: ${{ needs.setup.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # The same tools, versions and checks as the build job.
+      - name: Install cosign and Syft
+        run: |
+          d="$RUNNER_TEMP/bin"; mkdir -p "$d"; cd "$d"
+          curl -sSfLo cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  cosign" | sha256sum -c -
+          curl -sSfLo syft.tgz "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256}  syft.tgz" | sha256sum -c -
+          tar -xzf syft.tgz syft && rm syft.tgz
+          chmod +x cosign syft
+          echo "$d" >> "$GITHUB_PATH"
+
+      - name: Image digest
+        id: digest
+        run: |
+          digest=$(aws ecr describe-images --repository-name "${REGISTRY#*/}/${REPO}" \
+            --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG}: no image digest in ECR (got '${digest}')"; exit 1; }
+          echo "ref=${REGISTRY}/${REPO}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "${REPO}:${TAG} = ${digest}"
+
+      - name: Already signed and attested?
+        id: signed
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: |
+          if bash deploy/sign-image.sh status "$REF"; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            echo "${REPO}:${TAG} is already signed and attested by ${SIGNER_IDENTITY}: nothing to sign."
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+            echo "${REPO}:${TAG} is not signed and attested yet: signing it now."
+          fi
+
+      # Only images that passed the scan gate are signed: the build job's rule, on the image's
+      # existing ECR findings (scan on push; nothing is rescanned). A tag whose build stopped at
+      # the gate is refused here too.
+      - name: Vulnerability scan gate (existing findings)
+        if: steps.signed.outputs.done == 'false'
+        env:
+          BLOCKING: ${{ vars.SCAN_BLOCKING || 'true' }}
+        run: |
+          repo="${REGISTRY#*/}/${REPO}"
+          result=$(aws ecr describe-image-scan-findings --repository-name "$repo" --image-id imageTag="$TAG" --output json || echo '{}')
+          status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<<"$result")
+          counts=$(jq -c '.imageScanFindings.findingSeverityCounts // {}' <<<"$result")
+          critical=$(jq -r '.CRITICAL // 0' <<<"$counts")
+          high=$(jq -r '.HIGH // 0' <<<"$counts")
+          {
+            echo "| Image (rollback) | Scan | Critical | High |"
+            echo "|---|---|---|---|"
+            echo "| ${REPO}:${TAG} | ${status} | ${critical} | ${high} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Scan ${status}: ${counts}"
+          if [ "$status" != "COMPLETE" ]; then
+            echo "::warning::${REPO}: scan status ${status} ($(jq -r '.imageScanStatus.description // ""' <<<"$result"))"
+          elif [ "$critical" -gt 0 ]; then
+            jq -r '.imageScanFindings.findings[] | select(.severity=="CRITICAL") | "  \(.name)  \(.uri // "")"' <<<"$result" | head -20
+            if [ "$BLOCKING" = "true" ]; then
+              echo "::error::${REPO}:${TAG}: ${critical} CRITICAL vulnerabilities: not signed, not deployed. Roll back to another tag (or set SCAN_BLOCKING=false to only report)."
+              exit 1
+            fi
+            echo "::warning::${REPO}: ${critical} CRITICAL vulnerabilities (SCAN_BLOCKING=false, not blocking)."
+          fi
+
+      - name: SBOM (Syft, SPDX JSON)
+        if: steps.signed.outputs.done == 'false'
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: |
+          syft scan "registry:${REF}" -q -o "spdx-json=sbom-${REPO}.spdx.json"
+          echo "SBOM: $(jq '.packages | length' "sbom-${REPO}.spdx.json") packages"
+
+      - name: Sign the image and attest the SBOM (cosign keyless)
+        if: steps.signed.outputs.done == 'false'
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: |
+          [ "$SIGNER_IDENTITY" = "https://github.com/${GITHUB_WORKFLOW_REF}" ] \
+            || { echo "::error::this run would sign as https://github.com/${GITHUB_WORKFLOW_REF}, not ${SIGNER_IDENTITY}"; exit 1; }
+          bash deploy/sign-image.sh sign "$REF" "sbom-${REPO}.spdx.json"
+
+      # Always, also when it was already signed: the same check as the build job and Kyverno.
+      - name: Verify the signature and the SBOM attestation
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+        run: bash deploy/sign-image.sh verify "$REF"
+
+      - name: Upload the SBOM
+        if: steps.signed.outputs.done == 'false'
+        uses: actions/upload-artifact@v5
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
   deploy-dev:
     # After monitoring: the frontend canary analysis queries its Prometheus, and deploy-env
     # checks that Prometheus answers before any canary. A failed monitoring job does not block
     # dev (that check decides whether a canary can run).
-    needs: [setup, build, monitoring]
-    # Runs after a successful build, or straight away when redeploying an existing tag.
-    if: always() && needs.setup.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.monitoring.result != 'cancelled'
+    needs: [setup, build, sign-rollback, monitoring]
+    # Runs after a successful build, or, when redeploying an existing tag, after its images are
+    # signed and verified (sign-rollback). Each of the two is skipped when the other runs.
+    if: >-
+      always() && needs.setup.result == 'success'
+      && (needs.build.result == 'success' || needs.build.result == 'skipped')
+      && (needs.sign-rollback.result == 'success' || needs.sign-rollback.result == 'skipped')
+      && (needs.build.result == 'success' || needs.sign-rollback.result == 'success')
+      && needs.monitoring.result != 'cancelled'
     uses: ./.github/workflows/deploy-env.yml
     secrets: inherit # SLACK_ORDERS_WEBHOOK_URL (optional) for the order notifications
     with:
@@ -415,7 +553,7 @@ jobs:
             "Version \`${TAG}\` passed dev: ${DEV_URL}"$'\n'"Approve it in the run: *Review deployments*."
 
   notify:
-    needs: [setup, build, deploy-dev, deploy-prod, isolation-test, monitoring]
+    needs: [setup, build, sign-rollback, deploy-dev, deploy-prod, isolation-test, monitoring]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -425,6 +563,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           TAG: ${{ needs.setup.outputs.tag || 'none' }}
           BUILD: ${{ needs.build.result }}
+          SIGN_ROLLBACK: ${{ needs.sign-rollback.result }}
           DEV: ${{ needs.deploy-dev.result }}
           PROD: ${{ needs.deploy-prod.result }}
           ISOLATION: ${{ needs.isolation-test.result }}
@@ -434,7 +573,12 @@ jobs:
           GRAFANA_URL: ${{ needs.monitoring.outputs.grafana_url }}
         run: |
           icon() { case "$1" in success) echo ":white_check_mark:";; skipped) echo ":fast_forward:";; cancelled) echo ":no_entry_sign:";; *) echo ":x:";; esac; }
-          text="$(icon "$SETUP") setup   $(icon "$BUILD") build + scan   $(icon "$DEV") dev   $(icon "$PROD") prod   $(icon "$ISOLATION") isolation test"
+          if [ "$SIGN_ROLLBACK" = skipped ]; then
+            text="$(icon "$SETUP") setup   $(icon "$BUILD") build + scan"
+          else
+            text="$(icon "$SETUP") setup   $(icon "$SIGN_ROLLBACK") rollback signing"
+          fi
+          text+="   $(icon "$DEV") dev   $(icon "$PROD") prod   $(icon "$ISOLATION") isolation test"
           [ -n "$DEV_URL" ] && text+=$'\n'"Dev: ${DEV_URL}"
           [ -n "$PROD_URL" ] && text+=$'\n'"Prod: ${PROD_URL}"
           [ -n "$GRAFANA_URL" ] && text+=$'\n'"Grafana: ${GRAFANA_URL}"

@@ -35,8 +35,8 @@ for f in "$policy" "$values"; do
 done
 
 # What is checked: the signing identity, issuer and SBOM type (one source: deploy.yml).
-want_id=$(yq '.jobs.build.env.SIGNER_IDENTITY' .github/workflows/deploy.yml)
-want_iss=$(yq '.jobs.build.env.SIGNER_ISSUER' .github/workflows/deploy.yml)
+want_id=$(yq '.env.SIGNER_IDENTITY' .github/workflows/deploy.yml)
+want_iss=$(yq '.env.SIGNER_ISSUER' .github/workflows/deploy.yml)
 [ "$(p '[.spec.attestors[].cosign.keyless.identities[]] | length')" = 1 ] || err "$policy" "exactly one keyless identity"
 [ "$(p '.spec.attestors[0].cosign.keyless.identities[0].subject')" = "\"${want_id}\"" ] \
   || err "$policy" "subject must be SIGNER_IDENTITY of deploy.yml (${want_id}), exact, no regexp"
