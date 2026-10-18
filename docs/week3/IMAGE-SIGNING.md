@@ -90,3 +90,25 @@ unsigned image.** The Slack message shows "rollback signing" instead of "build +
 - **What a signature on an old image means:** "this workflow on main approved this digest for
   deployment", the same as for a build.
 - **What the SBOM describes:** what is in the image today, read from the image itself.
+
+## Mirror to Artifact Registry (GKE, ADR 0014)
+
+The workflow **`mirror-images-gcp`** (manual, on `main`) copies what prod runs to the
+Artifact Registry repository `boutique` (`terraform-gcp/registry.tf`), with
+`deploy/mirror-images.sh`:
+
+1. **Which images:** the tag in `gitops/prod/values.yaml` on the promotion branch `env/prod`.
+   That covers the 10 services of the portable profile and the loadgenerator.
+2. **Before the copy:** the digest ECR holds for that tag must verify in ECR
+   (`sign-image.sh verify`). An image that doesn't verify there is not copied.
+3. **The copy:** `cosign copy` of the image, its `.sig` and its `.att`, by digest, to
+   `<service>:<tag>`. The digest doesn't change, so the signature is still valid.
+4. **After the copy:**
+   - the tag in Artifact Registry must name the same digest. Tags are immutable there too, and
+     `cosign copy` doesn't fail when the tag already holds another image;
+   - the image is verified again in Artifact Registry, with the same identity and issuer as above.
+5. **redis and busybox** (unsigned upstream): copied from Docker Hub with `crane`, at the digests
+   the chart pins, and their digests checked.
+
+**Re-runs** copy nothing new, and check everything again. **The logs** show no digests, and the
+AWS account and GCP project IDs are masked.
