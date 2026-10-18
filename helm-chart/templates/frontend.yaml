@@ -142,6 +142,13 @@ kind: Service
 metadata:
   name: {{ .Values.frontend.name }}
   namespace: {{ .Release.Namespace }}
+  {{- if and .Values.frontend.ingress.enabled (eq .Values.frontend.ingress.provider "gce") }}
+  annotations:
+    # GKE Ingress (ingress-gce.yaml): load balancing straight to the pods (NEGs), with the
+    # BackendConfig's health check. The Service stays ClusterIP.
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: {{ printf "{\"default\": \"%s\"}" .Values.frontend.name | squote }}
+  {{- end }}
 spec:
   type: ClusterIP
   selector:
@@ -183,7 +190,7 @@ spec:
   ingress:
   {{- if .Values.frontend.externalService }}
   - {}
-  {{- else if .Values.frontend.ingress.enabled }}
+  {{- else if and .Values.frontend.ingress.enabled (eq .Values.frontend.ingress.provider "alb") }}
   # ALB (ip targets): traffic and health checks come from inside the VPC.
   - from:
     - ipBlock:
@@ -207,6 +214,18 @@ spec:
     ports:
      - port: 8080
        protocol: TCP
+  {{- if and .Values.frontend.ingress.enabled (eq .Values.frontend.ingress.provider "gce") }}
+  # GKE Ingress (container-native): the shop's traffic and the health checks reach the pods
+  # from Google's load balancers (the Google Front End and health checkers), these ranges only.
+  - from:
+    {{- range .Values.frontend.ingress.gce.sourceRanges }}
+    - ipBlock:
+        cidr: {{ . }}
+    {{- end }}
+    ports:
+     - port: 8080
+       protocol: TCP
+  {{- end }}
   {{- end }}
   # Metrics: Prometheus in the monitoring namespace only.
   - from:

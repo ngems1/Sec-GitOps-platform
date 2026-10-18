@@ -1,4 +1,4 @@
-{{- if and .Values.frontend.create .Values.frontend.ingress.enabled }}
+{{- if and .Values.frontend.create .Values.frontend.ingress.enabled (eq .Values.frontend.ingress.provider "alb") }}
 {{- $canaryAlb := and .Values.frontend.canary.enabled (eq .Values.frontend.canary.trafficRouter "alb") }}
 # Week 3: public entry point on AWS. The AWS Load Balancer Controller (kube-system)
 # sees this Ingress and creates one internet-facing ALB for this namespace,

@@ -1,6 +1,6 @@
 # GKE: the portable profile (ADR 0014, decision 1), on top of values.yaml. Deployed by Argo CD
 # on EKS (Application boutique-gke, deploy/argocd/gke/), with plain sync: no Argo Rollouts
-# canary, no Ingress, nothing public (checked through a port-forward, deploy/argocd-gke.sh).
+# canary. Public through a GKE Ingress at https://gke.<domain> (frontend.ingress below).
 #
 # Runs: the 10 services (ad, cart, checkout, currency, email, frontend, payment, catalog,
 # recommendation, shipping), the loadgenerator and an in-cluster Redis. Not here, on purpose:
@@ -23,10 +23,15 @@ seccompProfile:
   type: RuntimeDefault
 
 frontend:
-  externalService: false   # no LoadBalancer Service: no public address (a later decision)
+  externalService: false   # no LoadBalancer Service: the Ingress below is the only way in
   platform: gcp            # the shop's banner
+  # Public at https://gke.<domain> (ADR 0014, decision 6): GKE Ingress, external Application
+  # Load Balancer on the static IP boutique-gke-ingress (terraform-gcp), Google-managed
+  # certificate, HTTP -> HTTPS (templates/ingress-gce.yaml). The host is an Application
+  # parameter (deploy/argocd-gke.sh), like the registry.
   ingress:
-    enabled: false
+    enabled: true
+    provider: gce
   canary:
     enabled: false         # plain Deployment: no Argo Rollouts on GKE
   resources:
