@@ -23,5 +23,8 @@
     "pino": "8.15.0",
     "simple-card-validator": "^1.1.0",
     "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/context-async-hooks": "1.15.2"
   }
 }
