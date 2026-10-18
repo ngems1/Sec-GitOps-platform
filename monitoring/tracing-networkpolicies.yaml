@@ -29,6 +29,15 @@ spec:
       protocol: TCP
     - port: 4318
       protocol: TCP
+  # The span metrics (ADR 0011, PR 5): Prometheus only, in this namespace (PodMonitor otel-collector-agent).
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+          prometheus: monitoring-kube-prometheus-prometheus
+    ports:
+    - port: 8889
+      protocol: TCP
   egress:
   - to:
     - podSelector:
