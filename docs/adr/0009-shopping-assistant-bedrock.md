@@ -75,6 +75,12 @@ Option 2, with read-only tools and a dedicated page.
     and TCP 443 (the VPC CNI cannot filter by host name; a Bedrock VPC endpoint is a later option).
 - **Readiness:** at start the service makes a one-token `Converse` call with its own credentials;
   the pod is Ready only if it succeeds, and the Bedrock error is logged if not.
+  > **Note 2026-10-18:** changed. Readiness no longer depends on Bedrock: a slow, throttled or
+  > unavailable Bedrock made the pod unready, which failed `argocd-wait` and the whole deploy. Both
+  > probes now check only the assistant's own HTTP server (`/readyz` turns 503 at shutdown). The
+  > start-up `Converse` call stays as a diagnostic: the log line and the metric
+  > `assistant_bedrock_check_ok` (was `assistant_ready`). With Bedrock down, questions get the
+  > "error" outcome (HTTP 502, a short answer).
 - **Metrics** (Prometheus): requests by outcome (answered, refused, rate limited, paused, error),
   latency histogram, Bedrock errors by type, tokens by direction (from the `usage` of each
   response), tool calls by tool. A Grafana row on the Boutique dashboard.
