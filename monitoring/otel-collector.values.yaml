@@ -7,7 +7,7 @@
 #
 # Pipelines (ADR 0011, step 6, PR 5): span metrics and a service graph from ALL spans, before tail
 # sampling (Tempo only sees the sampled traces):
-#   traces/in       otlp -> memory_limiter -> filter (OTLP export spans) -> k8s_attributes
+#   traces/in       otlp -> memory_limiter -> filter (OTLP export, gRPC health) -> k8s_attributes
 #                   -> connectors spanmetrics, servicegraph, forward
 #   traces/sampled  forward -> tail_sampling -> batch -> Tempo           (sampling unchanged)
 #   metrics/spans   spanmetrics, servicegraph -> transform (resource: service + namespace only)
@@ -99,14 +99,23 @@ config:
       limit_mib: 600         # under GOMEMLIMIT (614Mi) and the 768Mi limit: see resources above
       spike_limit_mib: 150
 
-    # Defence against self-tracing: spans of an OTLP export itself (a service whose exporter
-    # connection is traced) are dropped before they cost anything. The services no longer make
-    # them (ADR 0010, step 3); this keeps one bad image from filling Tempo.
+    # Dropped before anything counts them (span metrics, service graph, Tempo):
+    # - Defence against self-tracing: spans of an OTLP export itself (a service whose exporter
+    #   connection is traced). The services no longer make them (ADR 0010, step 3); this keeps one
+    #   bad image from filling Tempo.
+    # - gRPC health probes (grpc.health.v1.Health/Check and /Watch), server and client side: the
+    #   kubelet's probes made root spans that showed as user -> checkoutservice / emailservice
+    #   edges and request rates in the service graph. Matched by rpc.service and by span name
+    #   (Go and Java name them "grpc.health.v1.Health/Check", Python "/grpc.health.v1.Health/Check").
+    #   cartservice already drops its own (Tracing.cs). The HTTP health checks (/_healthz) are
+    #   still dropped by tail_sampling only, so they still count in the span metrics.
     filter/otlp-export:
       error_mode: ignore
       traces:
         span:
           - 'span.attributes["rpc.service"] == "opentelemetry.proto.collector.trace.v1.TraceService"'
+          - 'span.attributes["rpc.service"] == "grpc.health.v1.Health"'
+          - 'IsMatch(span.name, "^/?grpc[.]health[.]v1[.]Health/(Check|Watch)$")'
 
     # Who sent the span: matched by the sender pod's IP (the services send straight here).
     k8s_attributes:
