@@ -209,6 +209,20 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Read-only (get). Kyverno's audit of image signatures and SBOM attestations (ADR 0013):
+      # PolicyReport results per pod, and every result that is not "pass" (RUNBOOK section 16).
+      - name: Image signatures (Kyverno, audit)
+        if: startsWith(inputs.namespace, 'boutique-')
+        env:
+          NS: ${{ inputs.namespace }}
+        run: |
+          {
+            echo "### Image signatures (Kyverno audit) in ${NS}"
+            echo '```'
+            bash deploy/kyverno-report.sh "$NS"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Read-only (get). An aggregated API that is down makes kubectl's discovery fail with
       # "the server is currently unable to handle the request" (seen in deploy-env's Load
       # Balancer Controller step). Lists every APIService, then the conditions of each one
