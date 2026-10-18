@@ -1,6 +1,6 @@
 # The signed images, mirrored from ECR by digest with their .sig and .att (ADR 0014, decision 5:
 # `cosign copy`, a later PR). Same digest, so the signatures stay valid. GKE pulls from here as
-# the gke-nodes service account (roles/artifactregistry.reader, terraform-gcp-bootstrap).
+# the gke-nodes service account (reader on this repository only, below).
 resource "google_artifact_registry_repository" "boutique" {
   project       = var.project_id
   location      = var.region
@@ -31,4 +31,15 @@ resource "google_artifact_registry_repository" "boutique" {
       older_than = "86400s" # never a version pushed in the last day (a copy in progress)
     }
   }
+}
+
+# The nodes may pull from this repository only (no project-wide Artifact Registry read). The one
+# IAM binding of this root: gha-deploy's roles/artifactregistry.admin covers the repository's
+# IAM, no project IAM right is needed. The account itself is the bootstrap's.
+resource "google_artifact_registry_repository_iam_member" "nodes_pull" {
+  project    = var.project_id
+  location   = google_artifact_registry_repository.boutique.location
+  repository = google_artifact_registry_repository.boutique.name
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${var.node_service_account}"
 }

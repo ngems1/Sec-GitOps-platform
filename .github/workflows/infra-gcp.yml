@@ -6,9 +6,11 @@ name: infra-gcp
 #
 #   pull request -> fmt / test / plan as gha-plan (nothing is changed)
 #   manual run   -> plan, apply or destroy as gha-deploy, from main only
-#                   (Actions tab > infra-gcp > Run workflow)
+#                   (Actions tab > infra-gcp > Run workflow); apply and destroy wait for the
+#                   prod environment's reviewers
 #
-# Unlike the AWS infra workflow, a merge applies nothing: run "plan", read it, then "apply".
+# Unlike the AWS infra workflow, a merge applies nothing: run "plan", read it, then "apply"
+# (or "destroy", whose own plan is in the run's summary).
 # The repository and its logs are public: no plan values and no outputs are printed, only which
 # resources change.
 
@@ -37,8 +39,22 @@ env:
   ACTION: ${{ inputs.action || 'plan' }}
 
 jobs:
+  # apply and destroy change real resources (destroy deletes the registry's images too): they
+  # wait for a prod reviewer, like bootstrap-gcp. Plans skip this job and need no approval.
+  approval:
+    name: Approve ${{ inputs.action }} (prod reviewers)
+    if: github.event_name == 'workflow_dispatch' && (inputs.action == 'apply' || inputs.action == 'destroy')
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 5
+    steps:
+      - run: echo "terraform ${{ inputs.action }} on terraform-gcp approved."
+
   terraform:
     name: GCP infra (${{ inputs.action || 'plan' }})
+    needs: approval
+    # Runs after an approval, or when there is none to wait for (plans). Never after a rejection.
+    if: ${{ !cancelled() && (needs.approval.result == 'success' || (needs.approval.result == 'skipped' && (github.event_name == 'pull_request' || inputs.action == 'plan'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45 # creating or deleting an Autopilot cluster takes 10-20 minutes
     defaults:
@@ -77,9 +93,11 @@ jobs:
           terraform init -backend=false -input=false -no-color > /dev/null
           terraform validate -no-color
           terraform test -no-color
-          # Service accounts and project IAM belong to terraform-gcp-bootstrap: gha-deploy must
-          # never need the rights to create accounts or grant roles.
-          if grep -lE 'resource "google_(service_account|project_iam_|[a-z_]+_iam_(member|binding|policy))' ./*.tf; then
+          # Service accounts and IAM belong to terraform-gcp-bootstrap: gha-deploy must never need
+          # the rights to create accounts or grant project roles. The one exception: the nodes'
+          # read on the boutique repository (registry.tf, within gha-deploy's registry admin).
+          if grep -nE 'resource "google_(service_account|project_iam_|[a-z_]+_iam_(member|binding|policy))' ./*.tf \
+              | grep -vE '^\./registry\.tf:[0-9]+:resource "google_artifact_registry_repository_iam_member" "nodes_pull"'; then
             echo "::error::Service accounts or IAM bindings in terraform-gcp: they go in terraform-gcp-bootstrap"
             exit 1
           fi

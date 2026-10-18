@@ -8,10 +8,11 @@ profile only: 10 services, the loadgenerator and an in-cluster Redis.
 | VPC `boutique-gke`, one subnet in `us-east1` | Nodes `10.20.0.0/22`, Pods `10.24.0.0/17`, Services `10.28.0.0/22` (no overlap with the EKS VPC, `10.0.0.0/16`). Private Google Access on (`network.tf`) |
 | Cloud NAT | Outbound only, this subnet only: `redis-cart` and the loadgenerator's init container pull from Docker Hub. `cloud_nat = false` once they are mirrored too |
 | GKE Autopilot `boutique-gke` | Regional (Autopilot has no zonal option), `REGULAR` channel, private nodes, nodes as the bootstrap's `gke-nodes` service account, control plane closed to all but `control_plane_authorized_cidrs` (empty for now), no deletion protection (`gke.tf`) |
-| Artifact Registry `boutique` | Docker, immutable tags, keeps the last 20 builds (60 versions: image, `.sig`, `.att`) like ECR. Target of the `cosign copy` mirror (a later PR) (`registry.tf`) |
+| Artifact Registry `boutique` | Docker, immutable tags, keeps the last 20 builds (60 versions: image, `.sig`, `.att`) like ECR. Target of the `cosign copy` mirror (a later PR). The nodes may read this repository only (`registry.tf`) |
 
-**No service accounts or IAM here:** `terraform-gcp-bootstrap` creates them, and the infra-gcp
-workflow fails if this root declares any. `gha-deploy` only needs its existing roles.
+**No service accounts or project IAM here:** `terraform-gcp-bootstrap` creates them, and the
+infra-gcp workflow fails if this root declares any. The one IAM binding is the nodes' read on
+the `boutique` repository, which `gha-deploy`'s Artifact Registry admin role already covers.
 
 ## Before the first apply
 
@@ -24,11 +25,12 @@ workflow fails if this root declares any. `gha-deploy` only needs its existing r
 
 Actions > **infra-gcp** > Run workflow, on `main`:
 
-- **plan:** shows which resources change, never values. First apply: 6 resources (network,
-  subnet, router, NAT, cluster, registry).
-- **apply:** applies that plan. About 10-15 minutes for the cluster.
-- **destroy:** removes everything here, the registry's images included. The bootstrap root
-  (federation, state, budget) stays.
+- **plan:** shows which resources change, never values. First apply: 7 resources (network,
+  subnet, router, NAT, cluster, registry, the nodes' read on it).
+- **apply:** waits for a `prod` reviewer, then plans again and applies that plan. About 10-15
+  minutes for the cluster.
+- **destroy:** waits for a `prod` reviewer, then removes everything here, the registry's images
+  included. The bootstrap root (federation, state, budget) stays.
 
 Pull requests that touch `terraform-gcp/` get the tests and a plan as `gha-plan`. A merge
 applies nothing. State: the bootstrap bucket, prefix `gcp-infra`.

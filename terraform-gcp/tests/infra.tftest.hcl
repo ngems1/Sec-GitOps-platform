@@ -15,6 +15,12 @@ mock_provider "google" {
       id = "projects/boutique-test-123456/regions/us-east1/subnetworks/boutique-gke-us-east1"
     }
   }
+  mock_resource "google_artifact_registry_repository" {
+    override_during = plan
+    defaults = {
+      name = "boutique"
+    }
+  }
 }
 
 variables {
@@ -104,4 +110,17 @@ run "never_the_compute_default_account" {
     node_service_account = "123456789012-compute@developer.gserviceaccount.com"
   }
   expect_failures = [var.node_service_account]
+}
+
+run "nodes_read_the_boutique_repository_only" {
+  command = plan
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.nodes_pull.role == "roles/artifactregistry.reader" && google_artifact_registry_repository_iam_member.nodes_pull.member == "serviceAccount:gke-nodes@boutique-test-123456.iam.gserviceaccount.com"
+    error_message = "the node service account reads images, nothing more"
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.nodes_pull.repository == google_artifact_registry_repository.boutique.name && google_artifact_registry_repository_iam_member.nodes_pull.location == "us-east1"
+    error_message = "on the boutique repository only"
+  }
 }
