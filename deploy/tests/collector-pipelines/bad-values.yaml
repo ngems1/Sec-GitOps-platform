@@ -1,0 +1,261 @@
+# Fixture for deploy/tests/collector-pipelines-check.sh (must fail): tail_sampling before the connectors,
+# a URL dimension, decision_wait changed. Generated from monitoring/otel-collector.values.yaml.
+# OpenTelemetry Collector (open-telemetry/opentelemetry-collector, version OTEL_COLLECTOR_CHART_VERSION
+# in deploy.yml), installed by deploy/monitoring.sh into "monitoring". ADR 0010, rollout step 1.
+#
+# One replica on purpose: the tail sampling rules (keep errors, keep slow traces) need every span
+# of a trace on the same instance. Scaling out needs a loadbalancing exporter tier keyed on the
+# trace ID in front, never more replicas behind this Service (ADR 0010).
+#
+# Pipelines (ADR 0011, step 6, PR 5): span metrics and a service graph from ALL spans, before tail
+# sampling (Tempo only sees the sampled traces):
+#   traces/in       otlp -> memory_limiter -> filter (OTLP export spans) -> k8s_attributes
+#                   -> connectors spanmetrics, servicegraph, forward
+#   traces/sampled  forward -> tail_sampling -> batch -> Tempo           (sampling unchanged)
+#   metrics/spans   spanmetrics, servicegraph -> transform (resource: service + namespace only)
+#                   -> prometheus exporter :8889, scraped through the PodMonitor below
+# Who may send: pods in boutique-dev and boutique-prod; who may scrape :8889: Prometheus
+# (monitoring/tracing-networkpolicies.yaml).
+
+mode: deployment
+replicaCount: 1
+fullnameOverride: otel-collector # Service otel-collector.monitoring.svc:4317 (gRPC) / 4318 (HTTP)
+image:
+  repository: otel/opentelemetry-collector-contrib # tail_sampling and k8s_attributes are contrib
+command:
+  name: otelcol-contrib
+# ADR 0010 "Capacity", raised for the connectors (ADR 0011 PR 5): the span-metric and service-graph
+# state (a few thousand series) and every span now going through two more components. Measured
+# before: max 86Mi of 512Mi. Memory, from the 768Mi limit down:
+#   768Mi  the container limit (OOM kill)
+#   614Mi  GOMEMLIMIT, which the chart sets to 80% of the limit: Go collects harder from here
+#   600Mi  memory_limiter limit_mib: hard limit, data refused (and a GC forced)
+#   450Mi  memory_limiter soft limit (limit_mib - spike_limit_mib 150): data refused from here
+# The same ratios as before (400/100 under GOMEMLIMIT 410 and the 512Mi limit).
+useGOMEMLIMIT: true
+resources:
+  requests: {cpu: 150m, memory: 384Mi}
+  limits: {memory: 768Mi}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile: {type: RuntimeDefault}
+# Only what k8s_attributes needs: pods (and their namespace), and ReplicaSets to find the
+# Deployment name. No preset: it would add more rules and put k8s_attributes before memory_limiter.
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: [pods, namespaces]
+      verbs: [get, list, watch]
+    - apiGroups: [apps]
+      resources: [replicasets]
+      verbs: [get, list, watch]
+# OTLP in; the span metrics out on 8889 (Prometheus scrapes the pod, not the Service).
+ports:
+  jaeger-compact: {enabled: false}
+  jaeger-thrift: {enabled: false}
+  jaeger-grpc: {enabled: false}
+  zipkin: {enabled: false}
+  span-metrics:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+# Prometheus (kube-prometheus-stack) scrapes the span metrics: its operator selects monitors with
+# release=monitoring and reloads Prometheus's config when one appears (no restart).
+podMonitor:
+  enabled: true
+  metricsEndpoints:
+    - port: span-metrics
+      interval: 30s # = Prometheus's scrapeInterval
+  extraLabels:
+    release: monitoring
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null # the collector's own metrics stay on :8888, not scraped yet (step 6)
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: null
+      spike_limit_percentage: null
+      limit_mib: 600 # under GOMEMLIMIT (614Mi) and the 768Mi limit: see resources above
+      spike_limit_mib: 150
+    # Defence against self-tracing: spans of an OTLP export itself (a service whose exporter
+    # connection is traced) are dropped before they cost anything. The services no longer make
+    # them (ADR 0010, step 3); this keeps one bad image from filling Tempo.
+    filter/otlp-export:
+      error_mode: ignore
+      traces:
+        span:
+          - 'span.attributes["rpc.service"] == "opentelemetry.proto.collector.trace.v1.TraceService"'
+    # Who sent the span: matched by the sender pod's IP (the services send straight here).
+    k8s_attributes:
+      passthrough: false
+      pod_association:
+        - sources:
+            - from: resource_attribute
+              name: k8s.pod.ip
+        - sources:
+            - from: connection
+      extract:
+        metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+          - k8s.replicaset.name
+          - k8s.statefulset.name
+          - k8s.job.name
+    # A trace is kept when one policy keeps it; the drop policy wins over all of them.
+    tail_sampling:
+      # 30 s (was 10 s): an order's trace goes through EventBridge and SQS and its last spans
+      # (inventory, email) arrive about 4.5 s or more after the first, later on a retry. Memory:
+      # the collector holds 3x the in-flight spans, a few MiB at today's rate; memory_limiter
+      # (400 MiB) and num_traces bound the worst case. RUNBOOK section 12.
+      decision_wait: 10s
+      num_traces: 20000
+      expected_new_traces_per_sec: 50
+      policies:
+        - name: drop-health-checks
+          type: drop
+          drop:
+            drop_sub_policy:
+              - name: health-check-spans
+                type: ottl_condition
+                ottl_condition:
+                  error_mode: ignore
+                  span:
+                    - 'span.attributes["rpc.service"] == "grpc.health.v1.Health"'
+                    - 'span.attributes["http.target"] == "/_healthz"'
+                    - 'span.attributes["url.path"] == "/_healthz"'
+                    - 'span.attributes["http.route"] == "/_healthz"' # frontend (route-named spans)
+        - name: keep-errors
+          type: status_code
+          status_code: {status_codes: [ERROR]}
+        - name: keep-slow
+          type: latency
+          latency: {threshold_ms: 1000} # the shop's latency SLO
+        - name: dev-all
+          type: and
+          and:
+            and_sub_policy:
+              - name: namespace-boutique-dev
+                type: string_attribute
+                string_attribute: {key: k8s.namespace.name, values: [boutique-dev]}
+              - name: dev-100-percent
+                type: probabilistic
+                probabilistic: {sampling_percentage: 100}
+        - name: prod-10-percent
+          type: and
+          and:
+            and_sub_policy:
+              - name: namespace-boutique-prod
+                type: string_attribute
+                string_attribute: {key: k8s.namespace.name, values: [boutique-prod]}
+              - name: prod-10-percent
+                type: probabilistic
+                probabilistic: {sampling_percentage: 10}
+    batch: {}
+    # Span metrics and service graph: only service.name and k8s.namespace.name stay on the
+    # metrics' resource. Pod name/UID, node, service.instance.id (random per JVM in the Java
+    # agent) and SDK details would otherwise make one set of series per pod (and per restart).
+    # The connector also labels every point with collector.instance.id (a new value at each
+    # collector restart, so a new set of series): dropped too, there is one collector.
+    # The duration histogram is renamed to the name Grafana's Service Graph queries:
+    # traces_spanmetrics_latency_bucket (Grafana 13.2.1, bundled Tempo plugin 13.1.5,
+    # graphTransform.ts: histogram_quantile(.9, sum(rate(traces_spanmetrics_latency_bucket{}...)).
+    # Its unit is cleared so the Prometheus exporter adds no "_seconds"; the values stay in seconds.
+    transform/span-metrics-resource:
+      error_mode: ignore
+      metric_statements:
+        - context: resource
+          statements:
+            - keep_keys(attributes, ["service.name", "k8s.namespace.name"])
+        - context: metric
+          statements:
+            - set(name, "traces.spanmetrics.latency") where name == "traces.spanmetrics.duration"
+            - set(unit, "") where name == "traces.spanmetrics.latency"
+        - context: datapoint
+          statements:
+            - delete_key(attributes, "collector.instance.id")
+  # Span metrics and service graph from ALL spans (ADR 0011, PR 5), before tail sampling.
+  connectors:
+    # Rate, errors and duration per service, span name, span kind and status (the default
+    # dimensions), plus the namespace (dev / prod). No request attribute is a dimension: span
+    # names are route templates and gRPC methods (no IDs), and nothing personal is a label.
+    spanmetrics:
+      namespace: traces.spanmetrics # traces_spanmetrics_calls_total, the name Grafana queries
+      histogram:
+        unit: s
+        explicit:
+          buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+      dimensions:
+        - name: k8s.namespace.name
+        - name: http.target
+      # The metric's resource is keyed on these only (and reduced to them by the transform):
+      # a new pod or a restart must not start new series.
+      resource_metrics_key_attributes: [service.name, k8s.namespace.name]
+      exemplars:
+        enabled: true # trace IDs on the histogram buckets (Grafana, ADR 0011 PR 6)
+        max_per_data_point: 5
+      metrics_flush_interval: 15s
+      metrics_expiration: 10m # a span name not seen for 10 min stops being exported
+      aggregation_temporality: AGGREGATION_TEMPORALITY_CUMULATIVE
+    # Requests between services (client span <-> server span of the same trace), per namespace.
+    # A client span with no server span (Redis, MySQL, SQS, EventBridge, DynamoDB, Bedrock)
+    # becomes an edge to a virtual node named after the first of these attributes it has.
+    servicegraph:
+      latency_histogram_buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+      dimensions: [k8s.namespace.name]
+      store:
+        ttl: 10s # how long a half pair waits for its other half
+        max_items: 2000 # half pairs in flight: 12 services at a few hundred spans/s
+      virtual_node_peer_attributes: [peer.service, db.system, rpc.service, messaging.system, server.address]
+      metrics_flush_interval: 15s
+    # Hands the same spans to the sampled pipeline (connectors cannot be followed by processors
+    # in the same pipeline).
+    forward: {}
+  exporters:
+    debug: null
+    otlp_grpc/tempo:
+      endpoint: tempo.monitoring.svc:4317
+      tls:
+        insecure: true # inside the cluster; Tempo accepts from this collector only (NetworkPolicy)
+    # The span metrics for Prometheus (PodMonitor), with exemplars (OpenMetrics).
+    prometheus/span-metrics:
+      endpoint: ${env:MY_POD_IP}:8889
+      enable_open_metrics: true
+      resource_to_telemetry_conversion:
+        enabled: false # resource attributes stay off the labels (service.name becomes job)
+  service:
+    pipelines:
+      logs: null
+      metrics: null
+      traces: null
+      # Every span: metrics first, then the copy that is sampled.
+      traces/in:
+        receivers: [otlp]
+        processors: [memory_limiter, filter/otlp-export, k8s_attributes, tail_sampling]
+        exporters: [spanmetrics, servicegraph, forward]
+      # Tail sampling unchanged (errors, slower than 1 s, 100% of dev, 10% of prod): Tempo.
+      traces/sampled:
+        receivers: [forward]
+        processors: [tail_sampling, batch]
+        exporters: [otlp_grpc/tempo]
+      metrics/spans:
+        receivers: [spanmetrics, servicegraph]
+        processors: [transform/span-metrics-resource, batch]
+        exporters: [prometheus/span-metrics]
