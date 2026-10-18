@@ -359,6 +359,39 @@ jobs:
           unset GRAFANA_ADMIN_PASSWORD   # only used to decide; the Job reads the login from its Secret
           bash deploy/tracing-smoke.sh
 
+  # Kyverno (ADR 0013), AUDIT ONLY: reports pods in boutique-dev and boutique-prod whose images
+  # from our ECR lack the signature or SBOM attestation of ADR 0012. It never blocks or changes a
+  # pod, so it runs beside the deploy and nothing waits for it (RUNBOOK section 16).
+  policies:
+    needs: setup
+    if: needs.setup.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KYVERNO_CHART_VERSION: "3.9.1" # kyverno/kyverno, Kyverno v1.19.1; upgraded by hand, never "latest"
+      ECR_REGISTRY: ${{ needs.setup.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+
+      - name: Connect kubectl to the cluster
+        run: |
+          aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/week3/terraform.tfstate" state.json --only-show-errors
+          aws eks update-kubeconfig --name "$(jq -r '.outputs.cluster_name.value' state.json)" --region "$AWS_REGION"
+          rm -f state.json
+
+      - name: Install Kyverno and the image-signature policy (audit)
+        run: bash deploy/kyverno.sh
+
   # Proves dev can't reach prod (network + IAM), once both are on the new version.
   isolation-test:
     needs: deploy-prod

@@ -1,0 +1,46 @@
+# Kyverno chart values (ADR 0013), installed by deploy/kyverno.sh into namespace "kyverno".
+# AUDIT ONLY: Kyverno reports which pods run unsigned images; it never blocks or changes anything.
+#   - every Kyverno webhook fails open (forceFailurePolicyIgnore): Kyverno down or slow = admitted;
+#   - its webhooks only see boutique-dev and boutique-prod (config.webhooks below), never
+#     kube-system, monitoring, argocd or the add-ons;
+#   - the policy (image-signatures.yaml) is Audit, with no digest mutation.
+
+features:
+  forceFailurePolicyIgnore:
+    enabled: true
+
+config:
+  webhooks:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: [boutique-dev, boutique-prod]
+
+# One replica each: audit only, nothing waits on them. Blocking mode would need 3 admission
+# replicas (ADR 0013, "Before enforcing").
+admissionController:
+  replicas: 1
+  container:
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { memory: 384Mi }
+
+# Background scans of the running pods (every hour) and the PolicyReports: image verification
+# runs here too, so it gets more memory than the chart's 128Mi.
+reportsController:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+# Not used: no generate or mutate-existing policies, no cleanup policies.
+backgroundController:
+  enabled: false
+cleanupController:
+  enabled: false
+
+# The `helm test` pods default to the readiness-checker image's "latest" tag: pinned like the rest.
+test:
+  image:
+    tag: v1.19.1
