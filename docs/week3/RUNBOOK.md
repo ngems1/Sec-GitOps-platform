@@ -593,11 +593,22 @@ a client through the ALB no longer continues: each request gets a new root span,
 
 | Metric | What | PromQL example |
 |---|---|---|
-| `traces_span_metrics_calls_total` | Spans per service, span name, kind, status | Error ratio of the frontend's routes: `sum by (span_name) (rate(traces_span_metrics_calls_total{service_name="frontend", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m])) / sum by (span_name) (rate(traces_span_metrics_calls_total{service_name="frontend", span_kind="SPAN_KIND_SERVER"}[5m]))` |
-| `traces_span_metrics_duration_seconds_bucket` (`_sum`, `_count`) | Span duration histogram | p95 per service (server spans): `histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind="SPAN_KIND_SERVER", k8s_namespace_name="boutique-dev"}[5m])))` |
+| `traces_spanmetrics_calls_total` | Spans per service, span name, kind, status | Error ratio of the frontend's routes: `sum by (span_name) (rate(traces_spanmetrics_calls_total{service_name="frontend", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m])) / sum by (span_name) (rate(traces_spanmetrics_calls_total{service_name="frontend", span_kind="SPAN_KIND_SERVER"}[5m]))` |
+| `traces_spanmetrics_latency_bucket` (`_sum`, `_count`) | Span duration histogram, in seconds | p95 per service (server spans): `histogram_quantile(0.95, sum by (le, service_name) (rate(traces_spanmetrics_latency_bucket{span_kind="SPAN_KIND_SERVER", k8s_namespace_name="boutique-dev"}[5m])))` |
 | `traces_service_graph_request_total` | Requests from `client` to `server`, per namespace (`client_k8s_namespace_name`, `server_k8s_namespace_name`) | Calls per edge: `sum by (client, server) (rate(traces_service_graph_request_total[5m]))` |
 | `traces_service_graph_request_failed_total` | The failed ones | Failure ratio per edge: `sum by (client, server) (rate(traces_service_graph_request_failed_total[5m])) / sum by (client, server) (rate(traces_service_graph_request_total[5m]))` |
 | `traces_service_graph_request_server_seconds_bucket`, `..._client_seconds_bucket` | Edge latency, seen by the server and the client | p95 per edge: `histogram_quantile(0.95, sum by (le, client, server) (rate(traces_service_graph_request_server_seconds_bucket[5m])))` |
+
+**The names are the ones Grafana's Tempo Service Graph and its RED table query.** Grafana 13.2.1
+ships Tempo plugin 13.1.5, whose `graphTransform.ts` queries `traces_spanmetrics_calls_total`,
+`traces_spanmetrics_latency_bucket`, `traces_service_graph_request_total`,
+`traces_service_graph_request_failed_total` and `traces_service_graph_request_server_seconds_*`.
+For that, the collector does two things:
+
+- sets the connector's namespace to `traces.spanmetrics`;
+- renames its duration histogram to `latency` with no unit (the values stay in seconds).
+
+CI checks both.
 
 **Service graph details:**
 
