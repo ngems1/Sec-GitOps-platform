@@ -15,6 +15,7 @@
 const path = require('path');
 const grpc = require('@grpc/grpc-js');
 const pino = require('pino');
+const { logTraceFields } = require('./tracing');
 const protoLoader = require('@grpc/proto-loader');
 
 const charge = require('./charge');
@@ -22,6 +23,7 @@ const charge = require('./charge');
 const logger = pino({
   name: 'paymentservice-server',
   messageKey: 'message',
+  mixin: logTraceFields, // trace_id, span_id, trace_flags of the active span (tracing.js)
   formatters: {
     level (logLevelString, logLevelNum) {
       return { severity: logLevelString }

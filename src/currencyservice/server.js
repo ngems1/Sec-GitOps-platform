@@ -22,6 +22,7 @@ require('./tracing').startTracing('currencyservice');
 const path = require('path');
 const grpc = require('@grpc/grpc-js');
 const pino = require('pino');
+const { logTraceFields } = require('./tracing');
 const protoLoader = require('@grpc/proto-loader');
 
 const MAIN_PROTO_PATH = path.join(__dirname, './proto/demo.proto');
@@ -35,6 +36,7 @@ const healthProto = _loadProto(HEALTH_PROTO_PATH).grpc.health.v1;
 const logger = pino({
   name: 'currencyservice-server',
   messageKey: 'message',
+  mixin: logTraceFields, // trace_id, span_id, trace_flags of the active span (tracing.js)
   formatters: {
     level (logLevelString, logLevelNum) {
       return { severity: logLevelString }
