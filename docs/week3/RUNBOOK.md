@@ -397,8 +397,14 @@ after `destroy`, would pick up whatever AWS released last.
 - **emailservice:** has gRPC server spans whenever `ENABLE_TRACING=1`.
 
 - `otel-collector`: a Deployment with 1 replica. It receives OTLP on 4317 (gRPC) and 4318 (HTTP)
-  from `boutique-dev` and `boutique-prod` only. Pipeline: memory_limiter, filter, k8s_attributes,
-  tail_sampling, batch, then Tempo. `monitoring/otel-collector.values.yaml`.
+  from `boutique-dev` and `boutique-prod` only. `monitoring/otel-collector.values.yaml`.
+  - **Pipelines (since ADR 0011 PR 5):**
+    - `traces/in`: memory_limiter, filter, k8s_attributes, then ALL spans go to the connectors
+      `spanmetrics` and `servicegraph`, and `forward`;
+    - `traces/sampled`: forward, tail_sampling, batch, then Tempo;
+    - `metrics/spans`: the connectors' metrics on :8889 for Prometheus (span metrics below).
+  - **Resources:** 150m / 384Mi, limit 768Mi. `GOMEMLIMIT` is 614MiB, and `memory_limiter`
+    refuses data from 450Mi (soft) and 600Mi (hard).
   - The filter drops spans of an OTLP export itself (`rpc.service` =
     `opentelemetry.proto.collector.trace.v1.TraceService`), a defence against self-tracing.
   - Tail sampling drops health checks (gRPC health, and `/_healthz` by path or by the frontend's
@@ -570,6 +576,37 @@ a client through the ALB no longer continues: each request gets a new root span,
 - **Dropped at the edge:** inbound `baggage` always. While tracing is off (prod),
   `traceparent` and `tracestate` too.
 - **For you:** search by our trace ID (the logs' `trace_id`), never by a client's.
+
+**Span metrics and the service graph (ADR 0011, PR 5).**
+
+- **Where they come from:** the collector builds them from ALL spans, before tail sampling, so
+  they count every request (Tempo keeps only the sampled traces).
+- **How they reach Prometheus:** PodMonitor `otel-collector-agent` (label `release=monitoring`)
+  scrapes the collector's :8889 every 30 s.
+- **Labels:**
+  - `service_name` (= `job`), `span_name`, `span_kind`, `status_code`, `k8s_namespace_name`;
+  - the service graph's `client`, `server`, `connection_type`;
+  - no pod, instance, user, session, IP or URL.
+- **Buckets:** 5 ms to 5 s.
+- **Exemplars:** trace IDs on the histograms (OpenMetrics), for Grafana in PR 6.
+- **Dev only for now:** prod sends no spans while tracing is off there.
+
+| Metric | What | PromQL example |
+|---|---|---|
+| `traces_span_metrics_calls_total` | Spans per service, span name, kind, status | Error ratio of the frontend's routes: `sum by (span_name) (rate(traces_span_metrics_calls_total{service_name="frontend", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m])) / sum by (span_name) (rate(traces_span_metrics_calls_total{service_name="frontend", span_kind="SPAN_KIND_SERVER"}[5m]))` |
+| `traces_span_metrics_duration_seconds_bucket` (`_sum`, `_count`) | Span duration histogram | p95 per service (server spans): `histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind="SPAN_KIND_SERVER", k8s_namespace_name="boutique-dev"}[5m])))` |
+| `traces_service_graph_request_total` | Requests from `client` to `server`, per namespace (`client_k8s_namespace_name`, `server_k8s_namespace_name`) | Calls per edge: `sum by (client, server) (rate(traces_service_graph_request_total[5m]))` |
+| `traces_service_graph_request_failed_total` | The failed ones | Failure ratio per edge: `sum by (client, server) (rate(traces_service_graph_request_failed_total[5m])) / sum by (client, server) (rate(traces_service_graph_request_total[5m]))` |
+| `traces_service_graph_request_server_seconds_bucket`, `..._client_seconds_bucket` | Edge latency, seen by the server and the client | p95 per edge: `histogram_quantile(0.95, sum by (le, client, server) (rate(traces_service_graph_request_server_seconds_bucket[5m])))` |
+
+**Service graph details:**
+
+- **Virtual nodes:**
+  - a client span with no server span becomes an edge to a node named after its `peer.service`,
+    `db.system`, `rpc.service`, `messaging.system` or `server.address` (`connection_type="virtual_node"`);
+  - examples: `cartservice -> redis`, botocore calls to `DynamoDB`, `SQS`, `EventBridge`, `BedrockRuntime`;
+  - a root server span shows as `user -> frontend`.
+- **A new series starts at 0, then counts:** use `rate()` / `increase()`, never the raw value.
 
 **One order, one trace (EventBridge and SQS, ADR 0010 step 5).** The async flow
 (`terraform-aws/modules/environment/events.tf`, one bus `<prefix>-events`; every queue has a DLQ
