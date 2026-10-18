@@ -160,6 +160,17 @@ jobs:
             echo "::error::the check missed the broken settings in deploy/tests/exemplars"; exit 1
           fi
           test "$(grep -c '^::error' "$RUNNER_TEMP/ex.txt")" -eq 6
+      # Kyverno (ADR 0013): audit only and fail open, never mutating, on boutique-dev and
+      # boutique-prod; it checks the signing identity, issuer and SBOM type of deploy.yml, on our
+      # ECR images only. The fixture breaks six of these and must give 6 errors.
+      - name: Kyverno policy (audit only, signing identity)
+        run: |
+          bash -n deploy/kyverno.sh deploy/kyverno-report.sh
+          bash deploy/tests/kyverno-check.sh
+          if bash deploy/tests/kyverno-check.sh deploy/tests/kyverno/bad-policy.yaml > "$RUNNER_TEMP/kv.txt"; then
+            echo "::error::the check missed the broken policy in deploy/tests/kyverno/bad-policy.yaml"; exit 1
+          fi
+          test "$(grep -c '^::error' "$RUNNER_TEMP/kv.txt")" -eq 6
       # cluster-status "Resource usage" (deploy/resource-usage.sh): the report math on fixtures.
       - name: resource usage report (fixtures)
         run: |

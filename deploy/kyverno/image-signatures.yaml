@@ -1,0 +1,85 @@
+# Image signatures and SBOM attestations of the shop's own images (ADR 0013, Phase 5 PR 2).
+# AUDIT ONLY: failures go to PolicyReports, never block a pod (validationActions [Audit],
+# failurePolicy Ignore), and pod specs are never changed (mutateDigest false).
+#
+# deploy/kyverno.sh fills ${ECR_REGISTRY} with the Terraform output ecr_registry
+# (<account>.dkr.ecr.<region>.amazonaws.com/boutique): the policy matches exactly the 13
+# repositories under it (12 services + loadgenerator). Anything else is not checked:
+# public.ecr.aws mysql (db-migrate, catalog, order-flow Jobs), ghcr.io telemetrygen (tracing
+# smoke test), the isolation test's python probe.
+#
+# The identity, issuer and attestation type are the ones the deploy workflow signs with
+# (docs/week3/IMAGE-SIGNING.md, ADR 0012). CI checks they stay equal (deploy/tests/kyverno-check.sh).
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: boutique-image-signatures
+  annotations:
+    policies.kyverno.io/title: Signed images with an SBOM (audit)
+    policies.kyverno.io/description: >-
+      Every image from the shop's ECR repositories must carry a cosign keyless signature and an
+      SPDX SBOM attestation made by the deploy workflow on main. Audit only.
+spec:
+  validationActions: [Audit]
+  failurePolicy: Ignore
+  webhookConfiguration:
+    timeoutSeconds: 10
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: [boutique-dev, boutique-prod]
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [pods]
+        operations: [CREATE, UPDATE]
+  # Pods only, one report per running pod (no Deployment/Job copies of the rule).
+  autogen:
+    podControllers:
+      controllers: []
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: true # the hourly background scan also reports pods that started before this policy
+  matchImageReferences:
+    - glob: "${ECR_REGISTRY}/*"
+  # Audit: report only. No tag -> digest rewrite of the pods (Argo CD and the canary own them),
+  # and tags are allowed (the shop deploys by tag; the signature itself is checked by digest).
+  validationConfigurations:
+    mutateDigest: false
+    verifyDigest: false
+    required: true
+  # ECR read through the AWS SDK's default chain in Kyverno's pods (ADR 0013, "Credentials").
+  credentials:
+    providers: [amazon]
+  attestors:
+    - name: deployWorkflow
+      cosign:
+        keyless:
+          identities:
+            - subject: https://github.com/ngems1/Sec-GitOps-platform/.github/workflows/deploy.yml@refs/heads/main
+              issuer: https://token.actions.githubusercontent.com
+        ctlog:
+          url: https://rekor.sigstore.dev
+  attestations:
+    - name: sbom
+      intoto:
+        type: https://spdx.dev/Document
+  variables:
+    # Only our images: an image outside matchImageReferences counts as 0 verified signatures, so
+    # third-party images are filtered out here rather than reported as unsigned.
+    - name: ours
+      expression: >-
+        (images.containers + images.initContainers).filter(i, i.startsWith('${ECR_REGISTRY}/'))
+  validations:
+    - expression: >-
+        variables.ours.all(i, verifyImageSignatures(i, [attestors.deployWorkflow]) > 0)
+      message: >-
+        an image from the shop's ECR has no valid cosign signature from the deploy workflow on main
+    - expression: >-
+        variables.ours.all(i, verifyAttestationSignatures(i, attestations.sbom, [attestors.deployWorkflow]) > 0)
+      message: >-
+        an image from the shop's ECR has no valid SPDX SBOM attestation from the deploy workflow on main
