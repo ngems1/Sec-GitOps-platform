@@ -150,8 +150,34 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           rm -f plan.log
 
-      # Destroy: the GKE Ingress's load balancer and NEGs (a later PR) are created by
-      # Kubernetes, not Terraform: delete the Ingress first, or the VPC can't be removed.
+      # Destroy: the GKE Ingress's load balancer and NEGs are created by Kubernetes, not
+      # Terraform. They hold the static IP and the network, and gke.<domain> points at that IP:
+      # remove all three first (deploy/gke-teardown.sh). The AWS deploy role trusts this job
+      # (main), and only Route 53 and the EKS Application are touched there.
+      - name: "Configure AWS credentials (destroy only: Route 53, Argo CD on EKS)"
+        if: env.CAN_SIGN_IN == 'true' && env.ACTION == 'destroy'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        if: env.CAN_SIGN_IN == 'true' && env.ACTION == 'destroy'
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Before destroy, remove the Ingress, its load balancer and gke.<domain>
+        if: env.CAN_SIGN_IN == 'true' && env.ACTION == 'destroy'
+        working-directory: .
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION || 'us-east1' }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          echo "::add-mask::$(cut -d: -f5 <<<"${{ vars.AWS_DEPLOY_ROLE_ARN }}")"
+          bash deploy/gke-teardown.sh
+
       - name: terraform apply
         if: env.CAN_SIGN_IN == 'true' && (env.ACTION == 'apply' || env.ACTION == 'destroy')
         run: |

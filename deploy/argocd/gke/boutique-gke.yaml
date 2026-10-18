@@ -1,9 +1,10 @@
 # The shop on GKE: the portable profile (helm-chart/values-gcp.yaml), from main, with plain
 # automated sync. No Argo Rollouts canary (GKE has one environment and no traffic to shift), so
 # none of boutique-dev's ignoreDifferences.
-# Filled in by deploy/argocd-gke.sh: ${REPO_URL}, and ${AR_REGISTRY}, the Artifact Registry
+# Filled in by deploy/argocd-gke.sh: ${REPO_URL}; ${AR_REGISTRY}, the Artifact Registry
 # mirror (<region>-docker.pkg.dev/<project>/boutique), kept out of Git because of the project
-# ID. The image tag: gitops/gke/values.yaml (edited by hand after each mirror run, for now).
+# ID; ${GKE_HOST}, gke.<domain> (the terraform-aws domain). The image tag: gitops/gke/values.yaml
+# (edited by hand after each mirror run, for now).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -25,6 +26,8 @@ spec:
           value: ${AR_REGISTRY}
         - name: loadGenerator.busybox.repository
           value: ${AR_REGISTRY}/busybox
+        - name: frontend.ingress.host
+          value: ${GKE_HOST}
   destination:
     name: boutique-gke
     namespace: boutique-gke

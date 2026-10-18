@@ -13,8 +13,9 @@
 #      a read in boutique-gke (must work), a cluster-wide list (must be refused).
 #   4. EKS: the cluster Secret (boutique-gke only), project boutique-gcp, Application
 #      boutique-gke; then Argo CD's own status (Synced, Healthy, no error).
-#   5. The shop, through a port-forward (nothing is public): the home page, a product, the cart
-#      (Redis). And where every running image was pulled from: all from Artifact Registry?
+#   5. The shop, through a port-forward: the home page, a product, the cart
+#      (Redis). Where every running image was pulled from: all from Artifact Registry? And the
+#      public entry point: the Ingress on the static IP, the Google-managed certificate's status.
 #
 # Needs kubectl (EKS: the default context; GKE: $GKE_KUBECONFIG), helm, gcloud (signed in as
 # gha-deploy), jq, curl, envsubst, and:
@@ -24,12 +25,14 @@
 #   EKS_WIF_PROVIDER   the eks-argocd pool's provider (output GCP_EKS_WIF_PROVIDER)
 #   AR_REGISTRY        <region>-docker.pkg.dev/<project>/boutique (the mirror)
 #   REPO_URL           this repository (Argo CD's repository credential)
+#   GKE_HOST           gke.<domain>, the shop's public name (Route 53 points it at INGRESS_IP)
+#   INGRESS_IP         the static IP boutique-gke-ingress (terraform-gcp)
 # The logs are public: no token is printed (masked as soon as it exists), only HTTP statuses
 # and counts; the workflow masks the project and account IDs.
-# shellcheck disable=SC2016 # ${ARGOCD_SA}, ${REPO_URL} and ${AR_REGISTRY} are envsubst's, not the shell's
+# shellcheck disable=SC2016 # ${ARGOCD_SA}, ${REPO_URL}, ${AR_REGISTRY} and ${GKE_HOST} are envsubst's, not the shell's
 set -euo pipefail
 
-: "${GKE_KUBECONFIG:?}" "${GKE_DNS_ENDPOINT:?}" "${ARGOCD_SA:?}" "${EKS_WIF_PROVIDER:?}" "${AR_REGISTRY:?}" "${REPO_URL:?}"
+: "${GKE_KUBECONFIG:?}" "${GKE_DNS_ENDPOINT:?}" "${ARGOCD_SA:?}" "${EKS_WIF_PROVIDER:?}" "${AR_REGISTRY:?}" "${REPO_URL:?}" "${GKE_HOST:?}" "${INGRESS_IP:?}"
 NS=argocd
 APP_NS=boutique-gke
 # Release "argo-cd" (deploy/argocd.sh): workloads are argo-cd-argocd-*, their service accounts
@@ -39,12 +42,14 @@ repo=$(cd "${here}/.." && pwd)
 gke() { kubectl --kubeconfig "$GKE_KUBECONFIG" "$@"; }
 CRED=/etc/gcp/credentials.json # mount of gcp-credentials (deploy/argocd/values.yaml)
 HINT="If the error is about the token or its issuer: EKS was probably rebuilt. Set EKS_OIDC_ISSUER to the new issuer and re-run bootstrap-gcp (terraform-gcp-bootstrap/README.md)."
-export ARGOCD_SA REPO_URL AR_REGISTRY
+export ARGOCD_SA REPO_URL AR_REGISTRY GKE_HOST
 
 # --- 1. GKE: the namespace, argocd-hub's Role, the PriorityClass; the probe goes -------------
 envsubst '${ARGOCD_SA}' < "${here}/argocd/gke/namespace.yaml" | gke apply -f -
 # Cluster-scoped, so never in the release: rendered alone, like deploy-env.yml does on EKS.
+# (--show-only still evaluates every template: the Ingress needs its host.)
 helm template boutique "${repo}/helm-chart" -n "$APP_NS" -f "${repo}/helm-chart/values-gcp.yaml" \
+  --set frontend.ingress.host="$GKE_HOST" \
   --set guardrails.priority.render=true --show-only templates/priorityclass.yaml | gke apply -f -
 
 # The connection probe of the previous step (Application gke-connection-probe, project
@@ -133,7 +138,7 @@ kubectl -n "$NS" create secret generic cluster-boutique-gke \
 echo "cluster Secret: boutique-gke (namespace ${APP_NS} only, no cluster-scoped resources)"
 
 envsubst '${REPO_URL}' < "${here}/argocd/gke/project.yaml" | kubectl apply -f -
-envsubst '${REPO_URL} ${AR_REGISTRY}' < "${here}/argocd/gke/boutique-gke.yaml" | kubectl apply -f -
+envsubst '${REPO_URL} ${AR_REGISTRY} ${GKE_HOST}' < "${here}/argocd/gke/boutique-gke.yaml" | kubectl apply -f -
 kubectl -n "$NS" annotate application boutique-gke argocd.argoproj.io/refresh=hard --overwrite >/dev/null
 
 # Autopilot starts nodes for the new pods: allow a few minutes.
@@ -181,4 +186,20 @@ else
   echo "::warning::images: ${outside} of ${total} running containers pulled from outside Artifact Registry (Cloud NAT is still needed)"
 fi
 [ "$failed" = 0 ] || exit 1
+
+# The public entry point: the GKE Ingress must sit on the static IP gke.<domain> points at.
+# Argo CD's Healthy already means the load balancer has an address; this checks it's ours.
+lb_ip=$(gke -n "$APP_NS" get ingress frontend -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+if [ "$lb_ip" != "$INGRESS_IP" ]; then
+  echo "::error::Ingress frontend is on '${lb_ip:-no address}', not the static IP boutique-gke-ingress (${INGRESS_IP}): ${GKE_HOST} would point elsewhere."
+  exit 1
+fi
+echo "Ingress frontend: on the static IP ${INGRESS_IP}, which ${GKE_HOST} points at"
+# Not a failure while Provisioning: Google issues the certificate once the name resolves to the
+# load balancer, usually 15-60 minutes after the first sync (then https://${GKE_HOST} works).
+cert=$(gke -n "$APP_NS" get managedcertificate frontend -o jsonpath='{.status.certificateStatus}' 2>/dev/null || true)
+case "$cert" in
+  Active) echo "certificate: Active, https://${GKE_HOST} is served with it" ;;
+  *) echo "::notice::certificate: ${cert:-not reported yet} (Google issues it once ${GKE_HOST} resolves to ${INGRESS_IP}: check again in up to an hour, kubectl describe managedcertificate frontend)" ;;
+esac
 echo "boutique-gke: deployed by Argo CD and serving."

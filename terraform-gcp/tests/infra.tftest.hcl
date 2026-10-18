@@ -141,3 +141,12 @@ run "dns_endpoint_iam_only" {
     error_message = "IAM credentials only on the DNS endpoint: no Kubernetes tokens or client certificates"
   }
 }
+
+run "static_ip_for_the_ingress" {
+  command = plan
+
+  assert {
+    condition     = google_compute_global_address.ingress.name == "boutique-gke-ingress" && google_compute_global_address.ingress.address_type == "EXTERNAL" && google_compute_global_address.ingress.ip_version == "IPV4"
+    error_message = "a global external IPv4 named boutique-gke-ingress (the chart's frontend.ingress.gce.staticIpName)"
+  }
+}

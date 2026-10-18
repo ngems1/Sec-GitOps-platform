@@ -1,0 +1,70 @@
+{{- if and .Values.frontend.create .Values.frontend.ingress.enabled (eq .Values.frontend.ingress.provider "gce") }}
+{{- /*
+GKE: the shop's public entry point (ADR 0014, decision 6). GKE's Ingress controller creates an
+external Application Load Balancer:
+  - on the global static IP of terraform-gcp (network.tf), which gke.<domain> points at;
+  - HTTPS with a Google-managed certificate for that name, HTTP redirected to HTTPS;
+  - straight to the frontend pods (container-native load balancing, NEGs), health checked on
+    /_healthz like the readiness probe.
+The class is the kubernetes.io/ingress.class annotation: GKE's controller ignores
+spec.ingressClassName, and takes no action on an Ingress that sets only that field.
+*/ -}}
+{{- $host := required "frontend.ingress.host is required with frontend.ingress.provider=gce (gke.<domain>)" .Values.frontend.ingress.host }}
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  domains:
+    - {{ $host }}
+---
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  redirectToHttps:
+    enabled: true
+    responseCodeName: MOVED_PERMANENTLY_DEFAULT # 301
+---
+# The load balancer's health check: set here, not derived from the readiness probe (GKE only
+# does that when the pods exist before the Ingress, which an Argo CD sync doesn't guarantee).
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /_healthz
+    port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.global-static-ip-name: {{ .Values.frontend.ingress.gce.staticIpName | quote }}
+    networking.gke.io/managed-certificates: {{ .Values.frontend.name | quote }}
+    networking.gke.io/v1beta1.FrontendConfig: {{ .Values.frontend.name | quote }}
+    {{- with .Values.frontend.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  rules:
+  - host: {{ $host }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Values.frontend.name }}
+            port:
+              number: 80
+{{- end }}

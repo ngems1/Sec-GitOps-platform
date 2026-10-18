@@ -361,15 +361,16 @@ jobs:
           done
 
       # GKE portable profile (ADR 0014): what Argo CD deploys as boutique-gke
-      # (deploy/argocd/gke/boutique-gke.yaml), with a placeholder Artifact Registry path. Only the
-      # profile's 12 workloads, every image from the mirror (nothing from Docker Hub or ECR),
-      # nothing public, no cluster-wide object, and the same hardening as EKS.
+      # (deploy/argocd/gke/boutique-gke.yaml), with a placeholder Artifact Registry path and host.
+      # Only the profile's 12 workloads, every image from the mirror (nothing from Docker Hub or
+      # ECR), public only through the GKE Ingress, no cluster-wide object, EKS's hardening.
       - name: Render the GKE portable profile
         run: |
           ar=us-east1-docker.pkg.dev/ci-project/boutique
           helm template boutique ./helm-chart --namespace boutique-gke \
             -f helm-chart/values-gcp.yaml -f gitops/gke/values.yaml \
-            --set images.repository="$ar" --set loadGenerator.busybox.repository="$ar/busybox" > rendered-gke.yaml
+            --set images.repository="$ar" --set loadGenerator.busybox.repository="$ar/busybox" \
+            --set frontend.ingress.host=gke.example.com > rendered-gke.yaml
           echo "gke: $(grep -c '^kind:' rendered-gke.yaml) objects"
           grep '^kind:' rendered-gke.yaml | sort | uniq -c
           fail() { echo "::error::gke: $1"; exit 1; }
@@ -381,11 +382,29 @@ jobs:
           tag=$(sed '/^#/d' gitops/gke/values.yaml | jq -r '.images.tag')
           [ "$(yq ea -N 'select(.kind == "Deployment" and .metadata.name == "frontend") | .spec.template.spec.containers[0].image' rendered-gke.yaml)" = "${ar}/frontend:${tag}" ] \
             || fail "the frontend image is not ${ar}/frontend:${tag} (gitops/gke/values.yaml)"
-          for kind in Rollout Ingress HorizontalPodAutoscaler PriorityClass Namespace ClusterRole ClusterRoleBinding; do
+          for kind in Rollout HorizontalPodAutoscaler PriorityClass Namespace ClusterRole ClusterRoleBinding; do
             ! grep -q "^kind: ${kind}$" rendered-gke.yaml || fail "renders a ${kind} (not in the GKE profile, or cluster-scoped)"
           done
           [ -z "$(yq ea -N 'select(.kind == "Service" and .spec.type == "LoadBalancer") | .metadata.name' rendered-gke.yaml)" ] \
-            || fail "a LoadBalancer Service: nothing is public on GKE yet"
+            || fail "a LoadBalancer Service: the GKE Ingress is the only way in"
+          # The public entry point (ADR 0014, decision 6): one GKE Ingress, by annotation (GKE's
+          # controller ignores spec.ingressClassName and does nothing for an Ingress with only
+          # that), on terraform-gcp's static IP, with the certificate, the redirect and the
+          # load balancer's ranges let in. Nothing else of the AWS ALB.
+          [ "$(yq ea -N 'select(.kind == "Ingress") | .metadata.name' rendered-gke.yaml | xargs)" = frontend ] || fail "expected one Ingress, frontend"
+          ing() { yq ea -N "select(.kind == \"Ingress\") | $1" rendered-gke.yaml; }
+          [ "$(ing '.metadata.annotations["kubernetes.io/ingress.class"]')" = gce ] || fail "the Ingress class annotation is not gce"
+          [ "$(ing '.spec.ingressClassName // ""')" = "" ] || fail "spec.ingressClassName is set: GKE ignores the Ingress then"
+          [ -z "$(ing '.metadata.annotations | keys | .[] | select(test("^alb\\."))')" ] || fail "ALB annotations on the GKE Ingress"
+          tf_ip=$(sed -n '/resource "google_compute_global_address" "ingress"/,/^}/s/^ *name *= *"\([^"]*\)".*/\1/p' terraform-gcp/network.tf)
+          [ -n "$tf_ip" ] && [ "$(ing '.metadata.annotations["kubernetes.io/ingress.global-static-ip-name"]')" = "$tf_ip" ] \
+            || fail "the Ingress's static IP is not terraform-gcp's google_compute_global_address.ingress (${tf_ip:-not found})"
+          [ "$(yq ea -N 'select(.kind == "ManagedCertificate") | .spec.domains[]' rendered-gke.yaml)" = gke.example.com ] || fail "the ManagedCertificate is not for the Ingress host"
+          [ "$(yq ea -N 'select(.kind == "FrontendConfig") | .spec.redirectToHttps.enabled' rendered-gke.yaml)" = true ] || fail "no HTTP -> HTTPS redirect (FrontendConfig)"
+          [ "$(yq ea -N 'select(.kind == "NetworkPolicy" and .metadata.name == "frontend") | [.spec.ingress[].from[].ipBlock.cidr | select(. != null)] | sort | join(" ")' rendered-gke.yaml)" = "130.211.0.0/22 35.191.0.0/16" ] \
+            || fail "the frontend NetworkPolicy must let in exactly Google's load balancer ranges (130.211.0.0/22, 35.191.0.0/16)"
+          [ "$(yq ea -N 'select(.kind == "Service" and .metadata.name == "frontend") | .metadata.annotations["cloud.google.com/neg"]' rendered-gke.yaml)" = '{"ingress": true}' ] \
+            || fail "the frontend Service has no container-native load balancing (cloud.google.com/neg)"
           for kind in NetworkPolicy ResourceQuota LimitRange PodDisruptionBudget; do
             grep -q "^kind: ${kind}$" rendered-gke.yaml || fail "no ${kind} rendered (values-gcp.yaml hardening)"
           done
@@ -397,7 +416,9 @@ jobs:
           [ -z "$(yq ea -N 'select(.kind == "Deployment" and .spec.template.spec.serviceAccountName == "default") | .metadata.name' rendered-gke.yaml)" ] \
             || fail "a pod on the default service account"
           # deploy/argocd-gke.sh applies the PriorityClass alone, as gha-deploy.
+          # (--show-only still evaluates every template: the Ingress needs its host.)
           helm template boutique ./helm-chart --namespace boutique-gke -f helm-chart/values-gcp.yaml \
+            --set frontend.ingress.host=gke.example.com \
             --set guardrails.priority.render=true --show-only templates/priorityclass.yaml | grep -q '^  name: boutique-gke$' \
             || fail "no boutique-gke PriorityClass for deploy/argocd-gke.sh"
           # Same right-sized requests as EKS: every service values-aws.yaml sizes, values-gcp.yaml

@@ -170,9 +170,20 @@ frontend:
   singleSharedSession: false
   # AWS: an Ingress for the AWS Load Balancer Controller, which creates one
   # internet-facing ALB per environment (templates/ingress.yaml).
+  # GKE (provider gce, values-gcp.yaml): a GKE Ingress, external Application Load Balancer
+  # (templates/ingress-gce.yaml).
   ingress:
     enabled: false
+    provider: alb          # alb (EKS) | gce (GKE)
     className: alb
+    # gce only: the shop's name (Google-managed certificate) and the global static IP
+    # (terraform-gcp/network.tf). The host is set by deploy/argocd-gke.sh: gke.<domain>.
+    host: ""
+    gce:
+      staticIpName: boutique-gke-ingress
+      # Where Google's load balancers connect from: the Google Front End proxies and the
+      # health checks (GKE Ingress documentation). The frontend NetworkPolicy lets them in.
+      sourceRanges: ["130.211.0.0/22", "35.191.0.0/16"]
     # The ALB sends traffic and health checks straight to the pod IPs (target-type ip),
     # so the frontend NetworkPolicy lets in this range: the VPC.
     allowFromCidr: 10.0.0.0/16

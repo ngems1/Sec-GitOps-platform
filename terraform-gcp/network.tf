@@ -56,3 +56,16 @@ resource "google_compute_router_nat" "nat" {
     filter = "ERRORS_ONLY"
   }
 }
+
+# The shop's public address (ADR 0014, decision 6): the GKE Ingress's load balancer uses it
+# (frontend.ingress.gce.staticIpName, helm-chart/values-gcp.yaml) and gke.<domain> points at it
+# (Route 53, deploy/argocd-gke.sh). Global: an external Application Load Balancer is global.
+# A static IP that no forwarding rule uses is billed by the hour: destroy this root between
+# uses (infra-gcp removes the Ingress and the DNS record first).
+resource "google_compute_global_address" "ingress" {
+  name         = "boutique-gke-ingress"
+  project      = var.project_id
+  address_type = "EXTERNAL"
+  ip_version   = "IPV4"
+  description  = "terraform-gcp (ADR 0014): GKE Ingress of the shop, gke.<domain>"
+}
