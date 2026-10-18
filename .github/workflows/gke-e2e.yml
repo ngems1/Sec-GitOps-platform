@@ -1,0 +1,34 @@
+name: gke-e2e
+
+# Smoke tests of the GKE shop through its public entry point, https://gke.<domain>
+# (tests/gke-e2e.sh, ADR 0014): the HTTP -> HTTPS redirect, the certificate, the home page,
+# product pages and the cart. Plain HTTPS from the runner, like a shopper: no cloud credential.
+#
+#   manual run  -> Actions > gke-e2e > Run workflow (after argocd-gke, or any GKE change)
+#   push to main changing the tests -> runs them
+#
+# It needs the GKE environment up: after an infra-gcp destroy it fails (no answer at the name).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["tests/gke-e2e.sh", ".github/workflows/gke-e2e.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gke-e2e
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: GKE smoke tests (https://gke.<domain>)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Smoke tests
+        run: bash tests/gke-e2e.sh
