@@ -11,6 +11,7 @@ What GitHub Actions needs before it can run `terraform-gcp`, and what must outli
 | `gha-plan` | Read-only (`roles/viewer`, `roles/iam.securityReviewer`), pull requests |
 | `gha-deploy` | terraform-gcp and deploys, from `main` or the `dev` / `prod` environments: network, firewall, GKE, Artifact Registry admin, and project IAM limited to an allow-list (`deploy_grantable_roles`). Not editor or owner |
 | `gha-bootstrap` | Owner, only for jobs in the protected `prod` environment: the bootstrap-gcp workflow |
+| `gke-nodes` | The identity of the GKE Autopilot nodes (`gke-nodes.tf`). It may write logs and metrics, read monitoring, and pull images from Artifact Registry. Not the Compute Engine default account. Here, not in `terraform-gcp`, so `gha-deploy` never needs to create service accounts. `gha-deploy` may only act as this one account (to create the cluster with it). GitHub can never sign in as it (the workflow checks `roles/iam.workloadIdentityUser` appears only in `federation.tf`) |
 | Org policies | No service account key can be created or uploaded (`policies.tf`), when the project is in an organization |
 | Budget | Monthly, on this project, email at 50% and 100% to the billing account's admins and users (`budgets.tf`) |
 
@@ -104,7 +105,13 @@ the project and **Billing Account Administrator** on its billing account; `gclou
 ## Re-running after a change here
 
 After a merge that changes `terraform-gcp-bootstrap/`: **bootstrap-gcp** with apply unchecked,
-read which resources change, then again with apply checked.
+read which resources change, then again with apply checked. **Merging applies nothing**: like
+any change here, it is live only after that run (or `terraform apply` by the project owner, as
+in the first run).
+
+- **Example:** the `gke-nodes` change plans 1 service account, 4 project role bindings and 1
+  act-as binding.
+- **Then:** add the output `GCP_GKE_NODE_SA` as a repository variable (`terraform-gcp` reads it).
 
 - **What the workflow prints:** it runs `terraform test` first (the trust and the rights, with a
   mocked provider). It prints only which resources change, never values or outputs: the logs

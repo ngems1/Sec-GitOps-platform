@@ -24,6 +24,17 @@ mock_provider "google" {
   }
 }
 
+# The node service account gets its own identity, so a binding on the wrong account shows.
+override_resource {
+  target          = google_service_account.gke_nodes
+  override_during = plan
+  values = {
+    name   = "projects/boutique-test-123456/serviceAccounts/gke-nodes@boutique-test-123456.iam.gserviceaccount.com"
+    email  = "gke-nodes@boutique-test-123456.iam.gserviceaccount.com"
+    member = "serviceAccount:gke-nodes@boutique-test-123456.iam.gserviceaccount.com"
+  }
+}
+
 variables {
   project_id         = "boutique-test-123456"
   billing_account_id = "012345-6789AB-CDEF01"
@@ -116,5 +127,28 @@ run "project_without_organization" {
   assert {
     condition     = length(google_org_policy_policy.no_key_creation) == 0 && !contains(keys(google_project_service.apis), "orgpolicy.googleapis.com")
     error_message = "without an organization: no org policy and no orgpolicy API"
+  }
+}
+
+run "gke_nodes_least_privilege" {
+  command = plan
+
+  assert {
+    condition = toset([for m in google_project_iam_member.gke_nodes : m.role]) == toset([
+      "roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/monitoring.viewer", "roles/artifactregistry.reader",
+    ])
+    error_message = "the GKE node service account gets exactly: log writer, metric writer, monitoring viewer, Artifact Registry reader"
+  }
+  assert {
+    condition     = google_service_account.gke_nodes.account_id == "gke-nodes"
+    error_message = "a dedicated node service account, not the Compute Engine default one"
+  }
+  assert {
+    condition     = google_service_account_iam_member.deploy_uses_gke_nodes.role == "roles/iam.serviceAccountUser" && google_service_account_iam_member.deploy_uses_gke_nodes.service_account_id == google_service_account.gke_nodes.name
+    error_message = "gha-deploy may act as the node service account only, on that account (never project-wide)"
+  }
+  assert {
+    condition     = alltrue([for k in keys(google_service_account_iam_member.federation) : contains(["plan", "deploy", "bootstrap"], split(" ", k)[0])])
+    error_message = "GitHub can never sign in as the node service account"
   }
 }

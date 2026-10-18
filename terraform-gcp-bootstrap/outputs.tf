@@ -29,3 +29,8 @@ output "GCP_BOOTSTRAP_SA" {
 output "GCP_TF_STATE_BUCKET" {
   value = google_storage_bucket.state.name
 }
+
+output "GCP_GKE_NODE_SA" {
+  description = "Service account of the GKE nodes (terraform-gcp: node_config / cluster_autoscaling service account)"
+  value       = google_service_account.gke_nodes.email
+}
