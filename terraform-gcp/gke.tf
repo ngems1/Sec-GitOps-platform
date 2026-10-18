@@ -47,6 +47,21 @@ resource "google_container_cluster" "main" {
     }
   }
 
+  # How Argo CD on EKS reaches the control plane (ADR 0014, decision 4): the DNS-based
+  # endpoint, open to any network but only to callers IAM lets connect
+  # (container.clusters.connect: argocd-hub's custom role, terraform-gcp-bootstrap/argocd.tf).
+  # No IP allow-list to keep in step with the EKS NAT gateway, whose address changes with every
+  # terraform-aws rebuild. Google-signed certificate: no cluster CA to hand out. Only IAM
+  # credentials: Kubernetes tokens and client certificates are refused on it. The IP-based
+  # endpoint above stays closed (no authorized network).
+  control_plane_endpoints_config {
+    dns_endpoint_config {
+      allow_external_traffic    = true
+      enable_k8s_tokens_via_dns = false
+      enable_k8s_certs_via_dns  = false
+    }
+  }
+
   release_channel {
     channel = "REGULAR"
   }

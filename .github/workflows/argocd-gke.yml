@@ -1,0 +1,127 @@
+name: argocd-gke
+
+# Registers the GKE cluster (terraform-gcp) in Argo CD on EKS and proves Argo CD reaches it
+# (ADR 0014, decision 4; deploy/argocd-gke.sh). Manual: Actions > argocd-gke > Run workflow,
+# from main, after:
+#   - infra (EKS) and argocd-install, which mounts Argo CD's GCP token (deploy/argocd/values.yaml);
+#   - infra-gcp apply (the cluster and its DNS-based endpoint);
+#   - bootstrap-gcp apply with EKS_OIDC_ISSUER set (the eks-argocd pool, argocd-hub).
+# It stops with an error, before touching anything, when the EKS cluster's issuer is no longer
+# EKS_OIDC_ISSUER (EKS was rebuilt: update the variable, re-run bootstrap-gcp).
+#
+# It registers a THROWAWAY probe (namespace argocd-probe, an Application with nothing to
+# deploy), to be deleted with the first real GKE Application.
+# The logs are public: no token, no account, project or issuer is printed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write # GitHub OIDC -> AWS and GCP
+  contents: read
+
+concurrency:
+  group: argocd-install # never at the same time as an Argo CD install
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  register:
+    name: Register GKE in Argo CD and check the connection
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The AWS deploy role and gha-deploy trust main and the dev/prod environments (like
+    # argocd-install).
+    environment: dev
+    env:
+      EKS_OIDC_ISSUER: ${{ vars.EKS_OIDC_ISSUER }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION || 'us-east1' }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_DEPLOY_SA: ${{ vars.GCP_DEPLOY_SA }}
+      ARGOCD_SA: ${{ vars.GCP_ARGOCD_SA }}
+      EKS_WIF_PROVIDER: ${{ vars.GCP_EKS_WIF_PROVIDER }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the variables are configured
+        run: |
+          missing=""
+          for v in EKS_OIDC_ISSUER GCP_PROJECT_ID GCP_WIF_PROVIDER GCP_DEPLOY_SA ARGOCD_SA EKS_WIF_PROVIDER AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET; do
+            [ -n "${!v}" ] || missing="${missing} ${v}"
+          done
+          [ -z "$missing" ] || { echo "::error::Missing:${missing}. EKS_OIDC_ISSUER, then bootstrap-gcp, then GCP_ARGOCD_SA and GCP_EKS_WIF_PROVIDER from its outputs (terraform-gcp-bootstrap/README.md)."; exit 1; }
+          echo "::add-mask::${GCP_PROJECT_ID}"
+          echo "::add-mask::$(cut -d: -f5 <<<"$AWS_DEPLOY_ROLE_ARN")"
+          echo "::add-mask::$(cut -d/ -f2 <<<"$EKS_WIF_PROVIDER")" # the project number
+          echo "::add-mask::${EKS_OIDC_ISSUER##*/}"                  # the EKS issuer's ID
+
+      - name: Configure AWS credentials (deploy role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Connect kubectl to EKS
+        run: |
+          aws s3 cp "s3://${TF_STATE_BUCKET}/week3/terraform.tfstate" state.json --only-show-errors
+          cluster=$(jq -r '.outputs.cluster_name.value // empty' state.json); rm -f state.json
+          [ -n "$cluster" ] || { echo "::error::No EKS cluster in the Terraform outputs. Run the infra workflow (apply) first."; exit 1; }
+          echo "EKS_CLUSTER=${cluster}" >> "$GITHUB_ENV"
+          aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" >/dev/null
+
+      # The eks-argocd pool trusts ONE issuer (terraform-gcp-bootstrap/argocd.tf). A rebuilt EKS
+      # cluster has a new one: every token exchange would fail. Stop here, clearly.
+      - name: The EKS issuer is the one GCP trusts
+        run: |
+          issuer=$(aws eks describe-cluster --name "$EKS_CLUSTER" --query cluster.identity.oidc.issuer --output text)
+          echo "::add-mask::${issuer##*/}"
+          if [ "$issuer" != "$EKS_OIDC_ISSUER" ]; then
+            echo "::error::The EKS cluster's OIDC issuer is not EKS_OIDC_ISSUER: EKS was rebuilt. Set EKS_OIDC_ISSUER to the new issuer (aws eks describe-cluster --query cluster.identity.oidc.issuer), re-run bootstrap-gcp (plan, then apply), then this workflow."
+            exit 1
+          fi
+          echo "EKS issuer: matches EKS_OIDC_ISSUER (re-run bootstrap-gcp after changing it, or the exchange fails below)"
+
+      - name: Authenticate to GCP (Workload Identity Federation, no key)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      # gha-deploy (container.admin) through the DNS-based endpoint: creates the probe namespace.
+      - name: Connect kubectl to GKE (DNS-based endpoint)
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/gke.kubeconfig"
+          gcloud container clusters get-credentials boutique-gke --region "$GCP_REGION" --project "$GCP_PROJECT_ID" --dns-endpoint >/dev/null 2>&1 \
+            || { echo "::error::No GKE cluster boutique-gke (or no DNS-based endpoint). Run infra-gcp (apply) first."; exit 1; }
+          endpoint=$(gcloud container clusters describe boutique-gke --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+            --format='value(controlPlaneEndpointsConfig.dnsEndpointConfig.endpoint)')
+          [ -n "$endpoint" ] || { echo "::error::boutique-gke has no DNS-based endpoint: run infra-gcp (apply) with this branch's terraform-gcp."; exit 1; }
+          echo "::add-mask::${endpoint%%.*}"
+          { echo "GKE_KUBECONFIG=${KUBECONFIG}"; echo "GKE_DNS_ENDPOINT=${endpoint}"; } >> "$GITHUB_ENV"
+
+      - name: Register and check the connection
+        env:
+          REPO_URL: git@github.com:${{ github.repository }}.git
+        run: bash deploy/argocd-gke.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Argo CD -> GKE"
+            echo
+            echo '```'
+            kubectl -n argocd get application gke-connection-probe \
+              -o custom-columns=APP:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status 2>/dev/null || echo "probe not registered"
+            echo '```'
+            echo "Throwaway probe: delete deploy/argocd/gke/probe* with the first real GKE Application."
+          } >> "$GITHUB_STEP_SUMMARY"

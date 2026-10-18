@@ -52,6 +52,8 @@ jobs:
       TF_VAR_monthly_budget_usd: ${{ vars.GCP_MONTHLY_BUDGET_USD }}
       TF_VAR_billing_account_id: ${{ secrets.GCP_BILLING_ACCOUNT_ID }} # masked in the logs
       TF_VAR_enforce_no_key_policy: ${{ vars.GCP_ENFORCE_NO_KEY_POLICY || 'true' }}
+      # Argo CD's federation (argocd.tf). Changes with every EKS rebuild: update, then re-run.
+      TF_VAR_eks_oidc_issuer: ${{ vars.EKS_OIDC_ISSUER }}
     steps:
       - uses: actions/checkout@v5
 
@@ -107,10 +109,11 @@ jobs:
       - name: terraform test (trust, rights, no keys)
         run: |
           terraform test -no-color
-          # GitHub may sign in only through federation.tf's bindings (plan, deploy, bootstrap):
-          # never as the GKE node service account or any account added in another file.
-          if grep -l 'roles/iam.workloadIdentityUser' ./*.tf | grep -vx './federation.tf'; then
-            echo "::error::roles/iam.workloadIdentityUser outside federation.tf: GitHub must not sign in as that account"
+          # Federated sign-in only through federation.tf (GitHub: plan, deploy, bootstrap) and
+          # argocd.tf (Argo CD on EKS: argocd-hub, tested): never as the GKE node service
+          # account or any account added in another file.
+          if grep -l 'roles/iam.workloadIdentityUser' ./*.tf | grep -vxE './(federation|argocd)\.tf'; then
+            echo "::error::roles/iam.workloadIdentityUser outside federation.tf and argocd.tf: nothing may sign in as that account"
             exit 1
           fi
           # No account of this root gets project IAM admin or firewall admin, in any resource
@@ -156,7 +159,7 @@ jobs:
       - name: No service account keys
         run: |
           found=0
-          for sa in $(terraform output -json | jq -r '.GCP_PLAN_SA.value, .GCP_DEPLOY_SA.value, .GCP_BOOTSTRAP_SA.value'); do
+          for sa in $(terraform output -json | jq -r '.GCP_PLAN_SA.value, .GCP_DEPLOY_SA.value, .GCP_BOOTSTRAP_SA.value, (.GCP_ARGOCD_SA.value // empty)'); do
             n=$(gcloud iam service-accounts keys list --iam-account "$sa" --managed-by=user --format='value(name)' 2>/dev/null | wc -l)
             echo "${sa%%@*}: ${n} user-managed keys"
             [ "$n" -eq 0 ] || found=1

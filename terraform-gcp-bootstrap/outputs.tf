@@ -34,3 +34,14 @@ output "GCP_GKE_NODE_SA" {
   description = "Service account of the GKE nodes (terraform-gcp: node_config / cluster_autoscaling service account)"
   value       = google_service_account.gke_nodes.email
 }
+
+# Argo CD's federation (argocd.tf); null until EKS_OIDC_ISSUER is set. GitHub variables of the
+# argocd-gke workflow (README.md).
+output "GCP_ARGOCD_SA" {
+  value = local.argocd ? google_service_account.argocd_hub[0].email : null
+}
+
+output "GCP_EKS_WIF_PROVIDER" {
+  description = "The eks-argocd pool's provider: the audience of the credential file Argo CD's pods use"
+  value       = local.argocd ? google_iam_workload_identity_pool_provider.eks_argocd[0].name : null
+}

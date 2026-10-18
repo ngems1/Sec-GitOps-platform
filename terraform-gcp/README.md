@@ -7,7 +7,7 @@ profile only: 10 services, the loadgenerator and an in-cluster Redis.
 |---|---|
 | VPC `boutique-gke`, one subnet in `us-east1` | Nodes `10.20.0.0/22`, Pods `10.24.0.0/17`, Services `10.28.0.0/22` (no overlap with the EKS VPC, `10.0.0.0/16`). Private Google Access on (`network.tf`) |
 | Cloud NAT | Outbound only, this subnet only: `redis-cart` and the loadgenerator's init container pull from Docker Hub. `cloud_nat = false` once they are mirrored too |
-| GKE Autopilot `boutique-gke` | Regional (Autopilot has no zonal option), `REGULAR` channel, private nodes, nodes as the bootstrap's `gke-nodes` service account, control plane closed to all but `control_plane_authorized_cidrs` (empty for now), no deletion protection (`gke.tf`) |
+| GKE Autopilot `boutique-gke` | Regional (Autopilot has no zonal option), `REGULAR` channel, private nodes, nodes as the bootstrap's `gke-nodes` service account, no deletion protection (`gke.tf`). Control plane: the **DNS-based endpoint**, reachable from any network but only by callers IAM allows to connect (Argo CD's `argocd-hub`, `gha-deploy`), IAM credentials only, Google-signed certificate. No IP allow-list to keep in step with the EKS NAT gateway, whose address changes with every terraform-aws rebuild. The IP-based endpoint stays closed (`control_plane_authorized_cidrs`, empty) |
 | Artifact Registry `boutique` | Docker, immutable tags, keeps the last 20 builds (60 versions: image, `.sig`, `.att`) like ECR. Target of the `cosign copy` mirror (a later PR). The nodes may read this repository only (`registry.tf`) |
 
 **No service accounts or project IAM here:** `terraform-gcp-bootstrap` creates them, and the

@@ -75,3 +75,20 @@ variable "grant_bootstrap_billing" {
   type        = bool
   default     = true
 }
+
+variable "eks_oidc_issuer" {
+  description = "OIDC issuer URL of the EKS cluster that runs Argo CD (ADR 0014, decision 4), from the GitHub variable EKS_OIDC_ISSUER. Changes with every EKS rebuild: update it and re-run bootstrap-gcp (README.md). Empty: no Argo CD federation."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.eks_oidc_issuer == "" || can(regex("^https://oidc\\.eks\\.[a-z0-9-]+\\.amazonaws\\.com/id/[0-9A-Za-z]+$", var.eks_oidc_issuer))
+    error_message = "eks_oidc_issuer must be an EKS issuer (https://oidc.eks.<region>.amazonaws.com/id/<id>), or empty."
+  }
+}
+
+variable "argocd_service_accounts" {
+  description = "The only Kubernetes service accounts (namespace/name) of the EKS cluster that may act as argocd-hub: Argo CD's controller (syncs) and server (UI live view, logs)."
+  type        = list(string)
+  default     = ["argocd/argocd-application-controller", "argocd/argocd-server"]
+}
