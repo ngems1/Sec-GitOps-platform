@@ -9,6 +9,9 @@
 # variables are replaced first: $__rate_interval / $__interval / $__range by 5m, any other
 # ${var} or $var by "dummy". Catches what broke Order success and Pods not ready after #61:
 # label values without quotes (namespace=boutique-prod), which Prometheus rejects as bad_data.
+# A Tempo Service Graph target (queryType serviceMap) has no expr: Grafana appends each of its
+# serviceMapQuery selectors to the service graph metrics, so each one is checked as
+# traces_service_graph_request_total<selector>.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -22,8 +25,14 @@ fail=0
 for f in "${files[@]}"; do
   # One rule per expr: record name "dashboard:p<panel id>_<n>", the panel title kept for messages.
   jq '[.. | objects | select(has("targets")) | . as $p | (.targets // [])
-        | to_entries[] | select((.value.expr // "") != "")
-        | {title: ($p.title // "?"), record: "dashboard:p\($p.id // 0)_\(.key)", expr: .value.expr}]' "$f" > "$work/exprs.json"
+        | to_entries[] | .key as $k | .value as $t
+        | if ($t.expr // "") != "" then
+            {title: ($p.title // "?"), record: "dashboard:p\($p.id // 0)_\($k)", expr: $t.expr}
+          elif $t.queryType? == "serviceMap" then
+            (($t.serviceMapQuery // "") | if type == "array" then .[] else . end) as $q
+            | {title: ($p.title // "?"), record: "dashboard:p\($p.id // 0)_\($k)_servicemap",
+               expr: ("traces_service_graph_request_total" + $q)}
+          else empty end]' "$f" > "$work/exprs.json"
   n=$(jq length "$work/exprs.json")
   jq '{groups: [{name: "dashboard", rules: [.[] | {record, expr: (.expr
         | gsub("\\$(__rate_interval|__interval|__range)\\b"; "5m")

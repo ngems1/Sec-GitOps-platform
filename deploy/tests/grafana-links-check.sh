@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 # CI check: Grafana keeps its trace <-> logs links (ADR 0011, PR 4; RUNBOOK section 12).
 #
-#   deploy/tests/grafana-links-check.sh [kube-prometheus-stack values] [logs-traces dashboard]
+#   deploy/tests/grafana-links-check.sh [kube-prometheus-stack values] [logs-traces dashboard] [boutique dashboard]
 #   default: monitoring/kube-prometheus-stack.values.yaml monitoring/dashboards/logs-traces.json
+#            monitoring/dashboards/boutique.json
 #
 # Tempo -> CloudWatch: Grafana's tracesToLogsV2 has no CloudWatch support, so the provisioned
 # Tempo data source carries a correlation (traceID -> a Logs Insights query of the application log
 # group). CloudWatch -> Tempo: a correlation on the trace_id field. Their variables must be
 # written $${...}: Grafana expands ${...} in provisioning files as environment variables, which
 # emptied them. The dashboard keeps its "Open trace" / "Logs for this trace" links.
+# Service Graph (ADR 0011, PR 7): the Tempo data source reads the service graph from Prometheus
+# (serviceMap) and draws node graphs; the Boutique dashboard keeps its Service graph panel and
+# exemplars on its span latency panel.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 values=${1:-monitoring/kube-prometheus-stack.values.yaml}
 dashboard=${2:-monitoring/dashboards/logs-traces.json}
+boutique=${3:-monitoring/dashboards/boutique.json}
 LOG_GROUP=/aws/containerinsights/week3-boutique-eks/application
 fail=0
 err() { echo "::error file=$1::$2"; fail=1; }
@@ -56,5 +61,16 @@ if [ -f "$dashboard" ]; then
   [ "$logs" -ge 2 ] || err "$dashboard" "expected 2 'Logs for this trace' links, found $logs"
 fi
 
+jq -e '.jsonData.serviceMap.datasourceUid == "prometheus" and .jsonData.nodeGraph.enabled == true' <<< "$tempo" >/dev/null \
+  || err "$values" "Tempo lost its Service Graph: jsonData.serviceMap.datasourceUid must be prometheus and nodeGraph.enabled true"
+
+[ -f "$boutique" ] || err "$boutique" "missing"
+if [ -f "$boutique" ]; then
+  graph=$(jq '[.panels[] | select(.type == "nodeGraph" and .datasource.uid == "tempo" and any(.targets[]?; .queryType == "serviceMap"))] | length' "$boutique")
+  ex=$(jq '[.panels[] | select(any(.targets[]?; (.expr // "" | contains("traces_spanmetrics_latency_bucket")) and .exemplar == true))] | length' "$boutique")
+  [ "$graph" -ge 1 ] || err "$boutique" "no Service graph panel (nodeGraph on Tempo, queryType serviceMap)"
+  [ "$ex" -ge 1 ] || err "$boutique" "no span latency panel (traces_spanmetrics_latency_bucket) with exemplars on"
+fi
+
 [ "$fail" -eq 0 ] || exit 1
-echo "Grafana trace <-> logs links in place (${values}, ${dashboard})."
+echo "Grafana trace <-> logs links and Service Graph in place (${values}, ${dashboard}, ${boutique})."

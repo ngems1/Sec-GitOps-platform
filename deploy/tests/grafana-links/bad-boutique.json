@@ -1,0 +1,19 @@
+{
+  "title": "Fixture for deploy/tests/grafana-links-check.sh (must fail): no Service graph, no exemplars",
+  "panels": [
+    {
+      "id": 1,
+      "type": "nodeGraph",
+      "title": "Fixture: node graph on Prometheus, not a Tempo service map",
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "targets": [{"expr": "traces_service_graph_request_total"}]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Fixture: span latency with exemplars off",
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket[5m])))", "exemplar": false}]
+    }
+  ]
+}
