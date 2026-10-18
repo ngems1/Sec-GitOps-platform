@@ -139,10 +139,50 @@ grafana:
       type: tempo
       access: proxy
       url: http://tempo.monitoring.svc:3200
+      # Trace -> logs (ADR 0011, PR 4). Grafana's own "Logs for this span" link (tracesToLogsV2)
+      # does not support CloudWatch: Grafana 13.2 builds it for Loki, Splunk, Elasticsearch,
+      # OpenSearch, Falcon LogScale, Google Cloud Logging and VictoriaMetrics Logs only. Instead a
+      # correlation: on Tempo's search results table in Explore, each traceID links to a Logs
+      # Insights query of the application log group for that trace (RUNBOOK section 12). The
+      # "Logs and traces" dashboard has the same links. CI checks this block.
+      # $${...}: Grafana expands ${...} in provisioning files as environment variables (it emptied
+      # these in a test); $$ keeps a literal $ for the correlation's own variables.
+      correlations:
+        - targetUID: cloudwatch
+          label: Logs for this trace (CloudWatch)
+          description: Application log lines with this trace_id (all 12 services log it, ADR 0011)
+          type: query
+          config:
+            field: traceID
+            target:
+              queryMode: Logs
+              region: default
+              logGroupNames:
+                - /aws/containerinsights/week3-boutique-eks/application
+              expression: >-
+                fields @timestamp, kubernetes.container_name as service, @message
+                | parse @message /trace_id\W+(?<trace_id>[0-9a-f]{32})/
+                | parse @message /span_id\W+(?<span_id>[0-9a-f]{16})/
+                | filter trace_id = "$${traceID}"
+                | sort @timestamp asc
+                | limit 500
     - name: CloudWatch
       uid: cloudwatch
       type: cloudwatch
       access: proxy
+      # Logs -> trace (ADR 0011, PR 4): in Explore, a log line's trace_id field opens the trace in
+      # Tempo. CloudWatch has no Loki-style derived fields; a correlation does it, on any Logs
+      # Insights query that returns a trace_id field (the parse in RUNBOOK section 12).
+      correlations:
+        - targetUID: tempo
+          label: Open this trace (Tempo)
+          description: The trace of this log line
+          type: query
+          config:
+            field: trace_id
+            target:
+              queryType: traceql
+              query: $${trace_id}
       jsonData:
         authType: default          # AWS SDK default chain = EKS Pod Identity
         defaultRegion: us-east-1

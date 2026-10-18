@@ -497,6 +497,64 @@ log line written during a traced request. The names are the same in every langua
 - **Finding a trace's lines:** Logs Insights on the application log group:
   `filter @message like "<trace id>"`.
 
+**From a trace to its logs, and back (ADR 0011, PR 4).**
+
+- **What Grafana can't do:** Grafana's own "Logs for this span" button in the trace view has no
+  CloudWatch support (Grafana 13.2 builds it for Loki, Splunk, Elasticsearch, OpenSearch, Falcon
+  LogScale, Google Cloud Logging and VictoriaMetrics Logs only).
+- **What does the job:** provisioned correlations (Explore) and the dashboard **Boutique: logs and
+  traces** (`monitoring/dashboards/logs-traces.json`).
+- **Data:** the logs are the application log group (1 day), the traces are Tempo (24 h).
+- **Dev only:** prod logs no IDs while tracing is off there.
+
+*Dashboard* (Dashboards > Boutique: logs and traces):
+
+1. **Trace to logs:** in **Recent traces (Tempo)**, click a `traceID` > **Logs for this trace**.
+   The panel **Log lines of trace …** lists every service's lines for that trace in time order.
+   You can also paste a trace ID into the `trace_id` box at the top.
+2. **Logs to trace:** in **Recent log lines with a trace_id** (or in the trace's lines), click a
+   `trace_id` > **Open trace**. It opens in Tempo.
+3. **The time range:** the dashboard's (last 1 h by default). The links keep it. Widen it if a
+   trace is older.
+
+*Explore*:
+
+1. **Trace to logs:**
+   - Explore > **Tempo** > **Search** (or TraceQL `{ }`): run the query.
+   - In the results table, click a `traceID` > **Logs for this trace (CloudWatch)**. It opens the
+     Logs Insights query for that trace in a split pane.
+   - From a single trace's view (the waterfall), copy the trace ID from the header instead. Then
+     use the dashboard box above, or the query below.
+2. **Logs to trace:**
+   - Explore > **CloudWatch** > **Logs**, log group `/aws/containerinsights/week3-boutique-eks/application`.
+   - Run a query that returns a `trace_id` field (this one, or any query with the first `parse`):
+
+     ```
+     fields @timestamp, kubernetes.container_name as service, @message
+     | parse @message /trace_id\W+(?<trace_id>[0-9a-f]{32})/
+     | parse @message /span_id\W+(?<span_id>[0-9a-f]{16})/
+     | filter ispresent(trace_id)
+     | sort @timestamp desc
+     | limit 100
+     ```
+
+   - Click a `trace_id` value > **Open this trace (Tempo)**.
+   - The link appears only on a field named exactly `trace_id`, so keep the `parse`.
+   - The `parse` reads the ID from the line's text, so it works whether Container Insights nests the
+     JSON line or not.
+
+*If a link is missing:*
+
+- **The correlations:** Administration > Plugins and data > Correlations lists both. They're
+  provisioned, so they're read-only there; change them in
+  `monitoring/kube-prometheus-stack.values.yaml`. CI step "Grafana trace <-> logs links" checks
+  them.
+- **Their variables are written `$${traceID}` / `$${trace_id}` there.** Grafana expands `${...}`
+  in provisioning files as environment variables, so a single `$` leaves the query empty.
+- **Grafana's AWS identity:** cluster-status (`monitoring`), section **Grafana's AWS identity**,
+  shows the Pod Identity role `week3-boutique-grafana-cloudwatch`, that the pod has the Pod
+  Identity variables, and that it started after the association.
+
 **The frontend starts every trace (since 2026-10-17, ADR 0010 note).** A `traceparent` sent by
 a client through the ALB no longer continues: each request gets a new root span, sampled by us.
 
