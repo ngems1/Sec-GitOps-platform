@@ -135,9 +135,9 @@ run "gke_nodes_least_privilege" {
 
   assert {
     condition = toset([for m in google_project_iam_member.gke_nodes : m.role]) == toset([
-      "roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/monitoring.viewer", "roles/artifactregistry.reader",
+      "roles/container.defaultNodeServiceAccount", "roles/artifactregistry.reader",
     ])
-    error_message = "the GKE node service account gets exactly: log writer, metric writer, monitoring viewer, Artifact Registry reader"
+    error_message = "the GKE node service account gets exactly: GKE's default node role, Artifact Registry reader"
   }
   assert {
     condition     = google_service_account.gke_nodes.account_id == "gke-nodes"

@@ -29,6 +29,10 @@ locals {
     "storage.googleapis.com",              # the state bucket
     "cloudbilling.googleapis.com",         # billing account IAM (the bootstrap service account)
     "billingbudgets.googleapis.com",       # the budget
+    # terraform-gcp's: gha-deploy can't enable APIs (serviceUsageViewer only), so they are on here.
+    "compute.googleapis.com",          # VPC, subnet, Cloud NAT
+    "container.googleapis.com",        # the GKE cluster
+    "artifactregistry.googleapis.com", # the mirrored images
   ], var.enforce_no_key_policy ? ["orgpolicy.googleapis.com"] : []))
 }
 
@@ -41,7 +45,7 @@ resource "google_project_service" "apis" {
 }
 
 # ---------------------------------------------------------------------------
-# Terraform state bucket: terraform-gcp under prefix "gcp", this root under "bootstrap".
+# Terraform state bucket: terraform-gcp under prefix "gcp-infra", this root under "bootstrap".
 # ---------------------------------------------------------------------------
 resource "google_storage_bucket" "state" {
   name     = local.bucket_name
