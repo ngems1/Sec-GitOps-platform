@@ -43,9 +43,11 @@ RUN wget -q -O /app/opentelemetry-javaagent.jar \
       "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_JAVAAGENT_VERSION}/opentelemetry-javaagent.jar" \
     && echo "${OTEL_JAVAAGENT_SHA256}  /app/opentelemetry-javaagent.jar" | sha256sum -c - \
     && chmod 0444 /app/opentelemetry-javaagent.jar && chmod 0755 /app/docker-entrypoint.sh
-# Agent settings that never change. Only the gRPC server and client instrumentations are on (low
-# overhead: no JVM, executor, logging or HTTP-client instrumentation), traces only, W3C context,
-# and the caller's sampling decision is followed (the collector's tail sampling decides).
+# Agent settings that never change. Only two instrumentations are on (low overhead: no JVM,
+# executor or HTTP-client instrumentation): gRPC server and client, and Log4j context data, which
+# puts the active span's trace_id / span_id / trace_flags in the log lines (ADR 0011; without it
+# the JSON lines had no IDs; test-log-trace-ids.sh checks it). Traces only, W3C context, and the
+# caller's sampling decision is followed (the collector's tail sampling decides).
 ENV JAVA_TOOL_OPTIONS="-javaagent:/app/opentelemetry-javaagent.jar" \
     OTEL_JAVAAGENT_ENABLED=false \
     OTEL_SERVICE_NAME=adservice \
@@ -56,7 +58,8 @@ ENV JAVA_TOOL_OPTIONS="-javaagent:/app/opentelemetry-javaagent.jar" \
     OTEL_TRACES_SAMPLER=parentbased_always_on \
     OTEL_PROPAGATORS=tracecontext,baggage \
     OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED=false \
-    OTEL_INSTRUMENTATION_GRPC_ENABLED=true
+    OTEL_INSTRUMENTATION_GRPC_ENABLED=true \
+    OTEL_INSTRUMENTATION_LOG4J_CONTEXT_DATA_ENABLED=true
 
 EXPOSE 9555
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

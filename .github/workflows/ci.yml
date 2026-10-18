@@ -69,6 +69,19 @@ jobs:
       - name: adservice log layout (gradle test)
         working-directory: src/adservice
         run: bash gradlew --no-daemon test # gradlew is not executable in git (the Dockerfile chmods it)
+      # End to end: the built adservice with the Java agent and the image's own environment (the
+      # Dockerfile's ENV and entrypoint) logs trace_id / span_id / trace_flags with tracing on and
+      # none with tracing off. The agent version and SHA-256 come from the Dockerfile.
+      - name: adservice log trace IDs (agent, image environment)
+        working-directory: src/adservice
+        run: |
+          bash gradlew --no-daemon -q installDist
+          version=$(sed -n 's/^ARG OTEL_JAVAAGENT_VERSION=//p' Dockerfile)
+          sha=$(sed -n 's/^ARG OTEL_JAVAAGENT_SHA256=//p' Dockerfile)
+          curl -sSfLo "$RUNNER_TEMP/opentelemetry-javaagent.jar" \
+            "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${version}/opentelemetry-javaagent.jar"
+          echo "${sha}  $RUNNER_TEMP/opentelemetry-javaagent.jar" | sha256sum -c -
+          bash test-log-trace-ids.sh build/install/hipstershop "$RUNNER_TEMP/opentelemetry-javaagent.jar"
       - name: emailservice (notification consumer)
         working-directory: src/emailservice
         run: python -m unittest -v test_notifications

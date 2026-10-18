@@ -160,10 +160,11 @@ grafana:
               logGroupNames:
                 - /aws/containerinsights/week3-boutique-eks/application
               expression: >-
-                fields @timestamp, kubernetes.container_name as service, @message
+                parse kubernetes.pod_name /^(?<pod_service>.+)-[a-z0-9]{6,10}-[a-z0-9]{5}$/
                 | parse @message /trace_id\W+(?<trace_id>[0-9a-f]{32})/
                 | parse @message /span_id\W+(?<span_id>[0-9a-f]{16})/
                 | filter trace_id = "$${traceID}"
+                | fields @timestamp, coalesce(pod_service, kubernetes.pod_name) as service, trace_id, span_id, @message
                 | sort @timestamp asc
                 | limit 500
     - name: CloudWatch
