@@ -12,6 +12,12 @@
       "title": "Fixture: a correct query with Grafana variables (must pass)",
       "datasource": {"type": "prometheus", "uid": "${prometheus}"},
       "targets": [{"expr": "sum by (namespace) (rate(frontend_http_requests_total{namespace=\"$namespace\"}[$__rate_interval]))"}]
+    },
+    {
+      "id": 3,
+      "title": "Fixture: Tempo Service Graph selector without quotes",
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{"queryType": "serviceMap", "serviceMapQuery": ["{client_k8s_namespace_name=\"boutique-dev\"}", "{server_k8s_namespace_name=boutique-dev}"]}]
     }
   ]
 }

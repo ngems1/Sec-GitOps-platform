@@ -667,6 +667,54 @@ version):
 - **Also lost:** the resource usage report (section 13) reads 24 h of data. After the restart
   it shows `SHORT-DATA` for a day.
 
+**The Service Graph (ADR 0011, PR 7).** Who calls whom in dev, how often, how fast and how
+often it fails. It's built from ALL spans (the collector's `traces_service_graph_*` metrics in
+Prometheus), not from the sampled traces in Tempo.
+
+- **Where:**
+  - Dashboards > **Boutique: platform overview**, row **Traces (dev)**: the **Service graph** panel,
+    with requests per second, error % and p95 by service under it.
+  - Explore > **Tempo** > query type **Service Graph** > Run query. Under the graph there's a
+    table of span names: rate, error rate and p90 duration. To keep to dev, add the filter
+    `client_k8s_namespace_name="boutique-dev"`.
+- **What the drawing means:**
+  - **A circle** is a service, or a node it calls with no traces of its own (`redis`, `DynamoDB`,
+    `SQS`...). Inside: the average response time (ms) and requests per second it receives.
+  - **Its ring:** green for the successful share, red for the failed share. The more red, the
+    more of its requests failed.
+  - **An arrow** goes from caller to callee. Hover it for that pair's average time and rate.
+- **Click** a circle or an arrow for:
+  - **Request rate**, **Request classic histogram** (p90) and **Failed request rate**: Prometheus
+    queries in Explore;
+  - **View traces**: a Tempo search for that service's traces.
+- **What you'll see in dev today:**
+  - **No orders:** the loadgenerator is browse-only, so there are no checkout, inventory, SQS or
+    email edges. `inventoryservice` has spans only when it processes an `OrderCreated` message
+    (its HTTP probes are not traced; nothing calls its `/stock` API), so it is missing from the
+    graph and from `traces_spanmetrics_calls_total` until someone orders
+    (`deploy/order-flow.sh`, or an order in the shop).
+  - **`user -> checkoutservice` and `user -> emailservice`:** the kubelet's gRPC health probes (2
+    probes every 10 s and every 5 s, so 0.2/s and 0.4/s). They're root spans, so they look like
+    users. The service graph metrics have no span name, so they can't be filtered out there; the
+    panels under the graph leave them out (`span_name!~".*grpc.health.v1.Health/.*|.*/_healthz"`).
+  - **Prod is not there:** prod sends no spans while tracing is off.
+- **From a slow edge to the logs:**
+  1. In the graph, find the arrow with the highest average time, for example `frontend ->
+     checkoutservice`. Click it > **Request classic histogram** to see its p90 over time.
+  2. The service graph's own histogram has no exemplars; the span metrics do. Go to the **p95
+     latency by service (dev, spans)** panel (or Explore > Prometheus with the query in
+     "Exemplars" above) and look at the callee (`checkoutservice`). Hover a diamond near the
+     slow points > **Query with Tempo**.
+  3. The trace opens. In its waterfall, the long bar is where the time went.
+  4. Copy the trace ID from the trace's header. Paste it into the `trace_id` box of **Boutique:
+     logs and traces**, or click it in Explore's Tempo search results > **Logs for this trace
+     (CloudWatch)** ("From a trace to its logs, and back" above).
+  5. No diamond, or Tempo says the trace isn't found: the edge's own **View traces** link searches
+     Tempo for that service's traces. Sort by duration.
+- CI checks it: "Grafana trace <-> logs links" (Tempo's `serviceMap` and `nodeGraph`, the panel,
+  exemplars on the latency panel) and "Dashboard PromQL parses (promtool)" (the panels' PromQL
+  and the graph's selectors).
+
 **Service graph details:**
 
 - **Virtual nodes:**

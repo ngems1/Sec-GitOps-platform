@@ -105,7 +105,9 @@ jobs:
           test "$(grep -c '^::error' "$RUNNER_TEMP/cw.txt")" -eq 3
       # Every PromQL query of the dashboards parses, with the cluster's Prometheus version
       # (kube-prometheus-stack 89.2.4 runs v3.14.0). Unquoted label values broke Order success and
-      # Pods not ready after #61. The fixture has one broken query and one with Grafana variables.
+      # Pods not ready after #61. Tempo Service Graph selectors (serviceMapQuery) are checked too.
+      # The fixture has two broken queries (one a Service Graph selector) and one with Grafana
+      # variables.
       - name: Dashboard PromQL parses (promtool)
         env:
           PROMETHEUS_VERSION: "3.14.0"
@@ -123,17 +125,20 @@ jobs:
           if bash deploy/tests/promql-check.sh deploy/tests/promql/bad.json > "$RUNNER_TEMP/pq.txt" 2>&1; then
             echo "::error::the PromQL check missed the broken query in deploy/tests/promql/bad.json"; exit 1
           fi
-          test "$(grep -c 'could not parse expression' "$RUNNER_TEMP/pq.txt")" -eq 1
+          test "$(grep -c 'could not parse expression' "$RUNNER_TEMP/pq.txt")" -eq 2
       # Trace <-> logs in Grafana (ADR 0011, PR 4): the provisioned Tempo and CloudWatch data sources
       # keep their correlations (variables escaped as $${...}) and the "logs and traces" dashboard
-      # its links. The fixture loses or breaks them and must give 3 errors.
+      # its links. Service Graph (PR 7): Tempo's serviceMap and nodeGraph, the Boutique dashboard's
+      # Service graph panel and exemplars on its span latency panel. The fixtures lose or break
+      # them and must give 6 errors.
       - name: Grafana trace <-> logs links
         run: |
           bash deploy/tests/grafana-links-check.sh
-          if bash deploy/tests/grafana-links-check.sh deploy/tests/grafana-links/bad-values.yaml > "$RUNNER_TEMP/gl.txt"; then
-            echo "::error::the check missed the broken links in deploy/tests/grafana-links/bad-values.yaml"; exit 1
+          if bash deploy/tests/grafana-links-check.sh deploy/tests/grafana-links/bad-values.yaml \
+               monitoring/dashboards/logs-traces.json deploy/tests/grafana-links/bad-boutique.json > "$RUNNER_TEMP/gl.txt"; then
+            echo "::error::the check missed the broken links in deploy/tests/grafana-links"; exit 1
           fi
-          test "$(grep -c '^::error' "$RUNNER_TEMP/gl.txt")" -eq 3
+          test "$(grep -c '^::error' "$RUNNER_TEMP/gl.txt")" -eq 6
       # The collector's span metrics and service graph see ALL spans (ADR 0011, PR 5): connectors
       # in traces/in, tail sampling only after them, sampling policies unchanged, low-cardinality
       # dimensions. The fixture breaks four of these and must give 4 errors.
