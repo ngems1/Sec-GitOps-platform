@@ -44,6 +44,7 @@
 | Deep architecture (12+ diagrams) | [docs/architecture.md](docs/architecture.md) |
 | Decisions (ADRs 0001–0014) | [docs/adr/](docs/adr/) |
 | Runbook | [docs/week3/RUNBOOK.md](docs/week3/RUNBOOK.md) |
+| Screenshots (31 figures) | [Platform in action](#platform-in-action) |
 
 ---
 
@@ -121,6 +122,8 @@ flowchart LR
 - **Git is the source of truth** — manual drift is reverted by Argo CD self-heal.
 - **A bad release reaches 20% of users, not 100%.**
 
+📸 Proof: [Figs. 1–7](#gitops-and-progressive-delivery)
+
 ---
 
 ## Security and software supply chain
@@ -143,6 +146,8 @@ flowchart LR
 | Cluster | **Kyverno** signature + SBOM verification | Audit today → enforce next |
 
 For every running Pod we can answer: **what is running, who built it, what is inside it, and was it scanned.**
+
+📸 Proof: [Figs. 8–12](#software-supply-chain)
 
 > Why no Trivy? After the 2026 Trivy GitHub Actions supply-chain compromise, scanning moved to **ECR
 > native scanning**, so no third-party action runs with AWS credentials.
@@ -213,6 +218,8 @@ flowchart LR
 queue growing → cause: consumer stopped → restart → backlog drains → alarm 🟢, queued orders processed,
 DLQs at 0. **Evidence, not guessing — and no lost orders.**
 
+📸 Proof: [Figs. 13–20](#observability-and-debugging) — exemplars in Fig. 15, trace → logs in Fig. 20
+
 ---
 
 ## High availability: when one cloud fails
@@ -235,6 +242,8 @@ October 2025 showed the cost of depending on one provider:
 
 > **Honest status:** GKE is a second running storefront today. Order storage, order emails and the AI
 > assistant stay on AWS until data replication, order consistency and event replication are built.
+
+📸 Proof: [Figs. 21–24](#multi-cloud-the-gke-spoke)
 
 ---
 
@@ -315,23 +324,61 @@ FinOps / right-sizing from real usage · hub-and-spoke multi-cloud · ADR-driven
 
 ---
 
-## Screenshots
+## Platform in action
+
+Real screenshots from the running platform. Each image carries its figure number; click any image to open it full size. AWS account IDs are redacted.
+
+### GitOps and progressive delivery
+
+<table>
+<tr><td colspan="2"><a href="docs/screenshots/platform/argocd-applications.png"><img src="docs/screenshots/platform/argocd-applications.png" alt="Argo CD: <code>boutique-dev</code> syncs from <code>main</code>, <code>boutique-prod</code> from the <code>env/prod</code> promotion branch — both Healthy and Synced."></a><br><sub><b>Fig. 1</b> — Argo CD: <code>boutique-dev</code> syncs from <code>main</code>, <code>boutique-prod</code> from the <code>env/prod</code> promotion branch — both Healthy and Synced.</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/argocd-prod-gitops-bot.png"><img src="docs/screenshots/platform/argocd-prod-gitops-bot.png" alt="Prod changes only through a Git commit made by the GitOps GitHub App bot (<code>gitops: prod image tag …</code>) — no manual <code>kubectl</code>."></a><br><sub><b>Fig. 2</b> — Prod changes only through a Git commit made by the GitOps GitHub App bot (<code>gitops: prod image tag …</code>) — no manual <code>kubectl</code>.</sub></td><td width="50%"><a href="docs/screenshots/platform/argo-rollouts-canary-events.png"><img src="docs/screenshots/platform/argo-rollouts-canary-events.png" alt="Argo Rollouts on the frontend: canary steps 2/4 and 4/4 completed, each with an analysis pause."></a><br><sub><b>Fig. 3</b> — Argo Rollouts on the frontend: canary steps 2/4 and 4/4 completed, each with an analysis pause.</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/argocd-prod-network.png"><img src="docs/screenshots/platform/argocd-prod-network.png" alt="Prod traffic path: ALB ingress → frontend → backend services → Pods."></a><br><sub><b>Fig. 4</b> — Prod traffic path: ALB ingress → frontend → backend services → Pods.</sub></td><td width="50%"><a href="docs/screenshots/platform/argocd-prod-pods-per-node.png"><img src="docs/screenshots/platform/argocd-prod-pods-per-node.png" alt="Prod Pods spread across several nodes for availability."></a><br><sub><b>Fig. 5</b> — Prod Pods spread across several nodes for availability.</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/argocd-prod-resourcequota.png"><img src="docs/screenshots/platform/argocd-prod-resourcequota.png" alt="Guardrails as code: the <code>boutique-prod</code> ResourceQuota, created and kept in sync by Argo CD."></a><br><sub><b>Fig. 6</b> — Guardrails as code: the <code>boutique-prod</code> ResourceQuota, created and kept in sync by Argo CD.</sub></td><td width="50%"><a href="docs/screenshots/platform/argocd-repo-connection.png"><img src="docs/screenshots/platform/argocd-repo-connection.png" alt="Argo CD reads the repository over SSH with a read-only deploy key."></a><br><sub><b>Fig. 7</b> — Argo CD reads the repository over SSH with a read-only deploy key.</sub></td></tr>
+</table>
+
+### Software supply chain
+
+<table>
+<tr><td width="50%"><a href="docs/screenshots/platform/ci-syft-sbom.png"><img src="docs/screenshots/platform/ci-syft-sbom.png" alt="Every image gets an SPDX SBOM from Syft; tools are pinned and checked by SHA-256."></a><br><sub><b>Fig. 8</b> — Every image gets an SPDX SBOM from Syft; tools are pinned and checked by SHA-256.</sub></td><td width="50%"><a href="docs/screenshots/platform/ci-cosign-sign-attest.png"><img src="docs/screenshots/platform/ci-cosign-sign-attest.png" alt="cosign keyless signing: the image and its SBOM attestation are signed by digest (Sigstore)."></a><br><sub><b>Fig. 9</b> — cosign keyless signing: the image and its SBOM attestation are signed by digest (Sigstore).</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/ci-verify-signature-sbom.png"><img src="docs/screenshots/platform/ci-verify-signature-sbom.png" alt="Verification: signature and SBOM attestation must match the <code>deploy.yml@refs/heads/main</code> identity and the GitHub OIDC issuer."></a><br><sub><b>Fig. 10</b> — Verification: signature and SBOM attestation must match the <code>deploy.yml@refs/heads/main</code> identity and the GitHub OIDC issuer.</sub></td><td width="50%"><a href="docs/screenshots/platform/ci-sbom-artifact.png"><img src="docs/screenshots/platform/ci-sbom-artifact.png" alt="The SBOM is also stored as a downloadable build artifact."></a><br><sub><b>Fig. 11</b> — The SBOM is also stored as a downloadable build artifact.</sub></td></tr>
+<tr><td colspan="2"><a href="docs/screenshots/platform/ci-load-test-kyverno-audit.png"><img src="docs/screenshots/platform/ci-load-test-kyverno-audit.png" alt="Load test: 29,702 requests with 0 failures · Kyverno audit in prod: 14 of 14 running Pods pass the image-signature policy."></a><br><sub><b>Fig. 12</b> — Load test: 29,702 requests with 0 failures · Kyverno audit in prod: 14 of 14 running Pods pass the image-signature policy.</sub></td></tr>
+</table>
+
+### Observability and debugging
+
+<table>
+<tr><td colspan="2"><a href="docs/screenshots/platform/grafana-sli-dashboard.png"><img src="docs/screenshots/platform/grafana-sli-dashboard.png" alt="SLI dashboard: 100% availability in prod and dev, p95 latency ≈ 49 ms (prod) and ≈ 52 ms (dev)."></a><br><sub><b>Fig. 13</b> — SLI dashboard: 100% availability in prod and dev, p95 latency ≈ 49 ms (prod) and ≈ 52 ms (dev).</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/prometheus-spanmetrics-rate.png"><img src="docs/screenshots/platform/prometheus-spanmetrics-rate.png" alt="Request rate per service, computed from OpenTelemetry spans (before sampling)."></a><br><sub><b>Fig. 14</b> — Request rate per service, computed from OpenTelemetry spans (before sampling).</sub></td><td width="50%"><a href="docs/screenshots/platform/prometheus-p95-exemplars.png"><img src="docs/screenshots/platform/prometheus-p95-exemplars.png" alt="p95 latency with <b>exemplars</b> (green dots): each dot links to a real request’s trace."></a><br><sub><b>Fig. 15</b> — p95 latency with <b>exemplars</b> (green dots): each dot links to a real request’s trace.</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/tempo-traceql-search.png"><img src="docs/screenshots/platform/tempo-traceql-search.png" alt="Tempo: TraceQL search for frontend traces."></a><br><sub><b>Fig. 16</b> — Tempo: TraceQL search for frontend traces.</sub></td><td width="50%"><a href="docs/screenshots/platform/tempo-trace-waterfall.png"><img src="docs/screenshots/platform/tempo-trace-waterfall.png" alt="One request across services: the waterfall shows where the time is spent."></a><br><sub><b>Fig. 17</b> — One request across services: the waterfall shows where the time is spent.</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/tempo-trace-product-page.png"><img src="docs/screenshots/platform/tempo-trace-product-page.png" alt="<code>GET /product/{id}</code>: 6 services, 26 spans, 51 ms end to end."></a><br><sub><b>Fig. 18</b> — <code>GET /product/{id}</code>: 6 services, 26 spans, 51 ms end to end.</sub></td><td width="50%"><a href="docs/screenshots/platform/grafana-logs-traces-dashboard.png"><img src="docs/screenshots/platform/grafana-logs-traces-dashboard.png" alt="Logs & traces dashboard: click a trace ID to drill down."></a><br><sub><b>Fig. 19</b> — Logs & traces dashboard: click a trace ID to drill down.</sub></td></tr>
+<tr><td colspan="2"><a href="docs/screenshots/platform/grafana-trace-to-logs-cloudwatch.png"><img src="docs/screenshots/platform/grafana-trace-to-logs-cloudwatch.png" alt="Trace → logs: CloudWatch log lines filtered by the same <code>trace_id</code>, with each <code>span_id</code>."></a><br><sub><b>Fig. 20</b> — Trace → logs: CloudWatch log lines filtered by the same <code>trace_id</code>, with each <code>span_id</code>.</sub></td></tr>
+</table>
+
+### Multi-cloud: the GKE spoke
+
+<table>
+<tr><td width="50%"><a href="docs/screenshots/platform/argocd-gke-workflow.png"><img src="docs/screenshots/platform/argocd-gke-workflow.png" alt="<code>argocd-gke</code>: the EKS hub deploys the GKE spoke — AWS role, GCP Workload Identity Federation, no keys."></a><br><sub><b>Fig. 21</b> — <code>argocd-gke</code>: the EKS hub deploys the GKE spoke — AWS role, GCP Workload Identity Federation, no keys.</sub></td><td width="50%"><a href="docs/screenshots/platform/argocd-gke-spoke-registered.png"><img src="docs/screenshots/platform/argocd-gke-spoke-registered.png" alt="Argo CD on EKS manages the GKE destination <code>boutique-gke</code>: Healthy and Synced."></a><br><sub><b>Fig. 22</b> — Argo CD on EKS manages the GKE destination <code>boutique-gke</code>: Healthy and Synced.</sub></td></tr>
+<tr><td width="50%"><a href="docs/screenshots/platform/mirror-images-summary.png"><img src="docs/screenshots/platform/mirror-images-summary.png" alt="Signed images mirrored to Artifact Registry: same digest, signature and SBOM verified for every service."></a><br><sub><b>Fig. 23</b> — Signed images mirrored to Artifact Registry: same digest, signature and SBOM verified for every service.</sub></td><td width="50%"><a href="docs/screenshots/platform/gcp-no-service-account-keys.png"><img src="docs/screenshots/platform/gcp-no-service-account-keys.png" alt="Keyless by design: 0 user-managed keys on every GCP service account."></a><br><sub><b>Fig. 24</b> — Keyless by design: 0 user-managed keys on every GCP service account.</sub></td></tr>
+</table>
+
+### The shop and operations
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/shop-home.png" alt="Shop home page with the release SHA in the footer"><br><sub>The shop — release SHA in the footer</sub></td>
-<td width="50%"><img src="docs/screenshots/order-email.png" alt="Order confirmation email from Amazon SES"><br><sub>Real order email from Amazon SES</sub></td>
+<td width="50%"><img src="docs/screenshots/shop-home.png" alt="Shop home page with the release SHA in the footer"><br><sub><b>Fig. 25</b> — The shop, with the release SHA in the footer.</sub></td>
+<td width="50%"><img src="docs/screenshots/order-email.png" alt="Order confirmation email from Amazon SES"><br><sub><b>Fig. 26</b> — Real order confirmation email sent by Amazon SES.</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/screenshots/deploy-pipeline.png" alt="deploy.yml run: builds, dev, approval, prod, isolation test"><br><sub><code>deploy.yml</code>: builds → dev → approval → prod → isolation test</sub></td>
+<td colspan="2"><img src="docs/screenshots/deploy-pipeline.png" alt="deploy.yml run: builds, dev, approval, prod, isolation test"><br><sub><b>Fig. 27</b> — <code>deploy.yml</code>: builds → dev → approval → prod → isolation test.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/grafana-kubernetes.png" alt="Grafana during a load test"><br><sub>Grafana during a load test</sub></td>
-<td><img src="docs/screenshots/chaos-pod-failure.png" alt="Chaos pod-failure: Ready in 5 s, 0 errors"><br><sub>Chaos <code>pod-failure</code>: Ready in 5 s, 0 errors</sub></td>
+<td><img src="docs/screenshots/chaos-pod-failure.png" alt="Chaos pod-failure: Ready in 5 s, 0 errors"><br><sub><b>Fig. 28</b> — Chaos <code>pod-failure</code>: new Pod Ready in 5 s, 0 failed requests.</sub></td>
+<td><img src="docs/screenshots/slack-alarm.png" alt="Slack backlog alarm red then green"><br><sub><b>Fig. 29</b> — Consumer-failure drill: backlog alarm 🔴 → 🟢 in Slack.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/codeql-run.png" alt="CodeQL run, all languages green"><br><sub>CodeQL SAST on all languages and workflows</sub></td>
-<td><img src="docs/screenshots/slack-alarm.png" alt="Slack backlog alarm red then green"><br><sub>Backlog alarm 🔴 → 🟢 during the consumer-failure drill</sub></td>
+<td><img src="docs/screenshots/codeql-run.png" alt="CodeQL run, all languages green"><br><sub><b>Fig. 30</b> — CodeQL SAST on all five languages and the workflows.</sub></td>
+<td><img src="docs/screenshots/grafana-kubernetes.png" alt="Grafana during a load test"><br><sub><b>Fig. 31</b> — Grafana during a load test: Pod and node CPU rise, then settle.</sub></td>
 </tr>
 </table>
 
