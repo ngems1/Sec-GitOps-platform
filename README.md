@@ -1,483 +1,419 @@
+<div align="center">
+
 # Sec-GitOps Platform
 
-**A secure delivery platform for a 12-service retail application on AWS EKS.**
+### From Commit to Confidence
+
+**A secure GitOps hub-and-spoke platform for resilient multi-cloud delivery**
 
 [![Deploy](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/deploy.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/deploy.yml)
 [![CI](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/ci.yml)
 [![Infra](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/infra.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/infra.yml)
 [![CodeQL](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/codeql.yml/badge.svg)](https://github.com/ngems1/Sec-GitOps-platform/actions/workflows/codeql.yml)
 
-An online shop made of **12 microservices** running on **Amazon EKS**, with separate **dev** and
-**prod** environments, an **event-driven order flow** (EventBridge, SQS, Lambda), real order emails
-(Amazon SES), autoscaling, Prometheus + Grafana, and a GitHub Actions pipeline that signs in to AWS
-with **OIDC** (no stored keys). Based on Google's Online Boutique, extended with an inventory
-service, managed AWS data stores and the order events.
+![AWS](https://img.shields.io/badge/AWS-EKS-FF9900?logo=amazonwebservices&logoColor=white)
+![GCP](https://img.shields.io/badge/GCP-GKE%20Autopilot-4285F4?logo=googlecloud&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-844FBA?logo=terraform&logoColor=white)
+![Argo CD](https://img.shields.io/badge/Argo%20CD-EF7B4D?logo=argo&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-0F1689?logo=helm&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)
+![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-425CC7?logo=opentelemetry&logoColor=white)
 
-| Environment | Address |
+**Sebastien Ngembou** · Senior Cloud Architect / DevOps Lead · [github.com/ngems1](https://github.com/ngems1)
+
+</div>
+
+---
+
+## In 30 seconds
+
+> **Every change is a business risk** — to revenue, to customers and to compliance.
+> This platform makes change **safe by default**: every change is tested, approved, signed,
+> released progressively, automatically reversible and continuously reconciled.
+
+- **What it runs:** a 12-service retail application (Go, Python, C#/.NET, Java, Node.js, gRPC) on **AWS EKS**, plus a portable profile on **GKE Autopilot** — both deployed by **one Argo CD**.
+- **What it proves:** DevSecOps, GitOps, progressive delivery, keyless identity, observability, governed AI, cost control and multi-cloud design, working together end to end.
+- **How it is run:** like a production platform — protected `main`, PR reviews, prod approval, runbooks, ADRs, chaos and load tests.
+
+| 📌 Quick links | |
 |---|---|
-| prod | `https://shop.sebngembou-cloud.click` |
-| dev | `https://dev.sebngembou-cloud.click` |
-| Grafana | `https://grafana.sebngembou-cloud.click` (allow-listed IPs only) |
-
-> The infrastructure is usually destroyed by hand when not in use (`infra` with `action = destroy`)
-> to save cost, so these addresses only answer while it is up.
+| One-page summary | [README-EXECUTIVE.md](README-EXECUTIVE.md) |
+| Deep architecture (12+ diagrams) | [docs/architecture.md](docs/architecture.md) |
+| Decisions (ADRs 0001–0014) | [docs/adr/](docs/adr/) |
+| Runbook | [docs/week3/RUNBOOK.md](docs/week3/RUNBOOK.md) |
 
 ---
 
-## Highlights
+## Results that matter
 
-- **12 polyglot microservices** — Go, C#, Java, Node.js and Python, talking gRPC, packaged in one
-  Helm chart with values per environment.
-- **Two environments, one cluster** — `boutique-dev` and `boutique-prod` share one EKS cluster but
-  are kept apart by namespaces, deny-all NetworkPolicies, per-environment IAM roles (Pod Identity
-  with a namespace condition), and their own databases, queues, event bus and KMS key. An
-  **isolation test** proves it after every prod deploy.
-- **Managed data layer** — RDS MySQL 8.4 (orders and catalog; prod Multi-AZ, TLS verified),
-  ElastiCache Redis (cart and a catalog cache), DynamoDB (stock and the email log).
-- **Event-driven orders** — checkout publishes `OrderCreated`; inventory reserves stock; a Lambda
-  updates the order; emailservice sends the email. One SQS queue and dead-letter queue per
-  consumer, idempotent consumers, alarms to Slack.
-- **Real notifications** — order emails through **Amazon SES** from `orders@sebngembou-cloud.click`
-  (DKIM, IAM limited to that sender), and a Slack message per order.
-- **HTTPS on a real domain** — Route 53 + ACM wildcard certificate, TLS 1.2+ policy, HTTP redirected
-  to HTTPS; the smoke test checks the certificate on the real name.
-- **Autoscaling** — HorizontalPodAutoscalers on the five busiest services, metrics-server, and VPC
-  CNI prefix delegation (110 pods per node instead of 17).
-- **SAST with CodeQL** — every pull request is analysed for security bugs in all 5 languages
-  (Go, C#, Java, JavaScript, Python) and in the GitHub workflows; results in the Security tab.
-- **Secure CI/CD** — OIDC roles (read-only for pull requests, deploy only from `main`), Checkov on
-  Terraform, immutable images tagged with the commit SHA, an **ECR scan gate** before anything
-  reaches the cluster, and prod behind an approval.
-- **Safe deployments** — database migrations as a Job inside the VPC, `helm --rollback-on-failure`,
-  HTTPS smoke tests with automatic rollback, and a one-click redeploy of any previous release.
-- **Observability** — Prometheus + Grafana (Prometheus and CloudWatch data sources, SLI dashboard),
-  Container Insights logs, CloudWatch alarms to Slack, pipeline events to Slack.
-- **Proven under failure** — stress tests, chaos tests (pod and consumer failures) and a rollback
-  demo, with results below.
+| | Proof (from this platform's own tests) | What it means for the business |
+|---|---|---|
+| ⚡ **Reliability** | Pod back to Ready in **5 s**, **0 failed requests** (chaos test) | Less downtime, revenue protected |
+| 📈 **Scale** | Home page **~10× faster** with autoscaling under an **800-user** stress test | Peak traffic without paying for peak all year |
+| 🔐 **Security** | **0** long-lived cloud keys; **every image scanned and signed** | Lower breach risk, audit-ready |
+| 🔁 **Reversibility** | Rollback = redeploy a previous SHA, **nothing rebuilt** | Bad releases are cheap to undo |
+| 🧱 **Isolation** | dev → prod **blocked** at network, IAM and data layers, tested after every prod deploy | One environment cannot damage another |
+| 💰 **Cost** | **$9–12/day** while running; destroyed when idle | Predictable, controllable spend |
+
+> **Next:** the platform is built to improve the four **DORA** metrics (deployment frequency, lead
+> time, change failure rate, time to restore). Measuring them from the pipeline history is on the roadmap.
 
 ---
 
-## Architecture
-
-**In plain words**
-
-![How the store works](docs/week3/architecture-simple.png)
-
-**In detail**
-
-![Architecture](docs/week3/architecture.png)
+## Architecture at a glance
 
 ```mermaid
 flowchart TB
-    user([Shoppers]) -->|HTTPS| r53[Route 53<br/>shop. / dev. / grafana.]
-    r53 --> albp[ALB prod] & albd[ALB dev]
-    admin([Allow-listed IP]) -->|HTTPS| albm[ALB Grafana]
-    subgraph vpc[VPC 10.0.0.0/16 · 2 Availability Zones]
-        subgraph eks[EKS cluster week3-boutique-eks · 4 x t3.medium]
-            subgraph prod[namespace boutique-prod]
-                fp[frontend] --> svcp[11 services<br/>gRPC]
-            end
-            subgraph dev[namespace boutique-dev]
-                fd[frontend] --> svcd[11 services<br/>gRPC]
-            end
-            subgraph mon[namespace monitoring]
-                prom[Prometheus] --> graf[Grafana]
-            end
-        end
-        subgraph data[Private data stores · one set per environment]
-            rds[(RDS MySQL 8.4<br/>prod Multi-AZ)]
-            redis[(ElastiCache Redis)]
-            ddb[(DynamoDB)]
-        end
-        lambda[order-status Lambda]
+    gh[GitHub<br/>PRs · rulesets · GitOps state] --> gha[GitHub Actions<br/>OIDC · CI · Terraform]
+    gha -->|build · scan · sign| ecr[(Amazon ECR<br/>immutable SHA tags)]
+    ecr -->|mirror signed images| ar[(GCP Artifact Registry)]
+
+    subgraph hub[AWS EKS — HUB]
+        argo[Argo CD<br/>GitOps control plane]
+        dev[boutique-dev<br/>syncs from main]
+        prod[boutique-prod<br/>syncs from env/prod]
+        plat[Argo Rollouts · Kyverno<br/>Prometheus · Grafana · Tempo · OTel]
+        aws[EventBridge · SQS · Lambda<br/>RDS · DynamoDB · Bedrock]
     end
-    albp --> fp
-    albd --> fd
-    albm --> graf
-    svcp & svcd --> rds & redis & ddb
-    svcp & svcd <-->|events| eb[EventBridge + SQS]
-    eb <--> lambda
-    lambda --> rds
-    svcp & svcd -->|order emails| ses[Amazon SES]
-    ecr[Amazon ECR<br/>images tagged with the commit SHA] -.-> eks
-    graf -.->|read-only role| cw[CloudWatch]
-    cw -.->|alarms| sns[SNS] -.-> slk[slack-alerts Lambda] -.-> slack([Slack])
+
+    subgraph spoke[GKE Autopilot — SPOKE]
+        gke[boutique-gke<br/>10-service portable profile]
+        ing[GKE Ingress + managed TLS]
+    end
+
+    gha -->|Terraform + GitOps tag| hub
+    argo --> dev & prod
+    argo ==>|keyless federation<br/>no kubeconfig · no static token| gke
+    ecr -.-> dev & prod
+    ar -.-> gke
 ```
 
-### The 12 services
-
-| Service | Language | Role |
-|---|---|---|
-| frontend | Go | Web UI, the only public service (behind the ALB) |
-| productcatalogservice | Go | Products from MySQL, cached in Redis |
-| cartservice | C# | Shopping cart in Redis |
-| checkoutservice | Go | Places the order, publishes `OrderCreated` |
-| inventoryservice | Python | Reserves stock in DynamoDB (new service) |
-| emailservice | Python | Order emails (SES) and Slack messages |
-| currencyservice | Node.js | Currency conversion |
-| paymentservice | Node.js | Fake card payment |
-| shippingservice | Go | Shipping quotes |
-| recommendationservice | Python | Product suggestions |
-| adservice | Java | Text ads |
-| loadgenerator | Python (Locust) | Simulated shoppers for load and stress tests |
-
-### Order flow
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as checkoutservice
-    participant EB as EventBridge
-    participant I as inventoryservice
-    participant L as order-status Lambda
-    participant E as emailservice
-    C->>C: order row PENDING (RDS)
-    C->>EB: OrderCreated
-    EB->>I: via inventory-q
-    I->>I: reserve stock (DynamoDB, idempotent)
-    I->>EB: InventoryReserved / InventoryFailed
-    EB->>L: via order-status-q
-    L->>L: order CONFIRMED / FAILED (RDS)
-    L->>EB: OrderStatusUpdated
-    EB->>E: via notification-q
-    E->>E: email (SES) + Slack #boutique-orders
-```
-
-Each queue has a dead-letter queue (after 3 failed tries) and two alarms (DLQ not empty; oldest
-message older than 5 minutes) that post to Slack `#boutique-alerts`.
-
-### Dev / prod isolation
-
-| Layer | How |
-|---|---|
-| Namespaces | `boutique-dev`, `boutique-prod` |
-| Network | Deny-all NetworkPolicy + one policy per service; prod only accepts callers from `boutique-prod` |
-| AWS permissions | One Pod Identity role per service per environment, with a namespace condition |
-| Data | Separate RDS, Redis, DynamoDB tables, queues, event bus and KMS key |
-| Entry point | One ALB and one hostname per environment |
-
-Details and the test: [docs/week3/ISOLATION.md](docs/week3/ISOLATION.md).
+**Hub-and-spoke:** AWS EKS hosts the GitOps control plane and the primary dev/prod workloads; GKE is a
+spoke governed by the **same** delivery model, identity model and supply chain — without static credentials.
 
 ---
 
-## Tech stack
-
-| Area | Tools |
-|---|---|
-| Services | Go, C# (.NET), Java, Node.js, Python; gRPC + Protocol Buffers |
-| Kubernetes | Amazon EKS 1.35, Helm, AWS Load Balancer Controller, metrics-server, HPA, VPC CNI NetworkPolicies, EKS Pod Identity |
-| Data | RDS MySQL 8.4, ElastiCache Redis 7.1, DynamoDB |
-| Events | EventBridge, SQS (with DLQs), Lambda |
-| Infrastructure | Terraform (VPC, EKS, ECR, RDS, ElastiCache, DynamoDB, EventBridge, SQS, Lambda, KMS, IAM, Route 53, ACM, SES, CloudWatch, SNS) |
-| CI/CD | GitHub Actions with OIDC, GitHub Environments for prod approval, GitHub Flow with a ruleset on `main` |
-| Observability | Prometheus, Grafana, CloudWatch Container Insights, CloudWatch alarms |
-| Notifications | Slack incoming webhooks (deploys, alerts, orders), Amazon SES |
-| Security scanning | CodeQL SAST (all 5 languages + workflows), Checkov (Terraform), ECR scan on push (blocking on CRITICAL) |
-| Testing | Go test (with the race detector), .NET xUnit, Python unittest, Helm lint/render, Locust, chaos and isolation scripts |
-
----
-
-## Repository layout
-
-```
-.
-├── src/                   12 services + loadgenerator (one Dockerfile each)
-├── protos/                gRPC definitions
-├── helm-chart/
-│   ├── templates/         one file per service, ingress, HPA, NetworkPolicies
-│   ├── values.yaml        defaults (local)
-│   ├── values-aws.yaml    EKS: service accounts, ALB ingress, autoscaling
-│   └── values-dev.yaml, values-prod.yaml
-├── terraform-bootstrap/   state bucket + GitHub OIDC roles (one-time)
-├── terraform-aws/
-│   ├── network.tf, eks.tf, ecr.tf, dns.tf, ses.tf, slack.tf, monitoring.tf
-│   ├── lambda/            order_status, slack_alerts
-│   └── modules/environment/   everything one environment owns (data, events, IAM)
-├── db/migrations/         MySQL schema and seed data
-├── deploy/                scripts run by the workflows: smoke, isolation, chaos,
-│                          load test, order-flow, diagnose, DNS records
-├── monitoring/            kube-prometheus-stack values, Grafana dashboards
-├── docs/week3/            guides, runbook, security notes, architecture diagram
-├── docker-compose.yml     local stack with Redis, MySQL and DynamoDB Local
-└── .github/
-    ├── workflows/         CI, infra, deploy and operations workflows
-    ├── CODEOWNERS
-    └── pull_request_template.md
-```
-
----
-
-## Run it locally
-
-Requires Docker Desktop (6 GB memory).
-
-```powershell
-docker compose up --build -d
-docker compose ps
-```
-
-- Shop: <http://localhost:8080>
-- Stock: <http://localhost:8081/stock>
-- MySQL: `127.0.0.1:3306` (user `boutique`)
-
-The first build takes 20 to 40 minutes (12 images). Full guide, including Docker Desktop
-Kubernetes with the same Helm chart: [docs/week3/LOCAL.md](docs/week3/LOCAL.md).
-
----
-
-## CI/CD pipeline
+## How a change ships
 
 ```mermaid
 flowchart LR
-    branch[feature branch] --> pr[Pull request<br/>ci-ok + terraform plan]
-    pr --> merge[Squash merge<br/>to main]
-    merge --> build[Build 12 images<br/>tag = commit SHA]
-    build --> scan{{ECR scan gate<br/>no CRITICAL}}
-    scan --> dev[Deploy dev<br/>migrations, Helm,<br/>HTTPS smoke test]
-    dev -->|fail| rb[Automatic rollback<br/>previous Helm revision]
-    dev --> mon[Monitoring stack]
-    dev --> approve{{Prod approval}} --> prod[Deploy prod<br/>same images]
-    prod --> iso[Isolation test]
-    dev & prod & rb -.-> slack([Slack #boutique-deploys])
+    pr[1 · PR + CI] --> merge[2 · Merge to main]
+    merge --> build[3 · Build · scan · sign]
+    build --> devs[4 · Argo CD sync dev]
+    devs --> c1[5 · Canary + smoke]
+    c1 --> gate{{6 · Human approval}}
+    gate --> promote[7 · Promote SAME SHA<br/>env/prod]
+    promote --> c2[8 · Canary + smoke<br/>+ isolation test]
 ```
-
-| Workflow | When | What it does |
-|---|---|---|
-| `ci.yml` | Every pull request | Unit tests in all 5 languages (Go, C#, Python services and the Lambda), gitleaks secret scan, Helm lint and render (must contain the HPAs), Docker build of changed services → the `ci-ok` check |
-| `codeql.yml` | Every pull request, push to `main`, weekly | SAST: CodeQL analyses the Go, C#, Java, JavaScript and Python code and the workflows; results in the Security tab |
-| `infra.yml` | PR (plan, read-only role), merge to `main` (apply), manual (`plan` / `apply` / `destroy`) | Terraform + Checkov |
-| `deploy.yml` | Push to `main` touching app code, or manual | Builds and scans, deploys dev, then prod after approval, then monitoring and the isolation test |
-| `deploy-env.yml` | Called by `deploy.yml` | One environment: Load Balancer Controller, DB migrations, Helm, DNS, smoke test, rollback |
-| `cluster-status.yml` | Manual | Pods, events, autoscalers, restarts, Helm history, CloudWatch checks, per namespace |
-| `order-flow.yml` | Manual | Follows orders through RDS, DynamoDB, queues, Lambda and SES |
-| `load-test.yml` | Manual | Locust `load` (demo) or stepped `stress` test in dev, with stock reset |
-| `chaos.yml` | Manual | `pod-failure` or `consumer-failure` in dev; everything restored at the end |
-| `catalog.yml` | Manual | Changes a price in MySQL to show the Redis cache at work |
-| `isolation-test.yml` | After prod, or manual | Proves dev can't reach prod (network and IAM) |
-| `bootstrap.yml` | Once | State bucket and the plan/deploy roles |
-
-**Releases are immutable:** every image is tagged with the commit SHA (ECR tags can't be
-overwritten), the shop footer shows that SHA as **Version**, and prod gets exactly the images that
-passed in dev.
-
-### Branching strategy (GitHub Flow)
-
-```mermaid
-gitGraph
-    commit id: "main"
-    branch feature/hpa
-    checkout feature/hpa
-    commit id: "HPA templates"
-    commit id: "metrics-server"
-    checkout main
-    merge feature/hpa id: "squash → deploy dev, prod"
-    branch fix/grafana-oom
-    checkout fix/grafana-oom
-    commit id: "768Mi limit"
-    checkout main
-    merge fix/grafana-oom id: "squash → deploy"
-    branch docs/readme-runbook
-    checkout docs/readme-runbook
-    commit id: "README + runbook"
-    checkout main
-    merge docs/readme-runbook id: "squash"
-```
-
-- `main` is always deployable and protected by a ruleset: pull request required, `ci-ok` must pass,
-  linear history, no force pushes, no deletion.
-- Short-lived branches: `feature/`, `fix/`, `infra/`, `docs/`, `chore/`. One pull request each,
-  squash-merged.
-- Branches are never deployed. The deploy role only trusts `main`; pull requests only get the
-  read-only plan role.
-
-```powershell
-git switch main; git pull
-git switch -c feature/short-name
-# edit, then:
-git add -A; git commit -m "Describe the change"
-git push -u origin feature/short-name
-```
-
-On GitHub: **Compare & pull request** → wait for `ci-ok` → **Squash and merge**. The merge deploys
-dev; prod waits for approval. See [docs/week3/GITHUB-FLOW.md](docs/week3/GITHUB-FLOW.md).
-
----
-
-## Deploying to AWS
 
 ```mermaid
 flowchart LR
-    boot[bootstrap<br/>once] --> apply[infra → apply<br/>25-35 min] --> deploy[deploy<br/>dev → prod] --> work[demo, tests] --> destroy[infra → destroy<br/>end of day]
-    destroy -.->|next day| apply
+    s0[Stable 100%] --> s1[Canary 20%] --> a1{p95 · success rate<br/>· request volume}
+    a1 -- pass --> s2[Canary 50%] --> a2{analysis} -- pass --> s3[100%]
+    a1 -- fail --> ab[Abort → stable]
+    a2 -- fail --> ab
 ```
 
-1. **One-time AWS setup** — GitHub OIDC provider and the bootstrap role, then the `bootstrap`
-   workflow: [docs/week3/BOOTSTRAP.md](docs/week3/BOOTSTRAP.md).
-2. **GitHub settings** — environments `dev` and `prod` (required reviewer), variables and secrets:
-
-   | Kind | Names |
-   |---|---|
-   | Repository variables | `AWS_REGION`, `AWS_PLAN_ROLE_ARN`, `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `ADMIN_PRINCIPAL_ARN`, `DOMAIN_NAME`, `SES_RECIPIENTS`, `MONITORING_ALLOWED_CIDR`, optional `SCAN_BLOCKING` |
-   | `prod` environment variable | `AWS_BOOTSTRAP_ROLE_ARN` |
-   | Secrets (all optional) | `GRAFANA_ADMIN_PASSWORD`, `SLACK_WEBHOOK_URL`, `SLACK_ALERTS_WEBHOOK_URL`, `SLACK_ORDERS_WEBHOOK_URL` |
-
-3. **Infrastructure** — Actions → **infra** → `apply`.
-4. **Deploy** — Actions → **deploy** (or merge a pull request). The shop and Grafana addresses are on
-   the run's Summary page and in Slack.
-5. **Tear down** — Actions → **infra** → `destroy` at the end of the day.
-
-Full guides: [SETUP.md](docs/week3/SETUP.md) and [DEPLOY.md](docs/week3/DEPLOY.md).
-
-**Rollback:** automatic when the pods don't become ready (Helm) or the smoke test fails (previous
-revision). By hand: Actions → **deploy** → Run workflow with `image_tag` = an earlier commit SHA.
-Nothing is rebuilt.
-
-> **Cost:** about 9 to 12 USD per day while it runs (EKS control plane, 4 nodes, NAT gateway, two
-> MySQL databases, two Redis nodes, ALBs, logs). `destroy` removes all of it, including the DNS
-> records and the images in ECR.
+- **Production never rebuilds** — it receives the exact image validated in dev.
+- **Git is the source of truth** — manual drift is reverted by Argo CD self-heal.
+- **A bad release reaches 20% of users, not 100%.**
 
 ---
 
-## Security
+## Security and software supply chain
 
-Full notes: [docs/week3/SECURITY.md](docs/week3/SECURITY.md).
+```mermaid
+flowchart LR
+    s1[1 · PR checks<br/>CodeQL · gitleaks · tests · Checkov] --> s2[2 · Build<br/>tag = commit SHA]
+    s2 --> s3[3 · Push to ECR<br/>immutable] --> s4{{4 · ECR scan<br/>CRITICAL blocks}}
+    s4 --> s5[5 · Syft SBOM] --> s6[6 · cosign keyless sign<br/>image + SBOM by digest]
+    s6 --> s7{{7 · Verify signer<br/>+ OIDC issuer}} --> s8[8 · GitOps deploy]
+    s8 --> s9[9 · Kyverno<br/>audit in cluster]
+```
 
-- **No long-lived AWS keys** — GitHub Actions uses OIDC. Pull requests get a read-only role; the
-  deploy role only trusts `main` and the `dev` / `prod` environments.
-- **Least privilege at runtime** — one EKS Pod Identity role per service and environment, limited
-  to that environment's resources and namespace; emailservice may only send as
-  `orders@<domain>`; Grafana's role is read-only.
-- **Private by default** — only the ALBs are public. Nodes, RDS, Redis and the Lambda live in
-  private subnets. Grafana only answers allow-listed IPs (`0.0.0.0/0` is refused by the pipeline).
-- **Network policies** — deny-all by default, one allow rule per service call.
-- **Encryption** — a KMS key per environment for RDS, its secret and Redis; DynamoDB and SQS
-  encrypted at rest; TLS to the database (with certificate checks) and to Redis (with an auth token
-  per environment); HTTPS on every public address.
-- **Secrets stay out of code** — RDS passwords managed by RDS in Secrets Manager; Slack webhooks only
-  in GitHub secrets (and Secrets Manager for the alerts Lambda); never in Terraform or the repo.
-- **Supply chain** — CodeQL static analysis (SAST) of the application code on every pull request,
-  immutable image tags, ECR scan gate on CRITICAL findings, Checkov on every
-  Terraform change. ECR's scanner replaced a third-party scanner action after the Trivy GitHub
-  Actions compromise (March 2026), so no extra code runs with AWS credentials.
-- **Secret scanning** — gitleaks checks every pull request for committed credentials (AWS keys,
-  Slack webhooks, tokens); it runs without any AWS access.
-- **Hardened containers** — non-root users and read-only root filesystems.
-- **Namespace guardrails** — Pod Security Standards (`baseline` enforced, `restricted` warned),
-  a ResourceQuota and LimitRange per namespace, a PriorityClass that lets prod preempt dev,
-  PodDisruptionBudgets, pods spread across zones and nodes, and a short `preStop` pause so a
-  rollout drops no requests.
-
-## Observability
-
-- **Grafana dashboard "Boutique: platform overview"** — SLIs (availability, p95 latency, order
-  success, pods not ready), shop traffic, application metrics (cache hit rate, orders reserved /
-  failed), event flow (queues, DLQs), Kubernetes CPU / memory / restarts, databases.
-- **Prometheus** scrapes pods, nodes and the services' `/metrics`.
-- **CloudWatch** — Container Insights logs, ALB / SQS / RDS metrics, alarms per environment.
-- **Slack** — `#boutique-deploys` (pipeline), `#boutique-alerts` (alarms), `#boutique-orders`
-  (every confirmed / failed order).
-
-Details: [docs/week3/MONITORING.md](docs/week3/MONITORING.md), [docs/week3/SLACK.md](docs/week3/SLACK.md).
-
----
-
-## Proven results
-
-| Test | How | Result |
+| Layer | Control | Status |
 |---|---|---|
-| Stress test, no autoscaling | load-test `stress`, 800 shoppers, 15 min | 0 errors, ~130 req/s, p95 ~8 s: frontend pinned at its CPU limit |
-| Stress test, with HPA | Same test | Home page about 10× faster; next bottleneck found: recommendationservice and sticky gRPC connections |
-| Rollback (acceptance step 12) | deploy with an older `image_tag` | Footer and Helm history back on the old version, nothing rebuilt |
-| Pod failure | chaos `pod-failure`, checkoutservice | New pod Ready in 5 s, 0 failed shop requests |
-| Consumer failure | chaos `consumer-failure`, 8 min | Backlog alarm 🔴 then 🟢 in Slack, queued orders processed after the restart, DLQs at 0 |
-| Isolation | isolation-test | dev → prod services BLOCKED; dev role → prod DynamoDB AccessDenied; dev → prod Redis refused (NOAUTH) |
-| Order email | Checkout with a verified address | SES email "Your order … is confirmed" + Slack message |
+| Source | **CodeQL** SAST (Go, C#, Java, JS, Python, workflows) · **gitleaks** | Blocking |
+| Infrastructure | **Terraform plan** review · **Checkov** | Checkov soft-fail (informs) |
+| Images | **ECR scan-on-push**, CRITICAL blocks · immutable SHA tags | Blocking |
+| Provenance | **Syft** SPDX SBOM · **cosign** keyless (Sigstore) · signature + attestation verify | Blocking |
+| Cluster | **Kyverno** signature + SBOM verification | Audit today → enforce next |
+
+For every running Pod we can answer: **what is running, who built it, what is inside it, and was it scanned.**
+
+> Why no Trivy? After the 2026 Trivy GitHub Actions supply-chain compromise, scanning moved to **ECR
+> native scanning**, so no third-party action runs with AWS credentials.
+
+---
+
+## Identity and least privilege
+
+```mermaid
+flowchart LR
+    pr[PR workflow] -->|OIDC| plan[AWS plan role<br/>read-only]
+    main[main · approved env] -->|OIDC| deploy[Deploy role<br/>+ permission boundary]
+    pod[EKS Pod · per service] --> pi[Pod Identity role<br/>per env, own resources only]
+    argo[Argo CD on EKS] -->|keyless| wif[GCP federation<br/>RBAC: boutique-gke]
+    devpod[dev Pod] -. ✗ denied by namespace condition .-> prodrole[prod role]
+```
+
+**No standing credentials in pipelines. No broad cloud permissions inside Pods.** Plus deny-all
+NetworkPolicies, Pod Security Standards, ResourceQuota/LimitRange, PDBs, PriorityClass, non-root and
+read-only containers.
+
+---
+
+## Reliability and self-healing
+
+| Failure | Automatic recovery |
+|---|---|
+| Process crash / Pod not ready | Kubernetes restart; readiness removes it from traffic |
+| Load spike | HPA adds replicas (nodes scale 2 → 5) |
+| Deployment never ready | Helm `--rollback-on-failure` |
+| Unhealthy canary | Argo Rollouts aborts → stable |
+| Failed smoke test / GitOps sync | Previous revision or GitOps revert |
+| Manual drift | Argo CD self-heal |
+| Consumer failure / duplicate events | SQS retry → DLQ · idempotent consumers |
+
+> **Honest maturity:** self-healing at the workload, deployment, configuration and event layers.
+> Root-cause fixes (database, IAM, design) are still human — safe AIOps is on the roadmap.
+
+---
+
+## Observability: why each tool
+
+| Tool | Why we chose it | Technical value | Business value |
+|---|---|---|---|
+| **Prometheus** | Kubernetes-native metrics | SLIs, canary analysis, HPA signals | Releases judged on user impact |
+| **Grafana** | One view for all signals | Dashboards, exemplars, trace ↔ log links | Same evidence for engineers and managers |
+| **OpenTelemetry** | Vendor-neutral, all 5 languages | One trace across 12 services | No monitoring vendor lock-in |
+| **OTel Collector** | Central filter and sampling | Tail sampling, span metrics, service graph | All errors kept, lower trace cost |
+| **Tempo** | Low-cost trace storage | Find the slow hop in a request | Cheap tracing (24 h retention) |
+| **CloudWatch** | AWS-native logs and alarms | Container logs, ALB / SQS / RDS metrics | No extra tool for AWS services |
+| **Slack** | Where the team already works | Deploy, alarm, DLQ and budget alerts | Faster reaction to incidents |
+
+**Collector design:** health checks filtered first · 100% of errors and slow traces kept, 10% of normal
+prod traffic · metrics built from all spans *before* sampling · no PII, payloads or AI prompts collected.
+
+### Debugging in practice: from alarm to root cause
+
+```mermaid
+flowchart LR
+    a[1 · Alert<br/>Slack / failed canary] --> m[2 · Metric<br/>Grafana: which service, when]
+    m --> e[3 · Exemplar<br/>one real slow request]
+    e --> t[4 · Trace<br/>Tempo: the slow hop]
+    t --> l[5 · Logs<br/>same trace_id in CloudWatch]
+    l --> f[6 · Fix<br/>rollback now, fix PR next]
+```
+
+**Real drill — chaos `consumer-failure`, 8 min:** backlog alarm 🔴 in Slack → Grafana shows the inventory
+queue growing → cause: consumer stopped → restart → backlog drains → alarm 🟢, queued orders processed,
+DLQs at 0. **Evidence, not guessing — and no lost orders.**
+
+---
+
+## High availability: when one cloud fails
+
+October 2025 showed the cost of depending on one provider:
+
+- **Oct 29, 2025 — Azure:** one accidental configuration change in Azure Front Door caused about
+  **8 hours of global disruption** (airlines, airports, retailers, Microsoft 365).
+  [Parametrix](https://www.parametrixinsurance.com/blog/azure-afd-outage-what-parametrix-monitored-in-real-time)
+- **Oct 20, 2025 — AWS us-east-1:** ~**70,000 organizations** hit; insured losses estimated at
+  **$38M–$581M**. [CyberCube](https://www.businesswire.com/news/home/20251023532923/en/CyberCube-Reveals-Insurance-Loss-Estimate-for-AWS-Amazonk-Outage)
+
+| Layer | What this platform has today | Protects against |
+|---|---|---|
+| Zones | 2 AZs, Multi-AZ RDS in prod, Pods spread across zones | A data-center failure |
+| Releases | Canary + automatic rollback | Our own bad config change (the Azure failure mode) |
+| GitOps hub | The GKE spoke keeps serving if the hub is down | Hub outage: only deploys wait |
+| Cloud | Storefront also running on GKE (Google Cloud) | A provider-wide outage |
+| **Next** | Health-checked DNS failover + data replication | Full multi-cloud failover |
+
+> **Honest status:** GKE is a second running storefront today. Order storage, order emails and the AI
+> assistant stay on AWS until data replication, order consistency and event replication are built.
+
+---
+
+## Governed AI and cost engineering
+
+| Amazon Bedrock shopping assistant | Cost engineering |
+|---|---|
+| Read-only, catalog-only tools — no orders, no infra actions | **$9–12/day** while running, destroy workflow when idle |
+| PII masked before the model call | Shared EKS with strict dev/prod isolation |
+| Per-session rate limit · daily cap · concurrency limit | Dev single-AZ RDS, prod Multi-AZ |
+| Token, timeout and tool-step limits | Requests sized from 24 h Prometheus p95/max |
+| Answers validated against real product IDs | 110 Pods per node (VPC CNI prefix delegation) instead of 17 |
+| Model-scoped IAM · no prompt/answer logging | Trace sampling, short log retention, ECR lifecycle |
+| AWS Budgets alerts at 50% and 100% | Bedrock budgets + daily kill switch |
+
+**Trade-offs accepted on purpose:** one NAT gateway, one account and cluster, single-replica Tempo and
+OTel Collector — cheaper, documented, and on the roadmap to fix when the business needs it.
+
+---
+
+## Case study: PR #88
+
+**"ops: align GKE requests with Autopilot minimums"** — merged Oct 19, 2026 · 2 files · +45 / −16
+
+```mermaid
+flowchart TB
+    subgraph before[Before]
+        direction LR
+        g1[Git declares a request] --> m1[Autopilot rewrites it] --> d1[Live ≠ Git<br/>Argo CD OutOfSync]
+    end
+    subgraph after[After PR 88]
+        direction LR
+        g2[values-gcp.yaml meets<br/>Autopilot minimums] --> c2{{CI renders GKE release<br/>fails if any request would mutate}} --> d2[Live = Git<br/>no false drift]
+    end
+    before ~~~ after
+```
+
+> **We turned a cloud-provider runtime behavior into a tested platform contract.**
+
+---
+
+## Complete toolchain
+
+| Category | Tools |
+|---|---|
+| **Cloud** | AWS (EKS, ECR, RDS MySQL 8.4, ElastiCache Redis, DynamoDB, EventBridge, SQS, Lambda, SES, Route 53, ACM, KMS, Secrets Manager, CloudWatch, SNS, Budgets, Bedrock) · GCP (GKE Autopilot, Artifact Registry, Cloud NAT, Managed Prometheus, Cloud Monitoring) |
+| **Infrastructure as Code** | Terraform (AWS + GCP, bootstrap stacks, `terraform test`), Helm |
+| **CI/CD** | GitHub Actions, GitHub Environments, branch rulesets, CODEOWNERS, GitHub App for GitOps commits |
+| **GitOps & delivery** | Argo CD (automated sync, prune, self-heal), Argo Rollouts (ALB canary + Prometheus analysis) |
+| **Security** | CodeQL, gitleaks, Checkov, ECR scanning, Syft, cosign / Sigstore, Kyverno, IAM permission boundaries, KMS |
+| **Identity** | GitHub OIDC, EKS Pod Identity, GCP Workload Identity Federation |
+| **Kubernetes** | NetworkPolicies (VPC CNI), Pod Security Standards, HPA, PDB, PriorityClass, ResourceQuota, LimitRange, AWS Load Balancer Controller, metrics-server |
+| **Observability** | Prometheus, Grafana, OpenTelemetry SDKs + Collector, Grafana Tempo, CloudWatch Container Insights, Slack alerts |
+| **Testing** | go test `-race`, xUnit, unittest, npm test, Gradle, Helm render tests, `promtool`, Locust load/stress, chaos workflows, isolation tests, GKE e2e |
+| **Languages** | Go, Python, C#/.NET, Java, Node.js, Bash, HCL, SQL · gRPC + Protocol Buffers |
+| **Local dev** | Docker Compose (MySQL, Redis, DynamoDB Local), Docker Buildx |
+
+## Engineering techniques
+
+GitOps · trunk-based GitHub Flow · immutable artifacts · build once, promote many · progressive delivery
+(canary) · automated rollback · policy as code · software supply-chain security (SBOM, keyless signing,
+provenance verification) · keyless identity / zero standing credentials · least privilege · defense in
+depth · event-driven architecture with DLQs and idempotent consumers · SLIs and evidence-based release
+gates · tail sampling and trace–metric–log correlation · chaos engineering · load and stress testing ·
+FinOps / right-sizing from real usage · hub-and-spoke multi-cloud · ADR-driven design · runbooks.
+
+## Skills this project demonstrates
+
+| Competency | Where to look |
+|---|---|
+| Platform engineering & paved road | [Architecture](#architecture-at-a-glance), [docs/architecture.md](docs/architecture.md) |
+| DevSecOps & supply chain | [Security](#security-and-software-supply-chain), ADRs [0012](docs/adr/0012-image-signing-sbom.md), [0013](docs/adr/0013-kyverno-image-signatures-audit.md) |
+| Cloud security & IAM | [Identity](#identity-and-least-privilege), [SECURITY.md](docs/week3/SECURITY.md) |
+| SRE: reliability, incidents, chaos | [Reliability](#reliability-and-self-healing), [Debugging](#debugging-in-practice-from-alarm-to-root-cause), [RUNBOOK.md](docs/week3/RUNBOOK.md) |
+| Multi-cloud architecture | [High availability](#high-availability-when-one-cloud-fails), ADR [0014](docs/adr/0014-multicloud-gke-portable-profile.md) |
+| FinOps & AI governance | [Governed AI and cost](#governed-ai-and-cost-engineering), ADR [0009](docs/adr/0009-shopping-assistant-bedrock.md) |
+| Technical leadership | ADRs, honest trade-offs, roadmap ranked by business risk |
 
 ---
 
 ## Screenshots
 
-### The shop and an order, end to end
-
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/shop-home.png" alt="Shop home page on HTTPS, footer showing the release version"><br><sub>The shop, with the release (commit SHA) in the footer</sub></td>
-<td width="50%"><img src="docs/screenshots/order-complete.png" alt="Order complete page"><br><sub>Checkout: the order is placed</sub></td>
+<td width="50%"><img src="docs/screenshots/shop-home.png" alt="Shop home page with the release SHA in the footer"><br><sub>The shop — release SHA in the footer</sub></td>
+<td width="50%"><img src="docs/screenshots/order-email.png" alt="Order confirmation email from Amazon SES"><br><sub>Real order email from Amazon SES</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/order-email.png" alt="Confirmation email from orders@sebngembou-cloud.click"><br><sub>Real confirmation email sent by Amazon SES</sub></td>
-<td><img src="docs/screenshots/slack-order.png" alt="Slack message: order confirmed"><br><sub>Same order in Slack <code>#boutique-orders</code></sub></td>
+<td colspan="2"><img src="docs/screenshots/deploy-pipeline.png" alt="deploy.yml run: builds, dev, approval, prod, isolation test"><br><sub><code>deploy.yml</code>: builds → dev → approval → prod → isolation test</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/screenshots/order-flow.png" alt="order-flow workflow: orders CONFIRMED or FAILED with reason INSUFFICIENT_STOCK"><br><sub><code>order-flow</code> workflow: orders in RDS move from PENDING to CONFIRMED, or FAILED when stock runs out</sub></td>
-</tr>
-</table>
-
-### Pipeline
-
-<table>
-<tr>
-<td colspan="2"><img src="docs/screenshots/deploy-pipeline.png" alt="deploy.yml run: setup, 12 image builds, deploy dev, approval, deploy prod, isolation test, notify"><br><sub><code>deploy.yml</code>: 12 builds → dev → approval → prod → isolation test</sub></td>
+<td><img src="docs/screenshots/grafana-kubernetes.png" alt="Grafana during a load test"><br><sub>Grafana during a load test</sub></td>
+<td><img src="docs/screenshots/chaos-pod-failure.png" alt="Chaos pod-failure: Ready in 5 s, 0 errors"><br><sub>Chaos <code>pod-failure</code>: Ready in 5 s, 0 errors</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/screenshots/codeql-run.png" alt="CodeQL run: go, csharp, java-kotlin, javascript-typescript, python and actions all green"><br><sub><code>codeql.yml</code>: SAST on all 5 languages and the workflows, all green</sub></td>
-</tr>
-<tr>
-<td colspan="2"><img src="docs/screenshots/slack-deploy.png" alt="Slack deploy message with every stage green"><br><sub>The result posted to Slack <code>#boutique-deploys</code></sub></td>
-</tr>
-</table>
-
-### Monitoring and failure tests
-
-<table>
-<tr>
-<td width="50%"><img src="docs/screenshots/grafana-kubernetes.png" alt="Grafana: CPU and memory per pod and per node during a load test"><br><sub>Grafana during a load test: pod and node CPU rise, then settle</sub></td>
-<td width="50%"><img src="docs/screenshots/grafana-application.png" alt="Grafana: catalog cache hit rate and MySQL loads"><br><sub>Application metrics: catalog cache hit rate, MySQL loads</sub></td>
-</tr>
-<tr>
-<td><img src="docs/screenshots/slack-alarm.png" alt="Slack alarm red then green for the inventory backlog"><br><sub>Chaos <code>consumer-failure</code>: backlog alarm red, then green, in <code>#boutique-alerts</code></sub></td>
-<td><img src="docs/screenshots/chaos-pod-failure.png" alt="Chaos pod failure summary: new pod ready after 5 s, 0 errors"><br><sub>Chaos <code>pod-failure</code>: new pod Ready in 5 s, 0 failed requests</sub></td>
+<td><img src="docs/screenshots/codeql-run.png" alt="CodeQL run, all languages green"><br><sub>CodeQL SAST on all languages and workflows</sub></td>
+<td><img src="docs/screenshots/slack-alarm.png" alt="Slack backlog alarm red then green"><br><sub>Backlog alarm 🔴 → 🟢 during the consumer-failure drill</sub></td>
 </tr>
 </table>
 
 ---
 
-## Documentation
+## Run it
 
-| Document | Contents |
+**Locally** (Docker Desktop, 6 GB):
+
+```powershell
+docker compose up --build -d
+# Shop  http://localhost:8080   ·   Stock API  http://localhost:8081/stock
+```
+
+**On AWS** (all through GitHub Actions, no local credentials):
+
+```mermaid
+flowchart LR
+    b[bootstrap<br/>once] --> i[infra → apply] --> a[argocd-install] --> d[merge PR → dev] --> p[approve → prod] --> x[infra → destroy<br/>when idle]
+```
+
+GKE spoke: `bootstrap-gcp` → `infra-gcp` → `mirror-images-gcp` → `argocd-gke` → `gke-e2e`.
+Full guides: [SETUP.md](docs/week3/SETUP.md) · [DEPLOY.md](docs/week3/DEPLOY.md) · [ARGOCD.md](docs/week3/ARGOCD.md) · [LOCAL.md](docs/week3/LOCAL.md).
+
+<details>
+<summary><b>Repository layout</b></summary>
+
+```text
+src/                         12 services + loadgenerator (Go, Python, C#, Java, Node.js)
+protos/                      gRPC definitions
+helm-chart/                  Kubernetes app, guardrails, values per environment and cloud
+gitops/                      Desired state and image tags per environment
+terraform-bootstrap/         AWS state, OIDC roles, permission boundaries, budgets
+terraform-aws/               VPC, EKS, data stores, events, IAM, DNS, monitoring
+terraform-gcp-bootstrap/     GCP Workload Identity Federation and state
+terraform-gcp/               GKE Autopilot spoke and Artifact Registry
+monitoring/                  Prometheus, Grafana, Tempo, OTel Collector
+deploy/                      Smoke, rollback, canary, chaos, signing and diagnostic scripts
+tests/                       Platform tests (GKE e2e, rendered-manifest checks)
+docs/                        Architecture, ADRs, runbook, security notes
+.github/workflows/           CI, CodeQL, infra, deploy, GitOps and operations workflows
+```
+
+</details>
+
+<details>
+<summary><b>Workflows</b></summary>
+
+| Workflow | Purpose |
 |---|---|
-| [docs/week3/SETUP.md](docs/week3/SETUP.md) | From zero to a running cluster |
-| [docs/week3/BOOTSTRAP.md](docs/week3/BOOTSTRAP.md) | Connect GitHub to AWS with OIDC (one-time) |
-| [docs/week3/DEPLOY.md](docs/week3/DEPLOY.md) | Pipeline, HTTPS, SES, autoscaling, rollback, chaos, order flow |
-| [docs/week3/LOCAL.md](docs/week3/LOCAL.md) | Docker Compose and Docker Desktop Kubernetes |
-| [docs/week3/GITHUB-FLOW.md](docs/week3/GITHUB-FLOW.md) | Branching strategy and the `main` ruleset |
-| [docs/week3/ISOLATION.md](docs/week3/ISOLATION.md) | Dev / prod isolation and its test |
-| [docs/week3/MONITORING.md](docs/week3/MONITORING.md) | Prometheus, Grafana, load and stress tests |
-| [docs/week3/SLACK.md](docs/week3/SLACK.md) | Slack channels and webhooks |
-| [docs/week3/SECURITY.md](docs/week3/SECURITY.md) | Security controls, scan results, known gaps |
-| [docs/week3/RUNBOOK.md](docs/week3/RUNBOOK.md) | Failed deploys, unhealthy pods, database, stuck queues, incident log |
-| [docs/roadmap.md](docs/roadmap.md) | What comes next, phase by phase (Phase 2: AI shopping assistant) |
-| [docs/adr/](docs/adr/) | Architecture decision records (Argo CD, single-account hardening, prod promotion, canary, shopping assistant) |
+| `ci.yml` | Tests in 5 languages, gitleaks, Helm render, platform checks → `ci-ok` |
+| `codeql.yml` | SAST on every PR, `main` and weekly |
+| `infra.yml` / `infra-gcp.yml` | Terraform plan / apply / destroy + Checkov |
+| `deploy.yml` / `deploy-env.yml` | Build, scan, SBOM, sign, verify, dev → approval → prod |
+| `argocd-install.yml` / `argocd-gke.yml` | Argo CD install and GKE spoke registration |
+| `mirror-images-gcp.yml` · `gke-e2e.yml` | Signed image mirror · GKE end-to-end tests |
+| `isolation-test.yml` · `chaos.yml` · `load-test.yml` | Isolation proof · failure injection · stress tests |
+| `order-flow.yml` · `cluster-status.yml` · `assistant-smoke.yml` | Operations and diagnostics |
+
+</details>
 
 ---
 
-## Recent improvements
+## Roadmap — ranked by business risk
 
-| Area | Change |
-|---|---|
-| Security | SAST with CodeQL on every pull request, push to `main` and weekly (all 5 languages + workflows) |
-| Notifications | Order emails with Amazon SES (DKIM, sender-restricted IAM) and Slack `#boutique-orders` |
-| Network | HTTPS on `sebngembou-cloud.click` for dev, prod and Grafana (Route 53, ACM, HTTP→HTTPS) |
-| Reliability | Chaos workflow: pod failure and consumer failure in dev, state restored automatically |
-| Deployments | Shop footer shows the release (commit SHA); Helm history in cluster-status |
-| Scaling | HorizontalPodAutoscalers, metrics-server, VPC CNI prefix delegation (110 pods per node) |
-| Reliability | Higher CPU limits and tolerant health checks after the first stress test |
-| Monitoring | Grafana CloudWatch data source (ALB, SQS, RDS, logs) through a read-only role; Grafana memory 768Mi |
-| Monitoring | Grafana bundled-plugin fix (`preinstall_disabled`) for the read-only filesystem |
-| Workflow | Ruleset on `main`: pull request + `ci-ok` required, linear history, no force pushes |
+| # | Next step | Business risk removed |
+|---|---|---|
+| 1 | Kyverno audit → **enforce** | Unverified software in production |
+| 2 | Checkov **blocking** after triage | Risky infrastructure changes merged |
+| 3 | **WAF** + private EKS API endpoint | Web attacks, exposed control plane |
+| 4 | **Multi-account** (prod / non-prod / security) | Large blast radius per incident |
+| 5 | Durable, HA observability (Tempo on object storage, OTel LB tier) | Lost incident evidence |
+| 6 | DNS failover + data replication | Single-provider outage |
+| 7 | **Safe AIOps**: diagnosis, runbook advice, human-approved recovery | Slow recovery, on-call load |
 
 ---
 
-## Author
+<div align="center">
 
-**Sebastien Ngembou** — [github.com/ngems1](https://github.com/ngems1)
+**We are not building a faster pipeline. We are making change safe by default —**
+**secure, observable, governed, reversible, and portable across clouds.**
+
+**Sebastien Ngembou** · [github.com/ngems1](https://github.com/ngems1)
+
+</div>
