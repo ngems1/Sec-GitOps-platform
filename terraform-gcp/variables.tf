@@ -64,3 +64,18 @@ variable "registry_builds_kept" {
   type        = number
   default     = 20
 }
+
+variable "gke_metric_packages" {
+  description = "GKE metric packages (monitoring_config.enable_components, gke.tf). SYSTEM_COMPONENTS is free and required on Autopilot; the others are billed per sample ingested (Managed Service for Prometheus pricing, docs/gke-monitoring.md)."
+  type        = list(string)
+  default     = ["SYSTEM_COMPONENTS", "KUBELET", "CADVISOR"]
+
+  validation {
+    condition     = contains(var.gke_metric_packages, "SYSTEM_COMPONENTS")
+    error_message = "gke_metric_packages must keep SYSTEM_COMPONENTS: Autopilot can't turn off GKE system metrics."
+  }
+  validation {
+    condition     = alltrue([for p in var.gke_metric_packages : contains(["SYSTEM_COMPONENTS", "APISERVER", "SCHEDULER", "CONTROLLER_MANAGER", "STORAGE", "HPA", "POD", "DAEMONSET", "DEPLOYMENT", "STATEFULSET", "KUBELET", "CADVISOR", "DCGM", "JOBSET"], p)])
+    error_message = "gke_metric_packages: unknown package (see the google provider's monitoring_config.enable_components)."
+  }
+}

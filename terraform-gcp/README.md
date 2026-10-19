@@ -10,6 +10,7 @@ profile only: 10 services, the loadgenerator and an in-cluster Redis.
 | GKE Autopilot `boutique-gke` | Regional (Autopilot has no zonal option), `REGULAR` channel, private nodes, nodes as the bootstrap's `gke-nodes` service account, no deletion protection (`gke.tf`). Control plane: the **DNS-based endpoint**, reachable from any network but only by callers IAM allows to connect (Argo CD's `argocd-hub`, `gha-deploy`), IAM credentials only, Google-signed certificate. No IP allow-list to keep in step with the EKS NAT gateway, whose address changes with every terraform-aws rebuild. The IP-based endpoint stays closed (`control_plane_authorized_cidrs`, empty) |
 | Artifact Registry `boutique` | Docker, immutable tags, keeps the last 20 builds (60 versions: image, `.sig`, `.att`) like ECR. Target of the `cosign copy` mirror (mirror-images-gcp). The nodes may read this repository only (`registry.tf`) |
 | Global static IP `boutique-gke-ingress` | The shop's public address (`network.tf`, output `ingress_ip`): the GKE Ingress's load balancer uses it (`helm-chart/values-gcp.yaml`), and the argocd-gke workflow points `gke.<domain>` at it in Route 53 |
+| Monitoring (on the cluster) | Managed Service for Prometheus (managed collection), the free GKE system metrics, and GKE's kubelet and cAdvisor packages, billed per sample (`gke.tf`, `gke_metric_packages`). The chart's PodMonitoring scrapes the frontend. Guide: `docs/gke-monitoring.md` |
 
 **No service accounts or project IAM here:** `terraform-gcp-bootstrap` creates them, and the
 infra-gcp workflow fails if this root declares any. The one IAM binding is the nodes' read on
@@ -59,6 +60,10 @@ An estimate, from list prices, not a quote. Check the
 - **Cloud NAT:** about $3/month for a few nodes, plus $0.045/GiB processed (image pulls only).
 - **The Ingress:** its forwarding rule, roughly $18/month, plus about $0.008/GiB through the load
   balancer. The static IP is billed by the hour only while nothing uses it (about $7/month).
+- **Monitoring:** system and load balancer metrics are free. The frontend's metrics cost about
+  $0.11/month. The kubelet and cAdvisor packages cost an estimated $2-10/month; measure them in
+  Monitoring > Metrics Management, and `gke_metric_packages = ["SYSTEM_COMPONENTS"]` turns them
+  off (`docs/gke-monitoring.md`).
 
-About **$53/month running all day**, above the project's **$50/month budget**. Destroy it
-between uses: 8 hours a day on weekdays is about $15/month.
+About **$55-63/month running all day**, above the project's **$50/month budget**. Destroy it
+between uses: 8 hours a day on weekdays is about $15-17/month.

@@ -62,6 +62,25 @@ resource "google_container_cluster" "main" {
     }
   }
 
+  # Monitoring (ADR 0014: Google Cloud Managed Service for Prometheus and Cloud Monitoring, not
+  # Prometheus/Grafana as on EKS). See docs/gke-monitoring.md.
+  #   - SYSTEM_COMPONENTS: GKE system metrics (container CPU, memory, restarts), free, always on
+  #     in Autopilot;
+  #   - KUBELET, CADVISOR: GKE's kubelet and cAdvisor packages, billed per sample like any
+  #     Prometheus metric (var.gke_metric_packages to turn them off). GKE sets their scrape
+  #     interval. No kube-proxy: Dataplane V2 has none;
+  #   - managed_prometheus: managed collection (collectors in gke-gmp-system), which scrapes the
+  #     PodMonitoring resources of the chart (the frontend's /metrics). It writes with the nodes'
+  #     service account (gke-nodes: roles/container.defaultNodeServiceAccount), so no extra
+  #     identity or binding. The project is its own Cloud Monitoring scope: no workspace to create.
+  monitoring_config {
+    enable_components = var.gke_metric_packages
+
+    managed_prometheus {
+      enabled = true
+    }
+  }
+
   release_channel {
     channel = "REGULAR"
   }
