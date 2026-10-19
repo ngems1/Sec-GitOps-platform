@@ -2,8 +2,9 @@
 
 Status: accepted. Date: 2026-10-18. **Core GKE deploy: done.** The portable profile runs on GKE,
 deployed by Argo CD on EKS, public at `https://gke.<domain>`, checked by the smoke tests in
-`tests/gke-e2e.sh` (workflow `gke-e2e`). What is done and what is left: "Implementation order"
-below.
+`tests/gke-e2e.sh` (workflow `gke-e2e`). **Monitoring: done**, with Managed Service for
+Prometheus and Cloud Monitoring (`docs/gke-monitoring.md`). What is done and what is left:
+"Implementation order" below.
 
 ## Context
 
@@ -271,6 +272,21 @@ below.
 7. Smoke tests through `https://gke.<domain>`: `tests/gke-e2e.sh`, workflow `gke-e2e` (manual,
    and on changes to the tests). **Done.** They cover the redirect, the certificate, the home
    page, three product pages and the cart, each checked on its status and its content.
+8. **Monitoring: done.** GKE uses Google Cloud Managed Service for Prometheus and Cloud
+   Monitoring, not the Prometheus and Grafana of EKS (decision 1 keeps those EKS-only). Guide:
+   `docs/gke-monitoring.md`.
+   - **`terraform-gcp/gke.tf`:** managed collection, the free GKE system metrics, and GKE's
+     kubelet and cAdvisor packages (billed per sample, `gke_metric_packages`).
+   - **The chart:** a `PodMonitoring` for the frontend's `/metrics` every 30s, the only service
+     that exports Prometheus metrics. The frontend NetworkPolicy lets in the collectors
+     (`gke-gmp-system`).
+   - **Request rate, errors and latency also come from the load balancer's metrics,** which are
+     free.
+   - **Dashboards are GKE's and Cloud Monitoring's built-in ones.** Alert policies are created
+     in the console from the guide's PromQL; they're not in Terraform yet.
+   - **No collector identity or binding:** GMP writes with the nodes' account, `gke-nodes`,
+     through `roles/container.defaultNodeServiceAccount`.
+   - **No Monitoring workspace:** the project is its own metrics scope.
 
 ## Revisit when
 
