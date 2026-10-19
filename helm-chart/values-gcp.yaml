@@ -36,6 +36,13 @@ frontend:
     enabled: false         # plain Deployment: no Argo Rollouts on GKE
   resources:
     requests: { cpu: 55m } # as EKS (values-aws.yaml), see "Requests" below
+  # Monitoring (ADR 0014, docs/gke-monitoring.md): Google Cloud Managed Service for Prometheus
+  # scrapes the frontend's /metrics every 30s (a PodMonitoring), from its collectors'
+  # namespace: gke-gmp-system on Autopilot (gmp-system on Standard).
+  metrics:
+    scrapeNamespaces: [gke-gmp-system, gmp-system]
+    podMonitoring:
+      enabled: true
 
 # Requests: the same right-sized requests as EKS (values-aws.yaml, RUNBOOK section 13; CI
 # checks the two stay equal). Autopilot bills the requests, after raising each pod to its

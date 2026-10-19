@@ -48,6 +48,7 @@ resource "google_project_service" "gke_apis" {
     "compute.googleapis.com",          # VPC, subnet, Cloud NAT
     "container.googleapis.com",        # the GKE cluster
     "artifactregistry.googleapis.com", # the mirrored images
+    "monitoring.googleapis.com",       # Cloud Monitoring, Managed Service for Prometheus (terraform-gcp/gke.tf)
   ])
 
   project            = var.project_id

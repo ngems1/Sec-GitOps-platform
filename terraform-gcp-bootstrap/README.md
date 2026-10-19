@@ -5,7 +5,7 @@ What GitHub Actions needs before it can run `terraform-gcp`, and what must outli
 
 | Resource | Why |
 |---|---|
-| APIs | IAM, IAM Credentials, STS, Cloud Resource Manager, Service Usage, Cloud Storage, Cloud Billing, Billing Budgets, Org Policy, and for `terraform-gcp`: Compute Engine, GKE, Artifact Registry (`main.tf`; `gha-deploy` can't enable APIs) |
+| APIs | IAM, IAM Credentials, STS, Cloud Resource Manager, Service Usage, Cloud Storage, Cloud Billing, Billing Budgets, Org Policy, and for `terraform-gcp`: Compute Engine, GKE, Artifact Registry, Cloud Monitoring (`main.tf`; `gha-deploy` can't enable APIs) |
 | GCS bucket `<project>-tfstate` | Every GCP Terraform state: `bootstrap/` (this root), `gcp-infra/` (terraform-gcp). Versioned, IAM only, public access prevented, protected against `destroy` |
 | Workload identity pool `github-actions`, provider `sec-gitops-platform` | GitHub Actions sign in without a key. Only this repository, by its numeric IDs (`federation.tf`) |
 | `gha-plan` | Read-only (`roles/viewer`, `roles/iam.securityReviewer`), pull requests |

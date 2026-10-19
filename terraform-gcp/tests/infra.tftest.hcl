@@ -150,3 +150,24 @@ run "static_ip_for_the_ingress" {
     error_message = "a global external IPv4 named boutique-gke-ingress (the chart's frontend.ingress.gce.staticIpName)"
   }
 }
+
+run "managed_prometheus_and_metric_packages" {
+  command = plan
+
+  assert {
+    condition     = google_container_cluster.main.monitoring_config[0].managed_prometheus[0].enabled
+    error_message = "Managed Service for Prometheus: managed collection on"
+  }
+  assert {
+    condition     = toset(google_container_cluster.main.monitoring_config[0].enable_components) == toset(["SYSTEM_COMPONENTS", "KUBELET", "CADVISOR"])
+    error_message = "the free system metrics, and the kubelet and cAdvisor packages"
+  }
+}
+
+run "system_metrics_cannot_be_dropped" {
+  command = plan
+  variables {
+    gke_metric_packages = ["KUBELET"]
+  }
+  expect_failures = [var.gke_metric_packages]
+}

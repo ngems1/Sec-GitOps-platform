@@ -118,8 +118,8 @@ run "no_key_policies_and_budget" {
     error_message = "the default service accounts get no automatic Editor grant, by default"
   }
   assert {
-    condition     = toset(keys(google_project_service.gke_apis)) == toset(["compute.googleapis.com", "container.googleapis.com", "artifactregistry.googleapis.com"]) && length(setintersection(keys(google_project_service.apis), keys(google_project_service.gke_apis))) == 0
-    error_message = "Compute Engine, GKE and Artifact Registry are enabled only through gke_apis (after the Editor policy)"
+    condition     = toset(keys(google_project_service.gke_apis)) == toset(["compute.googleapis.com", "container.googleapis.com", "artifactregistry.googleapis.com", "monitoring.googleapis.com"]) && length(setintersection(keys(google_project_service.apis), keys(google_project_service.gke_apis))) == 0
+    error_message = "Compute Engine, GKE, Artifact Registry and Monitoring are enabled only through gke_apis (after the Editor policy)"
   }
   assert {
     condition     = [for t in google_billing_budget.project.threshold_rules : t.threshold_percent] == [0.5, 1.0]

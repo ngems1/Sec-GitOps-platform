@@ -227,11 +227,22 @@ spec:
        protocol: TCP
   {{- end }}
   {{- end }}
-  # Metrics: Prometheus in the monitoring namespace only.
+  {{- $scrapers := .Values.frontend.metrics.scrapeNamespaces }}
+  {{- if eq (len $scrapers) 1 }}
+  # Metrics: Prometheus in the {{ first $scrapers }} namespace only.
   - from:
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: monitoring
+          kubernetes.io/metadata.name: {{ first $scrapers }}
+  {{- else }}
+  # Metrics: the scrapers' namespaces only ({{ join ", " $scrapers }}).
+  - from:
+    - namespaceSelector:
+        matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: {{ toJson $scrapers }}
+  {{- end }}
     ports:
     - port: {{ .Values.frontend.metrics.port }}
       protocol: TCP
