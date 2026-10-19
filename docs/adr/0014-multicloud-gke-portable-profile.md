@@ -1,6 +1,9 @@
 # 0014: A second cluster on GKE, deployed by the same Argo CD (Phase 6, part 1)
 
-Status: proposed. Date: 2026-10-18. Docs only: nothing is implemented by this ADR.
+Status: accepted. Date: 2026-10-18. **Core GKE deploy: done.** The portable profile runs on GKE,
+deployed by Argo CD on EKS, public at `https://gke.<domain>`, checked by the smoke tests in
+`tests/gke-e2e.sh` (workflow `gke-e2e`). What is done and what is left: "Implementation order"
+below.
 
 ## Context
 
@@ -254,13 +257,20 @@ Status: proposed. Date: 2026-10-18. Docs only: nothing is implemented by this AD
 ## Implementation order (each a small PR)
 
 1. `terraform-gcp-bootstrap`: APIs, state bucket, WIF for GitHub, service accounts, budget.
+   **Done.**
 2. `terraform-gcp` and `infra-gcp`: VPC, Autopilot cluster, Artifact Registry, static IP.
-3. Images: the `cosign copy` mirror step in `deploy` (and in `sign-rollback`).
+   **Done.**
+3. Images: the `cosign copy` mirror step in `deploy` (and in `sign-rollback`). **Done
+   differently:** a manual workflow, `mirror-images-gcp`, copies the tag prod runs. The tag in
+   `gitops/gke/values.yaml` is updated by hand after each run; there's no step in `deploy` yet.
 4. Chart: `values-gcp.yaml`, with CI rendering it. Check the chart without Argo Rollouts CRDs
-   (canary off) and with Dataplane V2 NetworkPolicies.
+   (canary off) and with Dataplane V2 NetworkPolicies. **Done.**
 5. Argo CD: the EKS-issuer federation, the cluster Secret, project `boutique-gcp`, Application
-   `boutique-gke`, and the `gke.` record with its certificate.
-6. Operations: a cluster-status equivalent for GKE, and the RUNBOOK section.
+   `boutique-gke`, and the `gke.` record with its certificate. **Done** (argocd-gke workflow).
+6. Operations: a cluster-status equivalent for GKE, and the RUNBOOK section. **Open.**
+7. Smoke tests through `https://gke.<domain>`: `tests/gke-e2e.sh`, workflow `gke-e2e` (manual,
+   and on changes to the tests). **Done.** They cover the redirect, the certificate, the home
+   page, three product pages and the cart, each checked on its status and its content.
 
 ## Revisit when
 
