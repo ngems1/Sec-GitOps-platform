@@ -44,14 +44,24 @@ frontend:
     podMonitoring:
       enabled: true
 
-# Requests: the same right-sized requests as EKS (values-aws.yaml, RUNBOOK section 13; CI
-# checks the two stay equal). Autopilot bills the requests, after raising each pod to its
-# minimums (50m CPU, 52 MiB, at least 1 GiB per vCPU). Limits stay those of values.yaml.
-# adservice and redis-cart have no EKS override: values.yaml and the redis template. The
-# frontend's is in its block above.
+# Requests: EKS's right-sized requests (values-aws.yaml, RUNBOOK section 13), raised to what
+# GKE Autopilot accepts. Autopilot enforces minimums at admission: at least 50m CPU per
+# container, and at least 1 GiB of memory per vCPU (so 205Mi for 200m: ceil(200 x 1.024)).
+# It rewrites a request below them in the live Pod, which then differs from Git and leaves
+# the Application OutOfSync. So these are the values Autopilot ends up with: nothing is
+# rewritten, Git equals live, and Autopilot bills the same as before. CI checks both rules on
+# the rendered release (ci.yml, "Render the GKE portable profile").
+#   - CPU: EKS's, or 50m where EKS asks for less (currency 45m; checkout, email, payment,
+#     recommendation and shipping 25m);
+#   - memory: EKS's, except adservice (EKS has no override: values.yaml's 200m / 180Mi).
+# Limits stay those of values.yaml: every request is below its limit, so Autopilot leaves them.
+# redis-cart (70m / 200Mi, in its template) and the frontend (in its block above) are above.
+adService:
+  resources:
+    requests: { cpu: 200m, memory: 205Mi }
 currencyService:
   resources:
-    requests: { cpu: 45m, memory: 112Mi }
+    requests: { cpu: 50m, memory: 112Mi }
 productCatalogService:
   resources:
     requests: { cpu: 60m }
@@ -60,19 +70,19 @@ cartService:
     requests: { cpu: 60m, memory: 96Mi }
 recommendationService:
   resources:
-    requests: { cpu: 25m, memory: 96Mi }
+    requests: { cpu: 50m, memory: 96Mi }
 checkoutService:
   resources:
-    requests: { cpu: 25m }
+    requests: { cpu: 50m }
 shippingService:
   resources:
-    requests: { cpu: 25m }
+    requests: { cpu: 50m }
 emailService:
   resources:
-    requests: { cpu: 25m, memory: 112Mi }
+    requests: { cpu: 50m, memory: 112Mi }
 paymentService:
   resources:
-    requests: { cpu: 25m, memory: 80Mi }
+    requests: { cpu: 50m, memory: 80Mi }
 loadGenerator:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
