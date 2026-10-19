@@ -1,0 +1,22 @@
+{{- if and .Values.frontend.create .Values.frontend.metrics.podMonitoring.enabled }}
+{{- /*
+GKE (ADR 0014): what Google Cloud Managed Service for Prometheus scrapes. Managed collection
+reads PodMonitoring resources, not the prometheus.io annotations EKS's Prometheus uses. Only the
+frontend exposes Prometheus metrics (frontend_http_*, src/frontend/metrics.go); the other
+services export none. The frontend NetworkPolicy lets the collectors in on that port
+(frontend.metrics.scrapeNamespaces).
+*/ -}}
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.frontend.name }}
+  endpoints:
+    - port: metrics # the frontend container's named port (frontend.metrics.port)
+      path: /metrics
+      interval: {{ .Values.frontend.metrics.podMonitoring.interval }}
+{{- end }}

@@ -204,6 +204,14 @@ frontend:
   # their own port: scraped from the "monitoring" namespace, never behind the Service or ALB.
   metrics:
     port: 9090
+    # Namespaces whose pods may scrape that port (the frontend NetworkPolicy): EKS's Prometheus.
+    # GKE: Managed Service for Prometheus's collectors (values-gcp.yaml).
+    scrapeNamespaces: [monitoring]
+    # GKE: a PodMonitoring (templates/podmonitoring.yaml), what Managed Service for Prometheus
+    # scrapes; it ignores the prometheus.io annotations.
+    podMonitoring:
+      enabled: false
+      interval: 30s
   # Demo only: share (0-100) of requests answered with a 500, to show a failing canary
   # being rolled back (docs/week3/RUNBOOK.md section 10). Health checks are never faulted.
   faultInject500Percent: 0

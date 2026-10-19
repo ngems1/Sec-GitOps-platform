@@ -405,6 +405,14 @@ jobs:
             || fail "the frontend NetworkPolicy must let in exactly Google's load balancer ranges (130.211.0.0/22, 35.191.0.0/16)"
           [ "$(yq ea -N 'select(.kind == "Service" and .metadata.name == "frontend") | .metadata.annotations["cloud.google.com/neg"]' rendered-gke.yaml)" = '{"ingress": true}' ] \
             || fail "the frontend Service has no container-native load balancing (cloud.google.com/neg)"
+          # Monitoring (ADR 0014, docs/gke-monitoring.md): Managed Service for Prometheus scrapes the
+          # frontend's metrics port through a PodMonitoring (it ignores prometheus.io annotations),
+          # and the NetworkPolicy lets its collectors (gke-gmp-system on Autopilot) reach that port.
+          [ "$(yq ea -N 'select(.kind == "PodMonitoring" and .metadata.name == "frontend") | .spec.selector.matchLabels.app + " " + .spec.endpoints[0].port + " " + .spec.endpoints[0].path' rendered-gke.yaml)" = "frontend metrics /metrics" ] \
+            || fail "no PodMonitoring of the frontend's metrics port (/metrics)"
+          port=$(yq '.frontend.metrics.port' helm-chart/values.yaml)
+          yq ea -N -e "select(.kind == \"NetworkPolicy\" and .metadata.name == \"frontend\") | .spec.ingress[] | select(.ports[0].port == ${port}) | .from[0].namespaceSelector.matchExpressions[0].values[] | select(. == \"gke-gmp-system\")" rendered-gke.yaml >/dev/null 2>&1 \
+            || fail "the frontend NetworkPolicy doesn't let Managed Service for Prometheus (gke-gmp-system) reach port ${port}"
           for kind in NetworkPolicy ResourceQuota LimitRange PodDisruptionBudget; do
             grep -q "^kind: ${kind}$" rendered-gke.yaml || fail "no ${kind} rendered (values-gcp.yaml hardening)"
           done
