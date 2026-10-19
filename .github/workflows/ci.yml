@@ -429,14 +429,33 @@ jobs:
             --set frontend.ingress.host=gke.example.com \
             --set guardrails.priority.render=true --show-only templates/priorityclass.yaml | grep -q '^  name: boutique-gke$' \
             || fail "no boutique-gke PriorityClass for deploy/argocd-gke.sh"
-          # Same right-sized requests as EKS: every service values-aws.yaml sizes, values-gcp.yaml
-          # sizes the same (inventoryService is EKS-only).
+          # EKS's right-sized requests, raised only to what Autopilot accepts (a CPU request below
+          # 50m is rewritten at admission, which leaves the Application OutOfSync): for every
+          # service values-aws.yaml sizes, the CPU is EKS's or 50m, whichever is more, and the
+          # memory is EKS's (inventoryService is EKS-only).
           for svc in $(yq '[to_entries[] | select(.value.resources.requests != null) | .key] | .[]' helm-chart/values-aws.yaml); do
             [ "$svc" = inventoryService ] && continue
-            aws=$(yq -o=json -I=0 ".${svc}.resources.requests" helm-chart/values-aws.yaml)
-            gcp=$(yq -o=json -I=0 ".${svc}.resources.requests" helm-chart/values-gcp.yaml)
-            [ "$aws" = "$gcp" ] || fail "${svc} requests ${gcp} in values-gcp.yaml, ${aws} in values-aws.yaml: keep them equal"
+            aws_cpu=$(yq ".${svc}.resources.requests.cpu" helm-chart/values-aws.yaml)
+            gcp_cpu=$(yq ".${svc}.resources.requests.cpu" helm-chart/values-gcp.yaml)
+            [[ "$aws_cpu" =~ ^[0-9]+m$ && "$gcp_cpu" =~ ^[0-9]+m$ ]] || fail "${svc}: CPU requests must be set in millicores in both values files (EKS '${aws_cpu}', GKE '${gcp_cpu}')"
+            want=$(( ${aws_cpu%m} > 50 ? ${aws_cpu%m} : 50 ))
+            [ "${gcp_cpu%m}" = "$want" ] || fail "${svc}: CPU request ${gcp_cpu} in values-gcp.yaml, expected ${want}m (EKS ${aws_cpu}, Autopilot's minimum 50m)"
+            aws_mem=$(yq ".${svc}.resources.requests.memory // \"\"" helm-chart/values-aws.yaml)
+            gcp_mem=$(yq ".${svc}.resources.requests.memory // \"\"" helm-chart/values-gcp.yaml)
+            [ -z "$aws_mem" ] || [ "$aws_mem" = "$gcp_mem" ] || fail "${svc}: memory request '${gcp_mem}' in values-gcp.yaml, EKS has '${aws_mem}'"
           done
+          # What Autopilot enforces on every container with requests, checked on the rendered
+          # release: at least 50m CPU, memory between 1 and 6.5 GiB per vCPU (205Mi for 200m).
+          # Anything else is rewritten in the live Pod and shows up as drift in Argo CD.
+          bad=$(yq -N -o=json -I=0 'select(.kind == "Deployment") | {"d": .metadata.name, "cs": ((.spec.template.spec.initContainers // []) + .spec.template.spec.containers)}' rendered-gke.yaml \
+            | jq -rs '
+              def cpu: if test("m$") then (.[:-1] | tonumber) else (tonumber * 1000) end;
+              def mi: if test("Mi$") then (.[:-2] | tonumber) elif test("Gi$") then (.[:-2] | tonumber * 1024) else error("memory unit") end;
+              [.[] | .d as $d | .cs[] | select(.resources.requests.cpu != null)
+                | {d: $d, c: (.resources.requests.cpu | cpu), m: (.resources.requests.memory | mi)}
+                | select(.c < 50 or .m < (.c * 1.024 | ceil) or .m > (.c * 6.656))
+                | "\(.d): \(.c)m / \(.m)Mi (Autopilot: at least 50m, memory \(([.c, 50] | max) * 1.024 | ceil)Mi to \(([.c, 50] | max) * 6.656 | floor)Mi)"] | .[]')
+          [ -z "$bad" ] || fail "requests Autopilot would rewrite (raise them in values-gcp.yaml): ${bad}"
           echo "gke: the portable profile, all from ${ar}, tag ${tag}"
 
       # AI shopping assistant (ADR 0009), on in dev and prod. In each environment it must call
