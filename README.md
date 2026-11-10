@@ -22,7 +22,7 @@
 ![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)
 ![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-425CC7?logo=opentelemetry&logoColor=white)
 
-**Sebastien Ngembou** · Senior Cloud Architect / DevOps Lead · [github.com/ngems1](https://github.com/ngems1)
+**Sebastien Ngembou** · Cloud DevOps engineer · [github.com/ngems1](https://github.com/ngems1)
 
 </div>
 
